@@ -1,0 +1,73 @@
+syntax = "proto3";
+package snapchain;
+
+service SnapchainService {
+  rpc SubmitTransaction (SubmitTransactionRequest) returns (SubmitTransactionResponse);
+  rpc SubmitShard (SubmitShardRequest) returns (SubmitShardResponse);
+  rpc SubmitBlock (SubmitBlockRequest) returns (SubmitBlockResponse);
+  rpc RegisterValidator (RegisterValidatorRequest) returns (RegisterValidatorResponse);
+}
+
+message Validator {
+  string id = 1;
+  string pubkey = 2;
+}
+
+message Block {
+  uint64 height = 1;
+  repeated Validator leader_schedule = 2;
+  repeated ShardChunk shard_chunks = 3;
+  string previous_hash = 4;
+  string merkle_root = 5;
+}
+
+message ShardChunk {
+  uint64 height = 1;
+  repeated AccountStateTransition state_transitions = 2;
+  string previous_hash = 3;
+  string merkle_root = 4;
+  string signature = 5;
+}
+
+message AccountStateTransition {
+  uint64 fid = 1;
+  string merkle_root = 2;
+  string data = 3;
+}
+
+message SubmitTransactionRequest {
+  AccountStateTransition transaction = 1;
+}
+
+message SubmitTransactionResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message SubmitShardRequest {
+  ShardChunk shard = 1;
+}
+
+message SubmitShardResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message SubmitBlockRequest {
+  Block block = 1;
+}
+
+message SubmitBlockResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message RegisterValidatorRequest {
+  uint32 id = 1;
+  string address = 2;
+}
+
+message RegisterValidatorResponse {
+  bool success = 1;
+  string message = 2;
+}
