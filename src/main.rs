@@ -1,23 +1,20 @@
-use parking_lot::Mutex;
-use std::sync::Arc;
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use sha2::{Sha256, Digest};
-use tonic::{transport::Server, Request, Response, Status};
 use clap::Parser;
+use futures::stream::StreamExt;
+use libp2p::{gossipsub, mdns, noise, swarm::NetworkBehaviour, swarm::SwarmEvent, tcp, yamux};
+use prost::Message;
+use sha2::{Digest, Sha256};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::time::Duration;
+use tokio::{io, io::AsyncBufReadExt, select, time, time::sleep};
+use tracing_subscriber::EnvFilter;
 
 pub mod snapchain {
     tonic::include_proto!("snapchain");
 }
 
-use snapchain::snapchain_service_server::{SnapchainService, SnapchainServiceServer};
-use snapchain::{
-    Block, ShardChunk, AccountStateTransition, 
-    SubmitTransactionRequest, SubmitTransactionResponse,
-    SubmitShardRequest, SubmitShardResponse,
-    SubmitBlockRequest, SubmitBlockResponse,
-    RegisterValidatorRequest, RegisterValidatorResponse,
-};
+use snapchain::{AccountStateTransition, Block, GossipMessage, RegisterValidator, ShardChunk, Validator};
 
 #[derive(Debug, Clone)]
 struct SnapchainState {
@@ -27,29 +24,52 @@ struct SnapchainState {
 #[derive(Debug)]
 struct SnapchainApp {
     id: u32,
+    pubkey: String,
     state: SnapchainState,
     mempool: Vec<AccountStateTransition>,
     validators: HashMap<u32, String>,
 }
 
 impl SnapchainApp {
-    fn new(id: u32) -> Self {
+    fn new(id: u32, pubkey: String) -> Self {
+        let mut validators = HashMap::new();
+        validators.insert(id, pubkey.clone()); // Add self as validator
         SnapchainApp {
             id,
-            state: SnapchainState {
-                blocks: vec![],
-            },
+            pubkey,
+            state: SnapchainState { blocks: vec![] },
             mempool: vec![],
-            validators: HashMap::new(),
+            validators,
         }
+    }
+
+    pub fn is_leader(&self) -> bool {
+        // Don't start leader election (and block production) until we have 3 validators
+        if self.validators.len() < 3 {
+            return false;
+        }
+
+        // TODO: Check timestamp of last block and don't propose a block if it's too soon
+
+        // Simple round-robin leader election, based on height, trusting the ids
+        // TODO: Use leader schedule in the starting block of an epcoh
+        if self.height() % self.validators.len() as u64 == self.id as u64 {
+            return true;
+        }
+
+        false
     }
 
     fn add_transaction(&mut self, tx: AccountStateTransition) {
         self.mempool.push(tx);
     }
 
+    fn height(&self) -> u64 {
+        self.state.blocks.len() as u64
+    }
+
     fn create_block(&mut self) -> Block {
-        let height = self.state.blocks.len() as u64 + 1;
+        let height = self.height() + 1;
         let state_transitions: Vec<AccountStateTransition> = self.mempool.drain(..).collect();
         let previous_hash = if let Some(last_block) = self.state.blocks.last() {
             last_block.previous_hash.clone()
@@ -58,9 +78,23 @@ impl SnapchainApp {
         };
         let merkle_root = calculate_merkle_root(&state_transitions);
 
+        // Generate the leader schedule by sorting the validators by their ID
+        let mut leader_schedule: Vec<u32> = self.validators.keys().copied().collect();
+        leader_schedule.sort();
+        // Create a vector of Validator objects from the sorted IDs
+        let mut leader_schedule: Vec<Validator> = self.validators.iter().map(|(id, address)| {
+            Validator {
+                id: *id,
+                pubkey: (*address).clone(),
+            }
+        }).collect();
+        // Sort the Validator objects by their ID
+        // TODO: Use a VRF to generate the leader schedule at the start of every epoch
+        leader_schedule.sort_by_key(|v| v.id);
+
         Block {
             height,
-            leader_schedule: vec![], // TODO: Implement leader schedule
+            leader_schedule,    // Can be empty except for epoch starting blocks
             shard_chunks: vec![ShardChunk {
                 height,
                 state_transitions,
@@ -74,6 +108,7 @@ impl SnapchainApp {
     }
 
     fn apply_block(&mut self, block: Block) {
+        // TODO: Validate block
         self.state.blocks.push(block);
     }
 
@@ -117,97 +152,10 @@ fn calculate_merkle_root(transactions: &[AccountStateTransition]) -> String {
     hashes[0].clone()
 }
 
-#[derive(Debug)]
-pub struct SnapchainServiceImpl {
-    app: Arc<Mutex<SnapchainApp>>,
-    id: u32,
-}
-
-impl SnapchainServiceImpl {
-    fn new(id: u32) -> Self {
-        SnapchainServiceImpl {
-            app: Arc::new(Mutex::new(SnapchainApp::new(id))),
-            id,
-        }
-    }
-}
-
-#[tonic::async_trait]
-impl SnapchainService for SnapchainServiceImpl {
-    async fn submit_transaction(
-        &self,
-        request: Request<SubmitTransactionRequest>,
-    ) -> Result<Response<SubmitTransactionResponse>, Status> {
-        let tx = request.into_inner().transaction.unwrap();
-        
-        let mut app = self.app.lock();
-        app.add_transaction(tx);
-
-        Ok(Response::new(SubmitTransactionResponse {
-            success: true,
-            message: "Transaction added to mempool".to_string(),
-        }))
-    }
-
-    async fn submit_shard(
-        &self,
-        request: Request<SubmitShardRequest>,
-    ) -> Result<Response<SubmitShardResponse>, Status> {
-        let shard = request.into_inner().shard.unwrap();
-        
-        // Here you would implement the logic to handle the submitted shard
-        // For now, we'll just print the shard details
-        println!("Received shard: {:?}", shard);
-
-        Ok(Response::new(SubmitShardResponse {
-            success: true,
-            message: "Shard received".to_string(),
-        }))
-    }
-
-    async fn submit_block(
-        &self,
-        request: Request<SubmitBlockRequest>,
-    ) -> Result<Response<SubmitBlockResponse>, Status> {
-        let block = request.into_inner().block.unwrap();
-        
-        let mut app = self.app.lock();
-        app.apply_block(block);
-
-        Ok(Response::new(SubmitBlockResponse {
-            success: true,
-            message: "Block applied to the chain".to_string(),
-        }))
-    }
-
-    async fn register_validator(
-        &self,
-        request: Request<RegisterValidatorRequest>,
-    ) -> Result<Response<RegisterValidatorResponse>, Status> {
-        let req = request.into_inner();
-        
-        if self.id != 0 {
-            return Ok(Response::new(RegisterValidatorResponse {
-                success: false,
-                message: "Only the primary validator (ID 0) can accept registrations".to_string(),
-            }));
-        }
-
-        let mut app = self.app.lock();
-        let success = app.register_validator(req.id, req.address);
-
-        if success {
-            Ok(Response::new(RegisterValidatorResponse {
-                success: true,
-                message: format!("Validator {} registered successfully", req.id),
-            }))
-        } else {
-            Ok(Response::new(RegisterValidatorResponse {
-                success: false,
-                message: format!("Validator {} already registered", req.id),
-            }))
-        }
-    }
+#[derive(NetworkBehaviour)]
+struct SnapchainBehaviour {
+    gossipsub: gossipsub::Behaviour,
+    mdns: mdns::tokio::Behaviour,
 }
 
 #[derive(Parser, Debug)]
@@ -222,35 +170,168 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let base_port = 50050;
     let port = base_port + args.id;
-    let addr: SocketAddr = format!("[::1]:{}", port).parse()?;
-    let snapchain_service = SnapchainServiceImpl::new(args.id);
+    let addr = format!("/ip4/0.0.0.0/udp/{}/quic-v1", port);
 
     println!("SnapchainService (ID: {}) listening on {}", args.id, addr);
 
-    if args.id > 0 {
-        // Register with the primary validator (ID 0)
-        let primary_addr = format!("http://[::1]:{}", base_port);
-        let mut client = snapchain::snapchain_service_client::SnapchainServiceClient::connect(primary_addr).await?;
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .try_init();
 
-        let request = tonic::Request::new(RegisterValidatorRequest {
-            id: args.id,
-            address: addr.to_string(),
-        });
+    let mut swarm = libp2p::SwarmBuilder::with_new_identity()
+        .with_tokio()
+        .with_tcp(
+            tcp::Config::default(),
+            noise::Config::new,
+            yamux::Config::default,
+        )?
+        .with_quic()
+        .with_behaviour(|key| {
+            // To content-address message, we can take the hash of message and use it as an ID.
+            let message_id_fn = |message: &gossipsub::Message| {
+                let mut s = DefaultHasher::new();
+                message.data.hash(&mut s);
+                gossipsub::MessageId::from(s.finish().to_string())
+            };
 
-        match client.register_validator(request).await {
-            Ok(response) => {
-                println!("Registration response: {:?}", response);
+            // Set a custom gossipsub configuration
+            let gossipsub_config = gossipsub::ConfigBuilder::default()
+                .heartbeat_interval(Duration::from_secs(10)) // This is set to aid debugging by not cluttering the log space
+                .validation_mode(gossipsub::ValidationMode::Strict) // This sets the kind of message validation. The default is Strict (enforce message signing)
+                .message_id_fn(message_id_fn) // content-address messages. No two messages of the same content will be propagated.
+                .build()
+                .map_err(|msg| io::Error::new(io::ErrorKind::Other, msg))?; // Temporary hack because `build` does not return a proper `std::error::Error`.
+
+            // build a gossipsub network behaviour
+            let gossipsub = gossipsub::Behaviour::new(
+                gossipsub::MessageAuthenticity::Signed(key.clone()),
+                gossipsub_config,
+            )?;
+
+            let mdns =
+                mdns::tokio::Behaviour::new(mdns::Config::default(), key.public().to_peer_id())?;
+            Ok(SnapchainBehaviour { gossipsub, mdns })
+        })?
+        .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
+        .build();
+
+    let mut snapchain_app = SnapchainApp::new(args.id, swarm.local_peer_id().to_string());
+
+    // Create a Gossipsub topic
+    let topic = gossipsub::IdentTopic::new("test-net");
+    // subscribes to our topic
+    swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
+
+    // Read full lines from stdin
+    let mut stdin = io::BufReader::new(io::stdin()).lines();
+
+    // Listen on all assigned port for this id
+    swarm.listen_on(addr.parse()?)?;
+
+    // Create a timer for block creation
+    let mut block_interval = time::interval(Duration::from_secs(2));
+
+    let mut tick_count = 0;
+
+    // Kick it off
+    loop {
+        select! {
+            _ = block_interval.tick() => {
+                tick_count += 1;
+                // Every 5 ticks, re-register the validators so that new nodes can discover each other
+                if tick_count % 5 == 0 {
+                    let register_validator = RegisterValidator {
+                        id: snapchain_app.id,
+                        address: swarm.local_peer_id().to_string(),
+                        nonce: tick_count as u64,   // Need the nonce to avoid the gossip duplicate message check
+                    };
+                    let gossip_message = GossipMessage {
+                        message: Some(snapchain::gossip_message::Message::Validator(register_validator)),
+                    };
+                    let encoded_message = gossip_message.encode_to_vec();
+
+                    if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic.clone(), encoded_message) {
+                        println!("Failed to publish RegisterValidator message: {:?}", e);
+                    } else {
+                        // println!("Published RegisterValidator message");
+                    }
+                }
+
+                if !snapchain_app.is_leader() {
+                    continue;
+                }
+
+                let new_block = snapchain_app.create_block();
+                let gossip_message = GossipMessage {
+                    message: Some(snapchain::gossip_message::Message::Block(new_block.clone())),
+                };
+                let encoded_message = gossip_message.encode_to_vec();
+
+                if let Err(e) = swarm
+                    .behaviour_mut().gossipsub
+                    .publish(topic.clone(), encoded_message) {
+                    let peers = swarm.behaviour_mut().gossipsub.all_peers().count();
+                    println!("Publish error for new block: {e:?}, connected peers: {peers}");
+                } else {
+                    println!("Published new block with height: {}", new_block.height);
+                }
+
+                snapchain_app.apply_block(new_block);
             }
-            Err(e) => {
-                eprintln!("Failed to register with primary validator: {:?}", e);
+            event = swarm.select_next_some() => match event {
+                SwarmEvent::Behaviour(SnapchainBehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
+                    for (peer_id, _multiaddr) in list {
+                        println!("mDNS discovered a new peer: {peer_id}");
+                        swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                    }
+                },
+                SwarmEvent::Behaviour(SnapchainBehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
+                    for (peer_id, _multiaddr) in list {
+                        println!("mDNS discover peer has expired: {peer_id}");
+                        swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer_id);
+
+                        // TODO: Remove validator
+                    }
+                },
+                SwarmEvent::Behaviour(SnapchainBehaviourEvent::Gossipsub(gossipsub::Event::Message {
+                    propagation_source: peer_id,
+                    message_id: id,
+                    message,
+                })) => {
+                    match GossipMessage::decode(&message.data[..]) {
+                        Ok(gossip_message) => {
+                            match gossip_message.message {
+                                Some(snapchain::gossip_message::Message::Block(block)) => {
+                                    println!("Received block with height {} from peer: {}", block.height, peer_id);
+                                    snapchain_app.apply_block(block);
+                                },
+                                Some(snapchain::gossip_message::Message::Shard(shard)) => {
+                                    println!("Received shard with height {} from peer: {}", shard.height, peer_id);
+                                    // Handle shard
+                                },
+                                Some(snapchain::gossip_message::Message::Validator(validator)) => {
+                                    println!("Received validator registration from peer: {}", peer_id);
+                                    snapchain_app.register_validator(validator.id, validator.address);
+                                },
+                                None => println!("Received empty gossip message from peer: {}", peer_id),
+                            }
+                        },
+                        Err(e) => println!("Failed to decode gossip message: {}", e),
+                    }
+                },
+                SwarmEvent::Behaviour(SnapchainBehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) =>
+                println!(
+                        "Peer: {peer_id} subscribed to topic: {topic}",
+                    ),
+                SwarmEvent::Behaviour(SnapchainBehaviourEvent::Gossipsub(gossipsub::Event::Unsubscribed { peer_id, topic })) =>
+                println!(
+                        "Peer: {peer_id} unsubscribed to topic: {topic}",
+                    ),
+                SwarmEvent::NewListenAddr { address, .. } => {
+                    println!("Local node is listening on {address}");
+                }
+                _ => {}
             }
         }
     }
-
-    Server::builder()
-        .add_service(SnapchainServiceServer::new(snapchain_service))
-        .serve(addr)
-        .await?;
-
-    Ok(())
 }

@@ -1,15 +1,8 @@
 syntax = "proto3";
 package snapchain;
 
-service SnapchainService {
-  rpc SubmitTransaction (SubmitTransactionRequest) returns (SubmitTransactionResponse);
-  rpc SubmitShard (SubmitShardRequest) returns (SubmitShardResponse);
-  rpc SubmitBlock (SubmitBlockRequest) returns (SubmitBlockResponse);
-  rpc RegisterValidator (RegisterValidatorRequest) returns (RegisterValidatorResponse);
-}
-
 message Validator {
-  string id = 1;
+  uint32 id = 1;
   string pubkey = 2;
 }
 
@@ -35,39 +28,18 @@ message AccountStateTransition {
   string data = 3;
 }
 
-message SubmitTransactionRequest {
-  AccountStateTransition transaction = 1;
-}
-
-message SubmitTransactionResponse {
-  bool success = 1;
-  string message = 2;
-}
-
-message SubmitShardRequest {
-  ShardChunk shard = 1;
-}
-
-message SubmitShardResponse {
-  bool success = 1;
-  string message = 2;
-}
-
-message SubmitBlockRequest {
-  Block block = 1;
-}
-
-message SubmitBlockResponse {
-  bool success = 1;
-  string message = 2;
-}
-
-message RegisterValidatorRequest {
+// Gossip related messages
+message RegisterValidator {
   uint32 id = 1;
   string address = 2;
+  uint64 nonce = 3;
 }
 
-message RegisterValidatorResponse {
-  bool success = 1;
-  string message = 2;
+message GossipMessage {
+  oneof message {
+    Block block = 1;
+    ShardChunk shard = 2;
+    RegisterValidator validator = 4;
+  }
 }
+
