@@ -12,14 +12,22 @@ message Block {
   repeated ShardChunk shard_chunks = 3;
   string previous_hash = 4;
   string merkle_root = 5;
+  uint64 timestamp = 6;
+  repeated Vote votes = 7;
+}
+
+message Vote {
+    uint32 id = 1;  // Validator id
+    uint32 shard_index = 2;
+    bytes signature = 3;
 }
 
 message ShardChunk {
-  uint64 height = 1;
-  repeated AccountStateTransition state_transitions = 2;
-  string previous_hash = 3;
-  string merkle_root = 4;
-  string signature = 5;
+  uint32 shard_index = 1;
+  uint64 height = 2;
+  repeated AccountStateTransition state_transitions = 3;
+  string previous_hash = 4;
+  string merkle_root = 5;
 }
 
 message AccountStateTransition {

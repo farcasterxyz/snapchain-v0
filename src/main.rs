@@ -1,20 +1,24 @@
+use std::time::UNIX_EPOCH;
+use std::time::SystemTime;
 use clap::Parser;
 use futures::stream::StreamExt;
-use libp2p::{gossipsub, mdns, noise, swarm::NetworkBehaviour, swarm::SwarmEvent, tcp, yamux};
+use libp2p::{gossipsub, mdns, noise, swarm::NetworkBehaviour, swarm::SwarmEvent, tcp, yamux, PeerId};
 use prost::Message;
 use sha2::{Digest, Sha256};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
-use tokio::{io, io::AsyncBufReadExt, select, time, time::sleep};
+use tokio::{io, io::AsyncBufReadExt, select, time};
 use tracing_subscriber::EnvFilter;
+use libp2p::identity::ed25519::{Keypair, PublicKey};
+use std::str::FromStr;
 
 pub mod snapchain {
     tonic::include_proto!("snapchain");
 }
 
-use snapchain::{AccountStateTransition, Block, GossipMessage, RegisterValidator, ShardChunk, Validator};
+use snapchain::{AccountStateTransition, Block, GossipMessage, RegisterValidator, ShardChunk, Validator, Vote};
 
 #[derive(Debug, Clone)]
 struct SnapchainState {
@@ -24,19 +28,29 @@ struct SnapchainState {
 #[derive(Debug)]
 struct SnapchainApp {
     id: u32,
-    pubkey: String,
+    peer_id: String,
     state: SnapchainState,
     mempool: Vec<AccountStateTransition>,
     validators: HashMap<u32, String>,
+    keypair: Keypair,
+}
+
+impl ShardChunk {
+    pub fn sign(&self, keypair: &Keypair) -> Vec<u8> {
+        let encoded = self.encode_to_vec();
+        keypair.sign(&encoded)
+    }
 }
 
 impl SnapchainApp {
-    fn new(id: u32, pubkey: String) -> Self {
+    fn new(id: u32, peer_id: String, keypair: Keypair) -> Self {
         let mut validators = HashMap::new();
-        validators.insert(id, pubkey.clone()); // Add self as validator
+        let public_key = hex::encode(&keypair.public().to_bytes());
+        validators.insert(id, public_key); // Add self as validator
         SnapchainApp {
             id,
-            pubkey,
+            peer_id,
+            keypair,
             state: SnapchainState { blocks: vec![] },
             mempool: vec![],
             validators,
@@ -91,25 +105,81 @@ impl SnapchainApp {
         // Sort the Validator objects by their ID
         // TODO: Use a VRF to generate the leader schedule at the start of every epoch
         leader_schedule.sort_by_key(|v| v.id);
-
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let chunk = ShardChunk {
+            shard_index: 0,
+            height,
+            state_transitions,
+            previous_hash: previous_hash.clone(),
+            merkle_root: merkle_root.clone(),
+        };
+        let vote = Vote {
+            shard_index: 0,
+            id: self.id,
+            signature: chunk.sign(&self.keypair),
+        };
         Block {
             height,
+            timestamp,
             leader_schedule,    // Can be empty except for epoch starting blocks
-            shard_chunks: vec![ShardChunk {
-                height,
-                state_transitions,
-                previous_hash: previous_hash.clone(),
-                merkle_root: merkle_root.clone(),
-                signature: "".to_string(), // TODO: Implement signature
-            }],
+            shard_chunks: vec![chunk],
             previous_hash,
             merkle_root,
+            votes: vec![vote],
         }
     }
 
-    fn apply_block(&mut self, block: Block) {
-        // TODO: Validate block
+    fn apply_block(&mut self, block: Block) -> bool {
+        // Verify that the block height is correct
+        if block.height != self.height() + 1 {
+            println!("Invalid block height");
+            return false;
+        }
+
+        // Verify that the previous hash matches
+        if let Some(last_block) = self.state.blocks.last() {
+            if block.previous_hash != last_block.previous_hash {
+                println!("Invalid previous hash");
+                return false;
+            }
+        } else if block.height != 1 {
+            println!("First block must have height 1");
+            return false;
+        }
+
+        // Verify the votes
+        for vote in &block.votes {
+            if let Some(public_key_string) = self.validators.get(&vote.id) {
+                // Convert the validator's address (public key) from hex to PublicKey
+                if let Ok(public_key) = PublicKey::try_from_bytes(&hex::decode(public_key_string).unwrap()) {
+                    // Recreate the ShardChunk to verify the signature
+                    let chunk = &block.shard_chunks[vote.shard_index as usize];
+                    let encoded_chunk = chunk.encode_to_vec();
+                    // Verify the signature
+                    if public_key.verify(&encoded_chunk, &vote.signature) {
+                        println!("Valid vote from validator {}", vote.id);
+                    } else {
+                        println!("Invalid vote signature from validator {}", vote.id);
+                    }
+                } else {
+                    println!("Failed to decode public key for validator {}", vote.id);
+                }
+            } else {
+                println!("Unknown validator {}", vote.id);
+            }
+        }
+
+        // // Check if we have enough valid votes (e.g., more than 2/3 of validators)
+        // let required_votes = (self.validators.len() * 2 / 3) + 1;
+        // if valid_votes < required_votes {
+        //     println!("Not enough valid votes. Got {}, required {}", valid_votes, required_votes);
+        //     return false;
+        // }
+
+        // If all checks pass, apply the block
         self.state.blocks.push(block);
+        println!("Applied block with height: {}", self.height());
+        true
     }
 
     fn register_validator(&mut self, id: u32, address: String) -> bool {
@@ -178,7 +248,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(EnvFilter::from_default_env())
         .try_init();
 
-    let mut swarm = libp2p::SwarmBuilder::with_new_identity()
+    let keypair = Keypair::generate();
+
+    let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair.clone().into())
         .with_tokio()
         .with_tcp(
             tcp::Config::default(),
@@ -215,15 +287,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
         .build();
 
-    let mut snapchain_app = SnapchainApp::new(args.id, swarm.local_peer_id().to_string());
+    let mut snapchain_app = SnapchainApp::new(args.id, swarm.local_peer_id().to_string(), keypair);
 
     // Create a Gossipsub topic
     let topic = gossipsub::IdentTopic::new("test-net");
     // subscribes to our topic
     swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
-
-    // Read full lines from stdin
-    let mut stdin = io::BufReader::new(io::stdin()).lines();
 
     // Listen on all assigned port for this id
     swarm.listen_on(addr.parse()?)?;
@@ -242,7 +311,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if tick_count % 5 == 0 {
                     let register_validator = RegisterValidator {
                         id: snapchain_app.id,
-                        address: swarm.local_peer_id().to_string(),
+                        address: hex::encode(&snapchain_app.keypair.public().to_bytes()),
                         nonce: tick_count as u64,   // Need the nonce to avoid the gossip duplicate message check
                     };
                     let gossip_message = GossipMessage {
@@ -310,7 +379,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     // Handle shard
                                 },
                                 Some(snapchain::gossip_message::Message::Validator(validator)) => {
-                                    println!("Received validator registration from peer: {}", peer_id);
+                                    // println!("Received validator registration from peer: {}", peer_id);
                                     snapchain_app.register_validator(validator.id, validator.address);
                                 },
                                 None => println!("Received empty gossip message from peer: {}", peer_id),
