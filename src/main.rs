@@ -1,24 +1,33 @@
-use std::time::UNIX_EPOCH;
-use std::time::SystemTime;
+mod consensus;
+mod core;
+mod host;
+
 use clap::Parser;
 use futures::stream::StreamExt;
-use libp2p::{gossipsub, mdns, noise, swarm::NetworkBehaviour, swarm::SwarmEvent, tcp, yamux, PeerId};
+use libp2p::identity::ed25519::{Keypair, PublicKey};
+use libp2p::{
+    gossipsub, mdns, noise, swarm::NetworkBehaviour, swarm::SwarmEvent, tcp, yamux, PeerId,
+};
 use prost::Message;
 use sha2::{Digest, Sha256};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::str::FromStr;
 use std::time::Duration;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 use tokio::{io, io::AsyncBufReadExt, select, time};
 use tracing_subscriber::EnvFilter;
-use libp2p::identity::ed25519::{Keypair, PublicKey};
-use std::str::FromStr;
 
 pub mod snapchain {
     tonic::include_proto!("snapchain");
 }
 
-use snapchain::{AccountStateTransition, Block, GossipMessage, RegisterValidator, ShardChunk, Validator, Vote};
+use crate::snapchain::Transaction;
+use snapchain::{
+    Block, GossipMessage, RegisterValidator, ShardChunk, UserMessage, Validator, Vote,
+};
 
 #[derive(Debug, Clone)]
 struct SnapchainState {
@@ -30,7 +39,7 @@ struct SnapchainApp {
     id: u32,
     peer_id: String,
     state: SnapchainState,
-    mempool: Vec<AccountStateTransition>,
+    mempool: Vec<UserMessage>,
     validators: HashMap<u32, String>,
     keypair: Keypair,
 }
@@ -74,8 +83,8 @@ impl SnapchainApp {
         false
     }
 
-    fn add_transaction(&mut self, tx: AccountStateTransition) {
-        self.mempool.push(tx);
+    fn add_transaction(&mut self, user_message: UserMessage) {
+        self.mempool.push(user_message);
     }
 
     fn height(&self) -> u64 {
@@ -83,102 +92,16 @@ impl SnapchainApp {
     }
 
     fn create_block(&mut self) -> Block {
-        let height = self.height() + 1;
-        let state_transitions: Vec<AccountStateTransition> = self.mempool.drain(..).collect();
-        let previous_hash = if let Some(last_block) = self.state.blocks.last() {
-            last_block.previous_hash.clone()
-        } else {
-            "0".repeat(64)
-        };
-        let merkle_root = calculate_merkle_root(&state_transitions);
-
-        // Generate the leader schedule by sorting the validators by their ID
-        let mut leader_schedule: Vec<u32> = self.validators.keys().copied().collect();
-        leader_schedule.sort();
-        // Create a vector of Validator objects from the sorted IDs
-        let mut leader_schedule: Vec<Validator> = self.validators.iter().map(|(id, address)| {
-            Validator {
-                id: *id,
-                pubkey: (*address).clone(),
-            }
-        }).collect();
-        // Sort the Validator objects by their ID
-        // TODO: Use a VRF to generate the leader schedule at the start of every epoch
-        leader_schedule.sort_by_key(|v| v.id);
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        let chunk = ShardChunk {
-            shard_index: 0,
-            height,
-            state_transitions,
-            previous_hash: previous_hash.clone(),
-            merkle_root: merkle_root.clone(),
-        };
-        let vote = Vote {
-            shard_index: 0,
-            id: self.id,
-            signature: chunk.sign(&self.keypair),
-        };
         Block {
-            height,
-            timestamp,
-            leader_schedule,    // Can be empty except for epoch starting blocks
-            shard_chunks: vec![chunk],
-            previous_hash,
-            merkle_root,
-            votes: vec![vote],
+            header: None,
+            votes: None,
+            validators: None,
+            hash: vec![],
+            shard_chunks: vec![],
         }
     }
 
     fn apply_block(&mut self, block: Block) -> bool {
-        // Verify that the block height is correct
-        if block.height != self.height() + 1 {
-            println!("Invalid block height");
-            return false;
-        }
-
-        // Verify that the previous hash matches
-        if let Some(last_block) = self.state.blocks.last() {
-            if block.previous_hash != last_block.previous_hash {
-                println!("Invalid previous hash");
-                return false;
-            }
-        } else if block.height != 1 {
-            println!("First block must have height 1");
-            return false;
-        }
-
-        // Verify the votes
-        for vote in &block.votes {
-            if let Some(public_key_string) = self.validators.get(&vote.id) {
-                // Convert the validator's address (public key) from hex to PublicKey
-                if let Ok(public_key) = PublicKey::try_from_bytes(&hex::decode(public_key_string).unwrap()) {
-                    // Recreate the ShardChunk to verify the signature
-                    let chunk = &block.shard_chunks[vote.shard_index as usize];
-                    let encoded_chunk = chunk.encode_to_vec();
-                    // Verify the signature
-                    if public_key.verify(&encoded_chunk, &vote.signature) {
-                        println!("Valid vote from validator {}", vote.id);
-                    } else {
-                        println!("Invalid vote signature from validator {}", vote.id);
-                    }
-                } else {
-                    println!("Failed to decode public key for validator {}", vote.id);
-                }
-            } else {
-                println!("Unknown validator {}", vote.id);
-            }
-        }
-
-        // // Check if we have enough valid votes (e.g., more than 2/3 of validators)
-        // let required_votes = (self.validators.len() * 2 / 3) + 1;
-        // if valid_votes < required_votes {
-        //     println!("Not enough valid votes. Got {}, required {}", valid_votes, required_votes);
-        //     return false;
-        // }
-
-        // If all checks pass, apply the block
-        self.state.blocks.push(block);
-        println!("Applied block with height: {}", self.height());
         true
     }
 
@@ -191,35 +114,6 @@ impl SnapchainApp {
             false
         }
     }
-}
-
-fn calculate_merkle_root(transactions: &[AccountStateTransition]) -> String {
-    if transactions.is_empty() {
-        return "0".repeat(64);
-    }
-    let mut hashes: Vec<String> = transactions
-        .iter()
-        .map(|tx| {
-            let mut hasher = Sha256::new();
-            hasher.update(format!("{}{}{}", tx.fid, tx.merkle_root, tx.data));
-            format!("{:x}", hasher.finalize())
-        })
-        .collect();
-
-    while hashes.len() > 1 {
-        let mut new_hashes = Vec::new();
-        for chunk in hashes.chunks(2) {
-            let mut hasher = Sha256::new();
-            hasher.update(chunk[0].as_bytes());
-            if chunk.len() > 1 {
-                hasher.update(chunk[1].as_bytes());
-            }
-            new_hashes.push(format!("{:x}", hasher.finalize()));
-        }
-        hashes = new_hashes;
-    }
-
-    hashes[0].clone()
 }
 
 #[derive(NetworkBehaviour)]
@@ -309,21 +203,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tick_count += 1;
                 // Every 5 ticks, re-register the validators so that new nodes can discover each other
                 if tick_count % 5 == 0 {
-                    let register_validator = RegisterValidator {
-                        id: snapchain_app.id,
-                        address: hex::encode(&snapchain_app.keypair.public().to_bytes()),
-                        nonce: tick_count as u64,   // Need the nonce to avoid the gossip duplicate message check
-                    };
-                    let gossip_message = GossipMessage {
-                        message: Some(snapchain::gossip_message::Message::Validator(register_validator)),
-                    };
-                    let encoded_message = gossip_message.encode_to_vec();
-
-                    if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic.clone(), encoded_message) {
-                        println!("Failed to publish RegisterValidator message: {:?}", e);
-                    } else {
-                        // println!("Published RegisterValidator message");
-                    }
+                    // let register_validator = RegisterValidator {
+                    //     id: snapchain_app.id,
+                    //     address: hex::encode(&snapchain_app.keypair.public().to_bytes()),
+                    //     nonce: tick_count as u64,   // Need the nonce to avoid the gossip duplicate message check
+                    // };
+                    // let gossip_message = GossipMessage {
+                    //     message: Some(snapchain::gossip_message::Message::Validator(register_validator)),
+                    // };
+                    // let encoded_message = gossip_message.encode_to_vec();
+                    //
+                    // if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic.clone(), encoded_message) {
+                    //     println!("Failed to publish RegisterValidator message: {:?}", e);
+                    // } else {
+                    //     // println!("Published RegisterValidator message");
+                    // }
                 }
 
                 if !snapchain_app.is_leader() {
@@ -342,10 +236,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let peers = swarm.behaviour_mut().gossipsub.all_peers().count();
                     println!("Publish error for new block: {e:?}, connected peers: {peers}");
                 } else {
-                    println!("Published new block with height: {}", new_block.height);
+                    println!("Published new block with height: {}", new_block.header.unwrap().height.unwrap().height);
                 }
 
-                snapchain_app.apply_block(new_block);
+                // snapchain_app.apply_block(new_block);
             }
             event = swarm.select_next_some() => match event {
                 SwarmEvent::Behaviour(SnapchainBehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
@@ -371,17 +265,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Ok(gossip_message) => {
                             match gossip_message.message {
                                 Some(snapchain::gossip_message::Message::Block(block)) => {
-                                    println!("Received block with height {} from peer: {}", block.height, peer_id);
-                                    snapchain_app.apply_block(block);
+                                    let height = block.header.unwrap().height.unwrap().height;
+                                    println!("Received block with height {} from peer: {}", height, peer_id);
+                                    // snapchain_app.apply_block(block);
                                 },
                                 Some(snapchain::gossip_message::Message::Shard(shard)) => {
-                                    println!("Received shard with height {} from peer: {}", shard.height, peer_id);
+                                    println!("Received shard with height {} from peer: {}", shard.header.unwrap().height.unwrap().height, peer_id);
                                     // Handle shard
                                 },
                                 Some(snapchain::gossip_message::Message::Validator(validator)) => {
                                     // println!("Received validator registration from peer: {}", peer_id);
-                                    snapchain_app.register_validator(validator.id, validator.address);
+                                    // snapchain_app.register_validator(validator.id, validator.address);
                                 },
+                                _ => println!("Unhandled message from peer: {}", peer_id),
                                 None => println!("Received empty gossip message from peer: {}", peer_id),
                             }
                         },

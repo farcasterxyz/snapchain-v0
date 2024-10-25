@@ -1,53 +1,139 @@
 syntax = "proto3";
 package snapchain;
 
+// Common types
+
 message Validator {
-  uint32 id = 1;
-  string pubkey = 2;
+  uint64 fid = 1;
+  bytes signer = 2;
 }
 
-message Block {
-  uint64 height = 1;
-  repeated Validator leader_schedule = 2;
-  repeated ShardChunk shard_chunks = 3;
-  string previous_hash = 4;
-  string merkle_root = 5;
-  uint64 timestamp = 6;
-  repeated Vote votes = 7;
+message ValidatorSet {
+  repeated Validator validators = 1;
+}
+
+message Height {
+  uint32 shard_index = 1;
+  uint64 height = 2;
+}
+
+message Round {
+  uint32 shard_index = 1;
+  uint64 round = 2;
+}
+
+
+// Consensus messages
+enum VoteType {
+  PREVOTE = 0;
+  PRECOMMIT = 1;
 }
 
 message Vote {
-    uint32 id = 1;  // Validator id
-    uint32 shard_index = 2;
-    bytes signature = 3;
+  VoteType type = 1;
+  Height height = 2;
+  Round round = 3;
+  bytes block_hash = 4;
+  Validator voter = 5;
+}
+
+// Votes of at least 2/3 of the validators, required to independently verify that consensus was reached
+message ConfirmedVotes {
+  repeated Vote votes = 1;
+  repeated bytes signatures = 3;
+}
+
+message Proposal {
+  Height height = 1;
+  Round round = 2;
+  Validator proposer = 3;
+  repeated Transaction transactions = 4;  // Transactions for the shard level proposals (submitted by shard leader)
+  repeated ShardHeader shard_headers = 5; // shard headers for the block level proposal (submitted by the block leader)
+}
+
+message ConsensusMessage {
+  oneof message {
+    Vote vote = 1;
+    Proposal proposal = 2;
+  }
+  bytes signature = 3;
+}
+
+// Block types
+message BlockHeader {
+  Height height = 1;
+  uint64 timestamp = 2;
+  uint32 version = 3;
+  uint32 chain_id = 4;
+  bytes validators_hash = 5;
+  bytes shard_headers_hash = 6;
+  bytes parent_hash = 7;
+}
+
+
+message Block {
+  BlockHeader header = 1;
+  bytes hash = 2;
+  repeated ShardChunk shard_chunks = 3;
+  optional ValidatorSet validators = 4;
+  ConfirmedVotes votes = 5;
+}
+
+message ShardHeader {
+  Height height = 1;
+  uint64 timestamp = 2;
+  bytes parent_hash = 3;
+  bytes shard_root = 4; // State root for the shard after applying the transactions for the height
 }
 
 message ShardChunk {
-  uint32 shard_index = 1;
-  uint64 height = 2;
-  repeated AccountStateTransition state_transitions = 3;
-  string previous_hash = 4;
-  string merkle_root = 5;
+  ShardHeader header = 1;
+  bytes hash = 2;
+  repeated Transaction transactions = 3;
+  ConfirmedVotes votes = 4;
 }
 
-message AccountStateTransition {
+message Transaction {
   uint64 fid = 1;
-  string merkle_root = 2;
-  string data = 3;
+  repeated UserMessage user_messages = 2;
+  repeated ValidatorMessage system_messages = 3;
+  bytes account_root = 4; // State root for the account after applying the transaction for the fid
 }
+
+// OnChain events
+message OnChainEvent {
+
+}
+
+// Fname transfers
+message FnameTransfer {
+
+}
+
+// User provided messages
+message UserMessage {
+
+}
+
+// Validator initiated prunes/revokes etc
+message ValidatorMessage {
+  OnChainEvent on_chain_event = 1;
+  FnameTransfer fname_transfer = 2;
+}
+
 
 // Gossip related messages
 message RegisterValidator {
-  uint32 id = 1;
-  string address = 2;
-  uint64 nonce = 3;
+  Validator validator = 1;
+  uint64 nonce = 2;
 }
 
 message GossipMessage {
   oneof message {
     Block block = 1;
     ShardChunk shard = 2;
-    RegisterValidator validator = 4;
+    ConsensusMessage consensus = 3;
+    RegisterValidator validator = 4;  // Remove before testnet, once in-protocol leader rotation is implemented
   }
 }
 
