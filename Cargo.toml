@@ -24,13 +24,6 @@ malachite-config = { path = "../malachite/code/crates/config"}
 malachite-node = { path = "../malachite/code/crates/node"}
 malachite-metrics = { path = "../malachite/code/crates/metrics"}
 
-# Remove
-malachite-starknet-p2p-types = { path = "../malachite/code/crates/starknet/p2p-types"}
-malachite-starknet-p2p-proto = { path = "../malachite/code/crates/starknet/p2p-proto"}
-
-# Starknet - remove
-starknet-core   = "0.11.1"
-starknet-crypto = "0.7.1"
 tracing = "0.1.40"
 
 

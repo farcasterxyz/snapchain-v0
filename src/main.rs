@@ -1,6 +1,5 @@
 mod consensus;
 mod core;
-mod host;
 
 use clap::Parser;
 use futures::stream::StreamExt;
@@ -15,8 +14,6 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 use std::time::Duration;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 use tokio::{io, io::AsyncBufReadExt, select, time};
 use tracing_subscriber::EnvFilter;
 
@@ -236,7 +233,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let peers = swarm.behaviour_mut().gossipsub.all_peers().count();
                     println!("Publish error for new block: {e:?}, connected peers: {peers}");
                 } else {
-                    println!("Published new block with height: {}", new_block.header.unwrap().height.unwrap().height);
+                    println!("Published new block with height: {}", new_block.header.unwrap().height.unwrap().block_number);
                 }
 
                 // snapchain_app.apply_block(new_block);
@@ -265,12 +262,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Ok(gossip_message) => {
                             match gossip_message.message {
                                 Some(snapchain::gossip_message::Message::Block(block)) => {
-                                    let height = block.header.unwrap().height.unwrap().height;
+                                    let height = block.header.unwrap().height.unwrap().block_number;
                                     println!("Received block with height {} from peer: {}", height, peer_id);
                                     // snapchain_app.apply_block(block);
                                 },
                                 Some(snapchain::gossip_message::Message::Shard(shard)) => {
-                                    println!("Received shard with height {} from peer: {}", shard.header.unwrap().height.unwrap().height, peer_id);
+                                    println!("Received shard with height {} from peer: {}", shard.header.unwrap().height.unwrap().block_number, peer_id);
                                     // Handle shard
                                 },
                                 Some(snapchain::gossip_message::Message::Validator(validator)) => {

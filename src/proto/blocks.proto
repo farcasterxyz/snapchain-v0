@@ -14,7 +14,7 @@ message ValidatorSet {
 
 message Height {
   uint32 shard_index = 1;
-  uint64 height = 2;
+  uint64 block_number = 2;
 }
 
 message Round {
@@ -29,11 +29,17 @@ enum VoteType {
   PRECOMMIT = 1;
 }
 
+// Uniquely identifies a hash within a shard
+message ShardHash {
+  uint32 shard_index = 1;
+  bytes hash = 2;
+}
+
 message Vote {
   VoteType type = 1;
   Height height = 2;
   Round round = 3;
-  bytes block_hash = 4;
+  ShardHash value = 4;
   Validator voter = 5;
 }
 
