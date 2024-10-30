@@ -1,14 +1,19 @@
 use core::fmt;
-use std::fmt::{Debug, Display};
-use malachite_common;
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use libp2p::bytes::Bytes;
-use malachite_common::{Extension, NilOrVal, Round, SignedProposal, SignedProposalPart, SignedVote, VoteType, VotingPower};
+use malachite_common;
+use malachite_common::{
+    Extension, NilOrVal, Round, SignedProposal, SignedProposalPart, SignedVote, VoteType,
+    VotingPower,
+};
+use serde::{Deserialize, Serialize};
+use std::fmt::{Debug, Display};
+use std::sync::Arc;
 
 pub mod snapchain {
     tonic::include_proto!("snapchain");
 }
+
+use snapchain::ShardHash;
 
 pub trait ShardId
 where
@@ -31,7 +36,6 @@ pub trait ShardedContext {
 }
 
 pub trait SnapchainContext: malachite_common::Context + ShardedContext {}
-
 
 // TODO: Should validator keys be ECDSA?
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -61,7 +65,6 @@ impl fmt::Display for InvalidSignatureError {
     }
 }
 
-
 // Ed25519 signature
 // Todo: Do we need the consensus-critical version? https://github.com/penumbra-zone/ed25519-consensus
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -83,8 +86,6 @@ impl malachite_common::SigningScheme for Ed25519 {
         todo!()
     }
 }
-
-
 
 // Blake3 20-byte hashes (same as Message/sync trie)
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -149,16 +150,15 @@ impl malachite_common::Height for Height {
     }
 }
 
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct ShardHash {
-    shard_index: u8,
-    hash: Hash,
-}
+// #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+// pub struct ShardHash {
+//     shard_index: u8,
+//     hash: Hash,
+// }
 
 impl fmt::Display for ShardHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}] {}", self.shard_index, self.hash)
+        write!(f, "[{}] {:?}", self.shard_index, &self.hash)
     }
 }
 
@@ -188,11 +188,10 @@ pub struct ValidatorSet {
     pub validators: Vec<Validator>,
 }
 
-
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Vote {
     pub vote_type: VoteType,
-    pub height:Height,
+    pub height: Height,
     pub round: Round,
     pub shard_hash: NilOrVal<ShardHash>,
     pub voter: Address,
@@ -254,7 +253,6 @@ impl Vote {
     }
 }
 
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Proposal {
     pub height: Height,
@@ -270,7 +268,6 @@ pub struct SinglePartProposal {
     pub proposal_round: Round,
     pub proposer: Address,
 }
-
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProposalPart {
@@ -361,7 +358,13 @@ impl malachite_common::Context for SnapchainValidator {
         pol_round: Round,
         address: Address,
     ) -> Proposal {
-        Proposal{height, round, shard_hash, pol_round, proposer: address}
+        Proposal {
+            height,
+            round,
+            shard_hash,
+            pol_round,
+            proposer: address,
+        }
     }
 
     fn new_prevote(

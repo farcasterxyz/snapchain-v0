@@ -8,14 +8,14 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use malachite_common::{
-    Context, Extension, NilOrVal, Round, SignedMessage, Timeout, TimeoutStep, ValidatorSet,
+    Context, Extension, Height, NilOrVal, Round, SignedMessage, Timeout, TimeoutStep, ValidatorSet,
     VoteType,
 };
 use malachite_config::TimeoutConfig;
 use malachite_consensus::{Effect, ProposedValue, Resume, SignedConsensusMsg};
 use malachite_metrics::Metrics;
 
-use crate::consensus::timers::TimerScheduler;
+use crate::consensus::timers::{TimeoutElapsed, TimerScheduler};
 use crate::core::types::SnapchainContext;
 pub use malachite_consensus::Params as ConsensusParams;
 pub use malachite_consensus::State as ConsensusState;
@@ -26,6 +26,12 @@ pub type ConsensusRef<Ctx> = ActorRef<Msg<Ctx>>;
 pub type TxDecision<Ctx> = mpsc::Sender<(<Ctx as Context>::Height, Round, <Ctx as Context>::Value)>;
 type Timers<Ctx> = TimerScheduler<Timeout, Msg<Ctx>>;
 
+impl<Ctx: Context + SnapchainContext> From<TimeoutElapsed<Timeout>> for Msg<Ctx> {
+    fn from(msg: TimeoutElapsed<Timeout>) -> Self {
+        Msg::TimeoutElapsed(msg)
+    }
+}
+
 pub enum Msg<Ctx: SnapchainContext> {
     // Inputs
     /// Start consensus for the given height
@@ -34,16 +40,17 @@ pub enum Msg<Ctx: SnapchainContext> {
     ProposeValue(Ctx::Height, Round, Ctx::Value, Option<Extension>),
     /// Received and assembled the full value proposed by a validator
     ReceivedProposedValue(ProposedValue<Ctx>),
-    // Effects
-    // StartRound(Ctx::Height, Round, Ctx::Address),
-    // Broadcast(SignedConsensusMsg<Ctx>),
-    // GetValue(Ctx::Height, Round, Timeout),
-    // Decide {
-    //     height: Ctx::Height,
-    //     round: Round,
-    //     value: Ctx::Value,
-    //     commits: Vec<SignedMessage<Ctx, Ctx::Vote>>,
-    // },
+
+    TimeoutElapsed(TimeoutElapsed<Timeout>), // Effects
+                                             // StartRound(Ctx::Height, Round, Ctx::Address),
+                                             // Broadcast(SignedConsensusMsg<Ctx>),
+                                             // GetValue(Ctx::Height, Round, Timeout),
+                                             // Decide {
+                                             //     height: Ctx::Height,
+                                             //     round: Round,
+                                             //     value: Ctx::Value,
+                                             //     commits: Vec<SignedMessage<Ctx, Ctx::Vote>>,
+                                             // },
 }
 
 struct Timeouts {
@@ -170,18 +177,18 @@ where
     ) -> Result<(), ActorProcessingErr> {
         match msg {
             Msg::StartHeight(height) => {
-                // let validator_set = self.get_validator_set(height).await?;
-                // let result = self
-                //     .process_input(
-                //         &myself,
-                //         state,
-                //         ConsensusInput::StartHeight(height, validator_set),
-                //     )
-                //     .await;
-                //
-                // if let Err(e) = result {
-                //     error!("Error when starting height {height}: {e:?}");
-                // }
+                let validator_set = self.get_validator_set(height).await?;
+                let result = self
+                    .process_input(
+                        &myself,
+                        state,
+                        ConsensusInput::StartHeight(height, validator_set),
+                    )
+                    .await;
+
+                if let Err(e) = result {
+                    error!("Error when starting height {height}: {e:?}");
+                }
 
                 Ok(())
             }
@@ -300,29 +307,28 @@ where
             //         }
             //     }
             // }
+            Msg::TimeoutElapsed(elapsed) => {
+                let Some(timeout) = state.timers.intercept_timer_msg(elapsed) else {
+                    // Timer was cancelled or already processed, ignore
+                    return Ok(());
+                };
 
-            // Msg::TimeoutElapsed(elapsed) => {
-            //     let Some(timeout) = state.timers.intercept_timer_msg(elapsed) else {
-            //         // Timer was cancelled or already processed, ignore
-            //         return Ok(());
-            //     };
-            //
-            //     state.timeouts.increase_timeout(timeout.step);
-            //
-            //     if matches!(timeout.step, TimeoutStep::Prevote | TimeoutStep::Precommit) {
-            //         warn!(step = ?timeout.step, "Timeout elapsed");
-            //     }
-            //
-            //     let result = self
-            //         .process_input(&myself, state, ConsensusInput::TimeoutElapsed(timeout))
-            //         .await;
-            //
-            //     if let Err(e) = result {
-            //         error!("Error when processing TimeoutElapsed message: {e:?}");
-            //     }
-            //
-            //     Ok(())
-            // }
+                state.timeouts.increase_timeout(timeout.step);
+
+                if matches!(timeout.step, TimeoutStep::Prevote | TimeoutStep::Precommit) {
+                    warn!(step = ?timeout.step, "Timeout elapsed");
+                }
+
+                let result = self
+                    .process_input(&myself, state, ConsensusInput::TimeoutElapsed(timeout))
+                    .await;
+
+                if let Err(e) = result {
+                    error!("Error when processing TimeoutElapsed message: {e:?}");
+                }
+
+                Ok(())
+            }
             Msg::ReceivedProposedValue(value) => {
                 let result = self
                     .process_input(&myself, state, ConsensusInput::ReceivedProposedValue(value))
@@ -365,19 +371,19 @@ where
     //     Ok(())
     // }
     //
-    // #[tracing::instrument(skip(self))]
-    // async fn get_validator_set(
-    //     &self,
-    //     height: Ctx::Height,
-    // ) -> Result<Ctx::ValidatorSet, ActorProcessingErr> {
-    //     let validator_set = ractor::call!(self.host, |reply_to| HostMsg::GetValidatorSet {
-    //         height,
-    //         reply_to
-    //     })
-    //         .map_err(|e| eyre!("Failed to query validator set at height {height}: {e:?}"))?;
-    //
-    //     Ok(validator_set)
-    // }
+    #[tracing::instrument(skip(self))]
+    async fn get_validator_set(
+        &self,
+        height: Ctx::Height,
+    ) -> Result<Ctx::ValidatorSet, ActorProcessingErr> {
+        // let validator_set = ractor::call!(self.host, |reply_to| HostMsg::GetValidatorSet {
+        //     height,
+        //     reply_to
+        // })
+        //     .map_err(|e| eyre!("Failed to query validator set at height {height}: {e:?}"))?;
+
+        Ok(validator_set)
+    }
 
     #[tracing::instrument(skip_all)]
     async fn handle_effect(
@@ -405,7 +411,7 @@ where
 
             Effect::ScheduleTimeout(timeout) => {
                 let duration = timeouts.duration_for(timeout.step);
-                // timers.start_timer(timeout, duration);
+                timers.start_timer(timeout, duration);
 
                 Ok(Resume::Continue)
             }
