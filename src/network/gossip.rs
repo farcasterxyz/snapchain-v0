@@ -1,3 +1,4 @@
+use libp2p::gossipsub::{MessageId, PublishError};
 use libp2p::identity::ed25519::Keypair;
 use libp2p::{
     gossipsub, mdns, noise, swarm::NetworkBehaviour, swarm::SwarmEvent, tcp, yamux, PeerId, Swarm,
@@ -60,11 +61,22 @@ impl SnapchainGossip {
         // Create a Gossipsub topic
         let topic = gossipsub::IdentTopic::new("test-net");
         // subscribes to our topic
-        swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
+        let result = swarm.behaviour_mut().gossipsub.subscribe(&topic);
+        if let Err(e) = result {
+            println!("Failed to subscribe to topic: {:?}", e);
+            return Err(Box::new(e));
+        }
 
         // Listen on all assigned port for this id
         swarm.listen_on(addr.parse()?)?;
-
         Ok(swarm)
+    }
+
+    pub fn publish(
+        swarm: &mut Swarm<SnapchainGossip>,
+        message: Vec<u8>,
+    ) -> Result<MessageId, PublishError> {
+        let topic = gossipsub::IdentTopic::new("test-net");
+        (*swarm).behaviour_mut().gossipsub.publish(topic, message)
     }
 }

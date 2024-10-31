@@ -19,6 +19,7 @@ pub trait ShardId
 where
     Self: Sized + Clone + Send + Sync + 'static,
 {
+    fn new(id: u8) -> Self;
     fn shard_id(&self) -> u8;
 }
 
@@ -26,6 +27,9 @@ where
 pub struct SnapchainShard(u8);
 
 impl ShardId for SnapchainShard {
+    fn new(id: u8) -> Self {
+        Self(id)
+    }
     fn shard_id(&self) -> u8 {
         self.0
     }
@@ -39,7 +43,13 @@ pub trait SnapchainContext: malachite_common::Context + ShardedContext {}
 
 // TODO: Should validator keys be ECDSA?
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Address([u8; 64]);
+pub struct Address(pub [u8; 32]);
+
+impl Address {
+    pub fn to_hex(&self) -> String {
+        hex::encode(&self.0)
+    }
+}
 
 impl fmt::Display for Address {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -69,8 +79,8 @@ impl fmt::Display for InvalidSignatureError {
 // Todo: Do we need the consensus-critical version? https://github.com/penumbra-zone/ed25519-consensus
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Signature([u8; 64]);
-pub type PublicKey = Address;
-pub type PrivateKey = Address;
+pub type PublicKey = libp2p::identity::ed25519::PublicKey;
+pub type PrivateKey = libp2p::identity::ed25519::SecretKey;
 
 impl malachite_common::SigningScheme for Ed25519 {
     type DecodingError = InvalidSignatureError;
@@ -176,16 +186,55 @@ impl malachite_common::Value for ShardHash {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Validator {
     pub shard_index: u8,
     pub address: Address,
+    pub public_key: PublicKey,
+}
+
+impl Validator {
+    pub fn new(shard_index: SnapchainShard, public_key: PublicKey) -> Self {
+        Self {
+            shard_index: shard_index.shard_id(),
+            address: Address(public_key.to_bytes()),
+            public_key,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatorSet {
-    pub shard_index: u8,
     pub validators: Vec<Validator>,
+}
+
+impl ValidatorSet {
+    pub fn new(validators: Vec<Validator>) -> Self {
+        let mut set = Self { validators: vec![] };
+        for validator in validators {
+            set.add(validator);
+        }
+        set
+    }
+    pub fn add(&mut self, validator: Validator) -> bool {
+        if self.validators.is_empty() || self.validators[0].shard_index == validator.shard_index {
+            self.validators.push(validator);
+            // Ensure validators are in the same order on all nodes
+            self.validators.sort();
+            true
+        } else {
+            // TODO: This should fail loudly
+            false
+        }
+    }
+
+    pub fn shard_id(&self) -> u8 {
+        if self.validators.is_empty() {
+            0
+        } else {
+            self.validators[0].shard_index
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -308,7 +357,20 @@ impl malachite_common::Context for SnapchainValidator {
         height: Self::Height,
         round: Round,
     ) -> &'a Self::Validator {
-        todo!()
+        assert!(validator_set.validators.len() > 0);
+        assert!(round != Round::Nil && round.as_i64() >= 0);
+
+        let proposer_index = {
+            let height = height.as_u64() as usize;
+            let round = round.as_i64() as usize;
+
+            (height - 1 + round) % validator_set.validators.len()
+        };
+
+        validator_set
+            .validators
+            .get(proposer_index)
+            .expect("proposer_index is valid")
     }
 
     fn sign_vote(&self, vote: Self::Vote) -> SignedVote<Self> {
@@ -385,6 +447,8 @@ impl malachite_common::Context for SnapchainValidator {
         Vote::new_precommit(height, round, value_id, address)
     }
 }
+
+impl SnapchainContext for SnapchainValidator {}
 
 impl malachite_common::ProposalPart<SnapchainValidator> for ProposalPart {
     fn is_first(&self) -> bool {
@@ -484,7 +548,7 @@ impl malachite_common::Validator<SnapchainValidator> for Validator {
     }
 
     fn public_key(&self) -> &PublicKey {
-        &self.address
+        &self.public_key
     }
 
     fn voting_power(&self) -> VotingPower {
