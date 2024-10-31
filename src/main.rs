@@ -5,13 +5,12 @@ mod network;
 use clap::Parser;
 use futures::stream::StreamExt;
 use libp2p::identity::ed25519::Keypair;
-use libp2p::{gossipsub, mdns, swarm::SwarmEvent};
 use malachite_config::TimeoutConfig;
 use malachite_metrics::{Metrics, SharedRegistry};
 use prost::Message;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::ctrl_c;
+use tokio::sync::mpsc;
 use tokio::{select, time};
 use tracing_subscriber::EnvFilter;
 
@@ -19,15 +18,17 @@ pub mod proto {
     tonic::include_proto!("snapchain");
 }
 
-use proto::GossipMessage;
-
 use crate::consensus::consensus::{Consensus, ConsensusMsg, ConsensusParams};
 use crate::core::types::{
     Address, Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, Validator,
     ValidatorSet,
 };
-use crate::network::gossip::SnapchainGossipEvent;
+use crate::network::gossip::{GossipEvent, SnapchainBehaviorEvent};
 use network::gossip::SnapchainGossip;
+
+pub enum SystemMessage {
+    Consensus(ConsensusMsg<SnapchainValidator>),
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -51,13 +52,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let keypair = Keypair::generate();
 
-    let swarm_result = SnapchainGossip::create(keypair.clone(), addr);
-    if let Err(e) = swarm_result {
+    let (system_tx, mut system_rx) = mpsc::channel::<SystemMessage>(100);
+
+    let gossip_result = SnapchainGossip::create(keypair.clone(), addr, system_tx.clone());
+    if let Err(e) = gossip_result {
         println!("Failed to create SnapchainGossip: {:?}", e);
         return Ok(());
     }
 
-    let mut swarm = swarm_result?;
+    let mut gossip = gossip_result?;
+    let gossip_tx = gossip.tx.clone();
+
+    tokio::spawn(async move {
+        println!("Starting gossip");
+        gossip.start().await;
+        println!("Gossip Stopped");
+    });
 
     let registry = SharedRegistry::global();
     let metrics = Metrics::register(registry);
@@ -111,83 +121,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }),
                         nonce: tick_count as u64,   // Need the nonce to avoid the gossip duplicate message check
                     };
-                    let gossip_message = GossipMessage {
-                        message: Some(proto::gossip_message::Message::Validator(register_validator)),
-                    };
-                    let encoded_message = gossip_message.encode_to_vec();
-
-                    if let Err(e) = SnapchainGossip::publish(&mut swarm, encoded_message) {
-                        println!("Failed to publish RegisterValidator message: {:?}", e);
-                    } else {
-                        // println!("Published RegisterValidator message");
-                    }
+                    println!("Registering validator with nonce: {}", register_validator.nonce);
+                    gossip_tx.send(GossipEvent::RegisterValidator(register_validator)).await?;
                 }
             }
-            event = swarm.select_next_some() => match event {
-                SwarmEvent::Behaviour(SnapchainGossipEvent::Mdns(mdns::Event::Discovered(list))) => {
-                    for (peer_id, _multiaddr) in list {
-                        println!("mDNS discovered a new peer: {peer_id}");
-                        swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+            Some(msg) = system_rx.recv() => {
+                match msg {
+                    SystemMessage::Consensus(consensus_msg) => {
+                        // Forward to consesnsus actor
+                        consensus_actor.cast(consensus_msg).unwrap();
                     }
-                },
-                SwarmEvent::Behaviour(SnapchainGossipEvent::Mdns(mdns::Event::Expired(list))) => {
-                    for (peer_id, _multiaddr) in list {
-                        println!("mDNS discover peer has expired: {peer_id}");
-                        swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer_id);
-
-                        // TODO: Remove validator
-                    }
-                },
-                SwarmEvent::Behaviour(SnapchainGossipEvent::Gossipsub(gossipsub::Event::Message {
-                    propagation_source: peer_id,
-                    message_id: id,
-                    message,
-                })) => {
-                    match GossipMessage::decode(&message.data[..]) {
-                        Ok(gossip_message) => {
-                            match gossip_message.message {
-                                Some(proto::gossip_message::Message::Block(block)) => {
-                                    let height = block.header.unwrap().height.unwrap().block_number;
-                                    println!("Received block with height {} from peer: {}", height, peer_id);
-                                },
-                                Some(proto::gossip_message::Message::Shard(shard)) => {
-                                    println!("Received shard with height {} from peer: {}", shard.header.unwrap().height.unwrap().block_number, peer_id);
-                                },
-                                Some(proto::gossip_message::Message::Validator(validator)) => {
-                                    println!("Received validator registration from peer: {}", peer_id);
-                                    if let Some(validator) = validator.validator {
-                                        let public_key = libp2p::identity::ed25519::PublicKey::try_from_bytes(&validator.signer);
-                                        if public_key.is_err() {
-                                            println!("Failed to decode public key from peer: {}", peer_id);
-                                            continue;
-                                        }
-                                        let validator = Validator::new(SnapchainShard::new(0), public_key.unwrap());
-                                        let consensus_message = ConsensusMsg::RegisterValidator(validator);
-                                        let res = consensus_actor.cast(consensus_message);
-                                        if let Err(e) = res {
-                                            println!("Failed to register validator: {:?}", e);
-                                        }
-                                    }
-                                },
-                                _ => println!("Unhandled message from peer: {}", peer_id),
-                                None => println!("Received empty gossip message from peer: {}", peer_id),
-                            }
-                        },
-                        Err(e) => println!("Failed to decode gossip message: {}", e),
-                    }
-                },
-                SwarmEvent::Behaviour(SnapchainGossipEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) =>
-                println!(
-                        "Peer: {peer_id} subscribed to topic: {topic}",
-                    ),
-                SwarmEvent::Behaviour(SnapchainGossipEvent::Gossipsub(gossipsub::Event::Unsubscribed { peer_id, topic })) =>
-                println!(
-                        "Peer: {peer_id} unsubscribed to topic: {topic}",
-                    ),
-                SwarmEvent::NewListenAddr { address, .. } => {
-                    println!("Local node is listening on {address}");
                 }
-                _ => {}
             }
         }
     }
