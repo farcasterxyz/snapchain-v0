@@ -1,6 +1,7 @@
 mod consensus;
 mod core;
 mod network;
+mod connectors;
 
 use clap::Parser;
 use futures::stream::StreamExt;
@@ -13,6 +14,8 @@ use tokio::signal::ctrl_c;
 use tokio::sync::mpsc;
 use tokio::{select, time};
 use tracing_subscriber::EnvFilter;
+use connectors::fname::Fetcher;
+
 
 pub mod proto {
     tonic::include_proto!("snapchain");
@@ -69,6 +72,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Gossip Stopped");
     });
 
+    // TODO: config to enable/disable running this fetcher
+    // TODO: add start_from as a parameter
+    let mut fetcher = Fetcher::new(685400u64);
+
+    tokio::spawn(async move {
+        let resp = fetcher.run().await;
+        println!("fetch error: {:?}", resp);
+    });
+
     let registry = SharedRegistry::global();
     let metrics = Metrics::register(registry);
 
@@ -94,8 +106,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         metrics.clone(),
         None,
     )
-    .await
-    .unwrap();
+        .await
+        .unwrap();
 
     // Create a timer for block creation
     let mut block_interval = time::interval(Duration::from_secs(2));

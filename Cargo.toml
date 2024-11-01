@@ -25,6 +25,8 @@ malachite-node = { path = "../malachite/code/crates/node"}
 malachite-metrics = { path = "../malachite/code/crates/metrics"}
 
 tracing = "0.1.40"
+thiserror = "1.0.66"
+reqwest = { version = "0.12.9", features = ["json"] }
 
 
 [build-dependencies]
