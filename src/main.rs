@@ -52,7 +52,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::fmt()
-        .json()
         .with_env_filter(env_filter)
         .init();
 
@@ -76,12 +75,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // TODO: config to enable/disable running this fetcher
-    // TODO: add start_from as a parameter
+    // TODO: add start_from (and possibly stop_at) as parameter(s)
     let mut fetcher = Fetcher::new(685400u64);
 
     tokio::spawn(async move {
-        let resp = fetcher.run().await;
-        println!("fetch error: {:?}", resp);
+        fetcher.run().await;
     });
 
     let registry = SharedRegistry::global();

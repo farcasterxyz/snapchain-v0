@@ -1,7 +1,7 @@
 use tokio::time::{sleep, Duration};
 use serde::Deserialize;
 use thiserror::Error;
-use tracing::{debug, info, warn, span, Level, Span};
+use tracing::{debug, info, warn, error, span, Level, Span};
 
 
 #[derive(Deserialize, Debug)]
@@ -23,16 +23,12 @@ struct Transfer {
 
 
 #[derive(Error, Debug)]
-pub enum FnamesError {
-    #[error("non-sequential IDs found")]
-    NonSequentialIds,
-}
-
-
-#[derive(Error, Debug)]
 enum FetchError {
     #[error("non-sequential IDs found")]
-    NonSequentialIds,
+    NonSequentialIds {
+        position: u64,
+        id: u64,
+    },
 
     #[error("no new IDs found")]
     NoNewIDs,
@@ -56,7 +52,7 @@ impl Fetcher {
         }
     }
 
-    async fn fetch(&mut self) -> Result<u64, FetchError> {
+    async fn fetch(&mut self) -> Result<(), FetchError> {
         loop {
             let url = format!("https://fnames.farcaster.xyz/transfers?from_id={}", self.position);
             debug!(%url, "fetching transfers");
@@ -69,14 +65,14 @@ impl Fetcher {
             let count = response.transfers.len();
 
             if count == 0 {
-                return Ok(self.position);
+                return Ok(());
             }
 
             info!(count, position=self.position, "found new transfers");
 
             for t in response.transfers {
                 if t.id <= self.position {
-                    return Err(FetchError::NonSequentialIds);
+                    return Err(FetchError::NonSequentialIds { id: t.id, position: self.position });
                 }
                 self.position = t.id;
                 self.transfers.push(t); // Just store these for now, we'll use them later
@@ -84,19 +80,20 @@ impl Fetcher {
         }
     }
 
-    pub async fn run(&mut self) -> FnamesError {
+    pub async fn run(&mut self) -> ! {
         loop {
-            match self.fetch().await {
-                Ok(new_count) => self.position = new_count,
-                Err(e) => match e {
-                    FetchError::NonSequentialIds => {
-                        return FnamesError::NonSequentialIds;
+            let result = self.fetch().await;
+
+            if let Err(e) = result {
+                match e {
+                    FetchError::NonSequentialIds { id, position } => {
+                        error!(id, position, %e);
                     }
                     FetchError::Reqwest(request_error) => {
                         warn!(error = %request_error, "reqwest error fetching transfers");
                     }
                     FetchError::NoNewIDs => {} // just sleep and retry
-                },
+                }
             }
 
             sleep(Duration::from_secs(5)).await;
