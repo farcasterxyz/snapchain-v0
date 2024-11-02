@@ -1,9 +1,7 @@
 use tokio::time::{sleep, Duration};
 use serde::Deserialize;
 use thiserror::Error;
-
-
-// TODO: use actual logger
+use tracing::{debug, info, warn, span, Level, Span};
 
 
 #[derive(Deserialize, Debug)]
@@ -30,6 +28,7 @@ pub enum FnamesError {
     NonSequentialIds,
 }
 
+
 #[derive(Error, Debug)]
 enum FetchError {
     #[error("non-sequential IDs found")]
@@ -44,43 +43,42 @@ enum FetchError {
 
 
 pub struct Fetcher {
-    count: u64,
+    position: u64,
     transfers: Vec<Transfer>,
 }
 
+
 impl Fetcher {
-    pub fn new(initial_count: u64) -> Self {
+    pub fn new(start_from: u64) -> Self {
         Fetcher {
-            count: initial_count,
+            position: start_from,
             transfers: vec![],
         }
     }
 
     async fn fetch(&mut self) -> Result<u64, FetchError> {
-        let mut count = self.count;
-
         loop {
-            let url = format!("https://fnames.farcaster.xyz/transfers?from_id={}", count);
-            println!("fname: fetching url: {}", url);
+            let url = format!("https://fnames.farcaster.xyz/transfers?from_id={}", self.position);
+            debug!(%url, "fetching transfers");
 
             let response = reqwest::get(&url)
                 .await?
                 .json::<TransfersData>()
                 .await?;
 
-            let transfers_count = response.transfers.len();
+            let count = response.transfers.len();
 
-            if transfers_count == 0 {
-                return Ok(count);
+            if count == 0 {
+                return Ok(self.position);
             }
 
-            println!("fname: found {} new transfers", transfers_count);
+            info!(count, position=self.position, "found new transfers");
 
             for t in response.transfers {
-                if t.id <= count {
+                if t.id <= self.position {
                     return Err(FetchError::NonSequentialIds);
                 }
-                count = t.id;
+                self.position = t.id;
                 self.transfers.push(t); // Just store these for now, we'll use them later
             }
         }
@@ -89,13 +87,13 @@ impl Fetcher {
     pub async fn run(&mut self) -> FnamesError {
         loop {
             match self.fetch().await {
-                Ok(new_count) => self.count = new_count,
+                Ok(new_count) => self.position = new_count,
                 Err(e) => match e {
                     FetchError::NonSequentialIds => {
                         return FnamesError::NonSequentialIds;
                     }
                     FetchError::Reqwest(request_error) => {
-                        println!("fname: reqwest error fetching: {}", request_error);
+                        warn!(error = %request_error, "reqwest error fetching transfers");
                     }
                     FetchError::NoNewIDs => {} // just sleep and retry
                 },

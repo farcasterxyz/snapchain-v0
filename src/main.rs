@@ -49,9 +49,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("SnapchainService (ID: {}) listening on {}", args.id, addr);
 
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .try_init();
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    tracing_subscriber::fmt()
+        .json()
+        .with_env_filter(env_filter)
+        .init();
 
     let keypair = Keypair::generate();
 
