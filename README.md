@@ -16,7 +16,7 @@ Before you begin, ensure you have the following installed:
    git clone git@github.com:informalsystems/malachite.git
    cd malachite
    git checkout 8a9f3702eb41199bc8a7f45139adba233a04744a
-   cargo build
+   cd code && cargo build
    ```
 2. Then clone the snapchain repo and build it:
    ```
