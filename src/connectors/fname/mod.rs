@@ -1,8 +1,28 @@
+use std::sync::Arc;
 use tokio::time::{sleep, Duration};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, info, warn, error, span, Level, Span};
 
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Config {
+    pub start_from: u64, // for testing
+    pub stop_at: u64, // for testing
+    pub url: String,
+    pub disable: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            start_from: 0,
+            stop_at: 200, // set this default to a small value for now, revisit later
+            url: "https://fnames.farcaster.xyz/transfers".to_string(),
+            disable: false,
+        }
+    }
+}
 
 #[derive(Deserialize, Debug)]
 struct TransfersData {
@@ -33,6 +53,9 @@ enum FetchError {
     #[error("no new IDs found")]
     NoNewIDs,
 
+    #[error("stop fetching")]
+    Stop,
+
     #[error(transparent)]
     Reqwest(#[from] reqwest::Error),
 }
@@ -41,20 +64,22 @@ enum FetchError {
 pub struct Fetcher {
     position: u64,
     transfers: Vec<Transfer>,
+    cfg: Config,
 }
 
 
 impl Fetcher {
-    pub fn new(start_from: u64) -> Self {
+    pub fn new(cfg: Config) -> Self {
         Fetcher {
-            position: start_from,
+            position: cfg.start_from,
             transfers: vec![],
+            cfg: cfg,
         }
     }
 
     async fn fetch(&mut self) -> Result<(), FetchError> {
         loop {
-            let url = format!("https://fnames.farcaster.xyz/transfers?from_id={}", self.position);
+            let url = format!("{}?from_id={}", self.cfg.url, self.position);
             debug!(%url, "fetching transfers");
 
             let response = reqwest::get(&url)
@@ -74,13 +99,16 @@ impl Fetcher {
                 if t.id <= self.position {
                     return Err(FetchError::NonSequentialIds { id: t.id, position: self.position });
                 }
+                if t.id > self.cfg.stop_at {
+                    return Err(FetchError::Stop);
+                }
                 self.position = t.id;
                 self.transfers.push(t); // Just store these for now, we'll use them later
             }
         }
     }
 
-    pub async fn run(&mut self) -> ! {
+    pub async fn run(&mut self) -> () {
         loop {
             let result = self.fetch().await;
 
@@ -93,6 +121,10 @@ impl Fetcher {
                         warn!(error = %request_error, "reqwest error fetching transfers");
                     }
                     FetchError::NoNewIDs => {} // just sleep and retry
+                    FetchError::Stop => {
+                        info!(position = self.position, "stopped fetching transfers");
+                        return;
+                    }
                 }
             }
 

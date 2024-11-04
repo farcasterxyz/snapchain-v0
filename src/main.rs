@@ -2,7 +2,9 @@ pub mod consensus;
 pub mod core;
 pub mod network;
 pub mod connectors;
+mod cfg;
 
+use std::error::Error;
 use clap::Parser;
 use futures::stream::StreamExt;
 use libp2p::identity::ed25519::Keypair;
@@ -26,27 +28,35 @@ pub enum SystemMessage {
     Consensus(ConsensusMsg<SnapchainValidatorContext>),
 }
 
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    #[arg(short, long)]
-    id: u32,
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
+    let args: Vec<String> = std::env::args().collect();
+
+    let app_config = cfg::load_and_merge_config(args)?;
+
+    if app_config.id == 0 {
+        return Err("node id must be specified greater than 0".into());
+    }
+
     let base_port = 50050;
-    let port = base_port + args.id;
+    let port = base_port + app_config.id;
     let addr = format!("/ip4/0.0.0.0/udp/{}/quic-v1", port);
 
-    println!("SnapchainService (ID: {}) listening on {}", args.id, addr);
+    println!("SnapchainService (ID: {}) listening on {}", app_config.id, addr);
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .init();
+    match app_config.log_format.as_str() {
+        "text" => {
+            tracing_subscriber::fmt().with_env_filter(env_filter).init()
+        }
+        "json" => {
+            tracing_subscriber::fmt().json().with_env_filter(env_filter).init()
+        }
+        _ => {
+            return Err(format!("Invalid log format: {}", app_config.log_format).into());
+        }
+    }
 
     let keypair = Keypair::generate();
 
@@ -67,13 +77,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Gossip Stopped");
     });
 
-    // TODO: config to enable/disable running this fetcher
-    // TODO: add start_from (and possibly stop_at) as parameter(s)
-    let mut fetcher = Fetcher::new(685400u64);
+    if !app_config.fnames.disable {
+        let mut fetcher = Fetcher::new(app_config.fnames.clone());
 
-    tokio::spawn(async move {
-        fetcher.run().await;
-    });
+        tokio::spawn(async move {
+            fetcher.run().await;
+        });
+    }
 
     let registry = SharedRegistry::global();
     let metrics = Metrics::register(registry);
