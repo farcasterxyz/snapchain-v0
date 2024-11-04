@@ -23,6 +23,7 @@ malachite-common = { path = "../malachite/code/crates/common" }
 malachite-config = { path = "../malachite/code/crates/config" }
 malachite-node = { path = "../malachite/code/crates/node" }
 malachite-metrics = { path = "../malachite/code/crates/metrics" }
+blake3 = "1.4.1"
 
 tracing = "0.1.40"
 thiserror = "1.0.66"

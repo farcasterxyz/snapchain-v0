@@ -1,6 +1,6 @@
 use crate::consensus::consensus::ConsensusMsg;
 use crate::core::types::{
-    ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, Validator,
+    ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
 };
 use crate::{proto, SystemMessage};
 use futures::StreamExt;
@@ -32,8 +32,8 @@ pub struct SnapchainBehavior {
 
 pub struct SnapchainGossip {
     pub swarm: Swarm<SnapchainBehavior>,
-    pub tx: mpsc::Sender<GossipEvent<SnapchainValidator>>,
-    rx: mpsc::Receiver<GossipEvent<SnapchainValidator>>,
+    pub tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
+    rx: mpsc::Receiver<GossipEvent<SnapchainValidatorContext>>,
     system_tx: Sender<SystemMessage>,
 }
 
@@ -151,7 +151,7 @@ impl SnapchainGossip {
                                                     println!("Failed to decode public key from peer: {}", peer_id);
                                                     continue;
                                                 }
-                                                let validator = Validator::new(SnapchainShard::new(0), public_key.unwrap());
+                                                let validator = SnapchainValidator::new(SnapchainShard::new(0), public_key.unwrap());
                                                 let consensus_message = ConsensusMsg::RegisterValidator(validator);
                                                 let res = self.system_tx.send(SystemMessage::Consensus(consensus_message)).await;
                                                 if let Err(e) = res {

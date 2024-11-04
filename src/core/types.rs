@@ -23,7 +23,7 @@ where
     fn shard_id(&self) -> u8;
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SnapchainShard(u8);
 
 impl ShardId for SnapchainShard {
@@ -187,13 +187,13 @@ impl malachite_common::Value for ShardHash {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Validator {
+pub struct SnapchainValidator {
     pub shard_index: u8,
     pub address: Address,
     pub public_key: PublicKey,
 }
 
-impl Validator {
+impl SnapchainValidator {
     pub fn new(shard_index: SnapchainShard, public_key: PublicKey) -> Self {
         Self {
             shard_index: shard_index.shard_id(),
@@ -204,19 +204,24 @@ impl Validator {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ValidatorSet {
-    pub validators: Vec<Validator>,
+pub struct SnapchainValidatorSet {
+    pub validators: Vec<SnapchainValidator>,
 }
 
-impl ValidatorSet {
-    pub fn new(validators: Vec<Validator>) -> Self {
+impl SnapchainValidatorSet {
+    pub fn new(validators: Vec<SnapchainValidator>) -> Self {
         let mut set = Self { validators: vec![] };
         for validator in validators {
             set.add(validator);
         }
         set
     }
-    pub fn add(&mut self, validator: Validator) -> bool {
+
+    pub fn add(&mut self, validator: SnapchainValidator) -> bool {
+        if self.exists(&validator.address) {
+            return false;
+        }
+
         if self.validators.is_empty() || self.validators[0].shard_index == validator.shard_index {
             self.validators.push(validator);
             // Ensure validators are in the same order on all nodes
@@ -226,6 +231,10 @@ impl ValidatorSet {
             // TODO: This should fail loudly
             false
         }
+    }
+
+    pub fn exists(&self, address: &Address) -> bool {
+        self.validators.iter().any(|v| v.address == *address)
     }
 
     pub fn shard_id(&self) -> u8 {
@@ -324,11 +333,11 @@ pub enum ProposalPart {
 }
 
 #[derive(Clone, Debug)]
-pub struct SnapchainValidator {
+pub struct SnapchainValidatorContext {
     private_key: Arc<PrivateKey>,
 }
 
-impl SnapchainValidator {
+impl SnapchainValidatorContext {
     pub fn new(private_key: PrivateKey) -> Self {
         Self {
             private_key: Arc::new(private_key),
@@ -336,17 +345,17 @@ impl SnapchainValidator {
     }
 }
 
-impl ShardedContext for SnapchainValidator {
+impl ShardedContext for SnapchainValidatorContext {
     type ShardId = SnapchainShard;
 }
 
-impl malachite_common::Context for SnapchainValidator {
+impl malachite_common::Context for SnapchainValidatorContext {
     type Address = Address;
     type Height = Height;
     type ProposalPart = ProposalPart;
     type Proposal = Proposal;
-    type Validator = Validator;
-    type ValidatorSet = ValidatorSet;
+    type Validator = SnapchainValidator;
+    type ValidatorSet = SnapchainValidatorSet;
     type Value = ShardHash;
     type Vote = Vote;
     type SigningScheme = Ed25519;
@@ -448,9 +457,9 @@ impl malachite_common::Context for SnapchainValidator {
     }
 }
 
-impl SnapchainContext for SnapchainValidator {}
+impl SnapchainContext for SnapchainValidatorContext {}
 
-impl malachite_common::ProposalPart<SnapchainValidator> for ProposalPart {
+impl malachite_common::ProposalPart<SnapchainValidatorContext> for ProposalPart {
     fn is_first(&self) -> bool {
         // Only one part for now
         true
@@ -461,7 +470,7 @@ impl malachite_common::ProposalPart<SnapchainValidator> for ProposalPart {
     }
 }
 
-impl malachite_common::Proposal<SnapchainValidator> for Proposal {
+impl malachite_common::Proposal<SnapchainValidatorContext> for Proposal {
     fn height(&self) -> Height {
         self.height
     }
@@ -487,7 +496,7 @@ impl malachite_common::Proposal<SnapchainValidator> for Proposal {
     }
 }
 
-impl malachite_common::Vote<SnapchainValidator> for Vote {
+impl malachite_common::Vote<SnapchainValidatorContext> for Vote {
     fn height(&self) -> Height {
         self.height
     }
@@ -524,7 +533,7 @@ impl malachite_common::Vote<SnapchainValidator> for Vote {
     }
 }
 
-impl malachite_common::ValidatorSet<SnapchainValidator> for ValidatorSet {
+impl malachite_common::ValidatorSet<SnapchainValidatorContext> for SnapchainValidatorSet {
     fn count(&self) -> usize {
         self.validators.len()
     }
@@ -533,16 +542,16 @@ impl malachite_common::ValidatorSet<SnapchainValidator> for ValidatorSet {
         1
     }
 
-    fn get_by_address(&self, address: &Address) -> Option<&Validator> {
+    fn get_by_address(&self, address: &Address) -> Option<&SnapchainValidator> {
         todo!()
     }
 
-    fn get_by_index(&self, index: usize) -> Option<&Validator> {
+    fn get_by_index(&self, index: usize) -> Option<&SnapchainValidator> {
         self.validators.get(index)
     }
 }
 
-impl malachite_common::Validator<SnapchainValidator> for Validator {
+impl malachite_common::Validator<SnapchainValidatorContext> for SnapchainValidator {
     fn address(&self) -> &Address {
         &self.address
     }
