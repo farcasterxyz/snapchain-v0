@@ -15,16 +15,18 @@ parking_lot = "0.12.1"
 clap = { version = "4.3.0", features = ["derive"] }
 libp2p = { version = "0.54.1", features = ["tokio", "gossipsub", "mdns", "noise", "macros", "tcp", "yamux", "quic"] }
 async-trait = "0.1.68"
-tracing-subscriber = {  version = "0.3.18", features = ["env-filter", "fmt"] }
+tracing-subscriber = {  version = "0.3.18", features = ["env-filter", "fmt", "json"] }
 hex = "0.4.3"
-ractor             = "0.11.2"
-malachite-consensus = { path = "../malachite/code/crates/consensus"}
-malachite-common = { path = "../malachite/code/crates/common"}
-malachite-config = { path = "../malachite/code/crates/config"}
-malachite-node = { path = "../malachite/code/crates/node"}
-malachite-metrics = { path = "../malachite/code/crates/metrics"}
+ractor = "0.11.2"
+malachite-consensus = { path = "../malachite/code/crates/consensus" }
+malachite-common = { path = "../malachite/code/crates/common" }
+malachite-config = { path = "../malachite/code/crates/config" }
+malachite-node = { path = "../malachite/code/crates/node" }
+malachite-metrics = { path = "../malachite/code/crates/metrics" }
 
 tracing = "0.1.40"
+thiserror = "1.0.66"
+reqwest = { version = "0.12.9", features = ["json"] }
 
 
 [build-dependencies]

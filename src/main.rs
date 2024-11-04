@@ -1,6 +1,7 @@
 mod consensus;
 mod core;
 mod network;
+mod connectors;
 
 use clap::Parser;
 use futures::stream::StreamExt;
@@ -13,6 +14,8 @@ use tokio::signal::ctrl_c;
 use tokio::sync::mpsc;
 use tokio::{select, time};
 use tracing_subscriber::EnvFilter;
+use connectors::fname::Fetcher;
+
 
 pub mod proto {
     tonic::include_proto!("snapchain");
@@ -46,9 +49,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("SnapchainService (ID: {}) listening on {}", args.id, addr);
 
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .try_init();
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .init();
 
     let keypair = Keypair::generate();
 
@@ -67,6 +72,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Starting gossip");
         gossip.start().await;
         println!("Gossip Stopped");
+    });
+
+    // TODO: config to enable/disable running this fetcher
+    // TODO: add start_from (and possibly stop_at) as parameter(s)
+    let mut fetcher = Fetcher::new(685400u64);
+
+    tokio::spawn(async move {
+        fetcher.run().await;
     });
 
     let registry = SharedRegistry::global();
@@ -94,8 +107,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         metrics.clone(),
         None,
     )
-    .await
-    .unwrap();
+        .await
+        .unwrap();
 
     // Create a timer for block creation
     let mut block_interval = time::interval(Duration::from_secs(2));
