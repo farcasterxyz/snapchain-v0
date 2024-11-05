@@ -7,13 +7,16 @@ use malachite_common::{
 };
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
+use std::io::Read;
 use std::sync::Arc;
+use libp2p::identity::ed25519::Keypair;
+use prost::Message;
 
-pub mod snapchain {
+pub mod proto {
     tonic::include_proto!("snapchain");
 }
 
-use snapchain::ShardHash;
+use proto::ShardHash;
 
 pub trait ShardId
 where
@@ -23,7 +26,7 @@ where
     fn shard_id(&self) -> u8;
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SnapchainShard(u8);
 
 impl ShardId for SnapchainShard {
@@ -49,11 +52,15 @@ impl Address {
     pub fn to_hex(&self) -> String {
         hex::encode(&self.0)
     }
+
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.0.to_vec()
+    }
 }
 
 impl fmt::Display for Address {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        write!(f, "{}", self.to_hex())
     }
 }
 
@@ -78,7 +85,7 @@ impl fmt::Display for InvalidSignatureError {
 // Ed25519 signature
 // Todo: Do we need the consensus-critical version? https://github.com/penumbra-zone/ed25519-consensus
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Signature([u8; 64]);
+pub struct Signature(pub Vec<u8>);
 pub type PublicKey = libp2p::identity::ed25519::PublicKey;
 pub type PrivateKey = libp2p::identity::ed25519::SecretKey;
 
@@ -118,6 +125,13 @@ impl Height {
         Self {
             shard_index,
             block_number,
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::Height {
+        proto::Height {
+            shard_index: self.shard_index as u32,
+            block_number: self.block_number,
         }
     }
 
@@ -168,7 +182,7 @@ impl malachite_common::Height for Height {
 
 impl fmt::Display for ShardHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}] {:?}", self.shard_index, &self.hash)
+        write!(f, "[{}] {:?}", self.shard_index, hex::encode(&self.hash))
     }
 }
 
@@ -187,13 +201,13 @@ impl malachite_common::Value for ShardHash {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Validator {
+pub struct SnapchainValidator {
     pub shard_index: u8,
     pub address: Address,
     pub public_key: PublicKey,
 }
 
-impl Validator {
+impl SnapchainValidator {
     pub fn new(shard_index: SnapchainShard, public_key: PublicKey) -> Self {
         Self {
             shard_index: shard_index.shard_id(),
@@ -204,19 +218,24 @@ impl Validator {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ValidatorSet {
-    pub validators: Vec<Validator>,
+pub struct SnapchainValidatorSet {
+    pub validators: Vec<SnapchainValidator>,
 }
 
-impl ValidatorSet {
-    pub fn new(validators: Vec<Validator>) -> Self {
+impl SnapchainValidatorSet {
+    pub fn new(validators: Vec<SnapchainValidator>) -> Self {
         let mut set = Self { validators: vec![] };
         for validator in validators {
             set.add(validator);
         }
         set
     }
-    pub fn add(&mut self, validator: Validator) -> bool {
+
+    pub fn add(&mut self, validator: SnapchainValidator) -> bool {
+        if self.exists(&validator.address) {
+            return false;
+        }
+
         if self.validators.is_empty() || self.validators[0].shard_index == validator.shard_index {
             self.validators.push(validator);
             // Ensure validators are in the same order on all nodes
@@ -226,6 +245,10 @@ impl ValidatorSet {
             // TODO: This should fail loudly
             false
         }
+    }
+
+    pub fn exists(&self, address: &Address) -> bool {
+        self.validators.iter().any(|v| v.address == *address)
     }
 
     pub fn shard_id(&self) -> u8 {
@@ -297,8 +320,26 @@ impl Vote {
         }
     }
 
-    pub fn to_sign_bytes(&self) -> Bytes {
-        todo!()
+    pub fn to_proto(&self) -> proto::Vote {
+        let vote_type = match self.vote_type {
+            VoteType::Prevote => proto::VoteType::Prevote,
+            VoteType::Precommit => proto::VoteType::Precommit,
+        };
+        let shard_hash = match &self.shard_hash {
+            NilOrVal::Nil => None,
+            NilOrVal::Val(shard_hash) => Some(shard_hash.clone()),
+        };
+        proto::Vote {
+            height: Some(self.height.to_proto()),
+            round: self.round.as_i64(),
+            voter: self.voter.to_vec(),
+            r#type: vote_type as i32,
+            value: shard_hash
+        }
+    }
+
+    pub fn to_sign_bytes(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
     }
 }
 
@@ -309,6 +350,22 @@ pub struct Proposal {
     pub shard_hash: ShardHash,
     pub pol_round: Round,
     pub proposer: Address,
+}
+
+impl Proposal {
+    pub fn to_proto(&self) -> proto::Proposal {
+        proto::Proposal {
+            height: Some(self.height.to_proto()),
+            round: self.round.as_i64(),
+            proposer: self.proposer.to_vec(),
+            value: Some(self.shard_hash.clone()),
+            pol_round: self.pol_round.as_i64(),
+        }
+    }
+    pub fn to_sign_bytes(&self) -> Vec<u8> {
+        // TODO: Should we be signing the hash?
+        self.to_proto().encode_to_vec()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -324,29 +381,29 @@ pub enum ProposalPart {
 }
 
 #[derive(Clone, Debug)]
-pub struct SnapchainValidator {
-    private_key: Arc<PrivateKey>,
+pub struct SnapchainValidatorContext {
+    keypair: Arc<Keypair>,
 }
 
-impl SnapchainValidator {
-    pub fn new(private_key: PrivateKey) -> Self {
+impl SnapchainValidatorContext {
+    pub fn new(keypair: Keypair) -> Self {
         Self {
-            private_key: Arc::new(private_key),
+            keypair: Arc::new(keypair),
         }
     }
 }
 
-impl ShardedContext for SnapchainValidator {
+impl ShardedContext for SnapchainValidatorContext {
     type ShardId = SnapchainShard;
 }
 
-impl malachite_common::Context for SnapchainValidator {
+impl malachite_common::Context for SnapchainValidatorContext {
     type Address = Address;
     type Height = Height;
     type ProposalPart = ProposalPart;
     type Proposal = Proposal;
-    type Validator = Validator;
-    type ValidatorSet = ValidatorSet;
+    type Validator = SnapchainValidator;
+    type ValidatorSet = SnapchainValidatorSet;
     type Value = ShardHash;
     type Vote = Vote;
     type SigningScheme = Ed25519;
@@ -374,7 +431,8 @@ impl malachite_common::Context for SnapchainValidator {
     }
 
     fn sign_vote(&self, vote: Self::Vote) -> SignedVote<Self> {
-        SignedVote::new(vote, Signature([0; 64]))
+        let signature = self.keypair.sign(&vote.to_sign_bytes());
+        SignedVote::new(vote, Signature(signature))
     }
 
     fn verify_signed_vote(
@@ -383,11 +441,12 @@ impl malachite_common::Context for SnapchainValidator {
         signature: &Signature,
         public_key: &PublicKey,
     ) -> bool {
-        false
+        public_key.verify(&vote.to_sign_bytes(), &signature.0)
     }
 
     fn sign_proposal(&self, proposal: Self::Proposal) -> SignedProposal<Self> {
-        SignedProposal::new(proposal, Signature([0; 64]))
+        let signature = self.keypair.sign(&proposal.to_sign_bytes());
+        SignedProposal::new(proposal, Signature(signature))
     }
 
     fn verify_signed_proposal(
@@ -396,12 +455,11 @@ impl malachite_common::Context for SnapchainValidator {
         signature: &Signature,
         public_key: &PublicKey,
     ) -> bool {
-        // TODO
-        false
+        public_key.verify(&proposal.to_sign_bytes(), &signature.0)
     }
 
     fn sign_proposal_part(&self, proposal_part: Self::ProposalPart) -> SignedProposalPart<Self> {
-        SignedProposalPart::new(proposal_part, Signature([0; 64]))
+        SignedProposalPart::new(proposal_part, Signature(vec![]))
     }
 
     fn verify_signed_proposal_part(
@@ -448,9 +506,9 @@ impl malachite_common::Context for SnapchainValidator {
     }
 }
 
-impl SnapchainContext for SnapchainValidator {}
+impl SnapchainContext for SnapchainValidatorContext {}
 
-impl malachite_common::ProposalPart<SnapchainValidator> for ProposalPart {
+impl malachite_common::ProposalPart<SnapchainValidatorContext> for ProposalPart {
     fn is_first(&self) -> bool {
         // Only one part for now
         true
@@ -461,7 +519,7 @@ impl malachite_common::ProposalPart<SnapchainValidator> for ProposalPart {
     }
 }
 
-impl malachite_common::Proposal<SnapchainValidator> for Proposal {
+impl malachite_common::Proposal<SnapchainValidatorContext> for Proposal {
     fn height(&self) -> Height {
         self.height
     }
@@ -487,7 +545,7 @@ impl malachite_common::Proposal<SnapchainValidator> for Proposal {
     }
 }
 
-impl malachite_common::Vote<SnapchainValidator> for Vote {
+impl malachite_common::Vote<SnapchainValidatorContext> for Vote {
     fn height(&self) -> Height {
         self.height
     }
@@ -524,7 +582,7 @@ impl malachite_common::Vote<SnapchainValidator> for Vote {
     }
 }
 
-impl malachite_common::ValidatorSet<SnapchainValidator> for ValidatorSet {
+impl malachite_common::ValidatorSet<SnapchainValidatorContext> for SnapchainValidatorSet {
     fn count(&self) -> usize {
         self.validators.len()
     }
@@ -533,16 +591,16 @@ impl malachite_common::ValidatorSet<SnapchainValidator> for ValidatorSet {
         1
     }
 
-    fn get_by_address(&self, address: &Address) -> Option<&Validator> {
-        todo!()
+    fn get_by_address(&self, address: &Address) -> Option<&SnapchainValidator> {
+        self.validators.iter().find(|v| &v.address == address)
     }
 
-    fn get_by_index(&self, index: usize) -> Option<&Validator> {
+    fn get_by_index(&self, index: usize) -> Option<&SnapchainValidator> {
         self.validators.get(index)
     }
 }
 
-impl malachite_common::Validator<SnapchainValidator> for Validator {
+impl malachite_common::Validator<SnapchainValidatorContext> for SnapchainValidator {
     fn address(&self) -> &Address {
         &self.address
     }

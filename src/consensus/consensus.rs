@@ -1,29 +1,37 @@
-use std::collections::BTreeSet;
+use malachite_common::ValidatorSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use libp2p::PeerId;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use malachite_common::{
-    Context, Extension, Height, NilOrVal, Round, SignedMessage, SignedProposal, SignedProposalPart,
-    SignedVote, Timeout, TimeoutStep, ValidatorSet, VoteType,
+    Context, Extension, NilOrVal, Round, SignedMessage, SignedProposal, SignedProposalPart,
+    SignedVote, Timeout, TimeoutStep, VoteType,
 };
 use malachite_config::TimeoutConfig;
 use malachite_consensus::{Effect, ProposedValue, Resume, SignedConsensusMsg};
 use malachite_metrics::Metrics;
 
 use crate::consensus::timers::{TimeoutElapsed, TimerScheduler};
-use crate::core::types::{SnapchainContext, Validator};
+use crate::core::types::proto::ShardHash;
+use crate::core::types::{
+    Address, Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator,
+    SnapchainValidatorContext, SnapchainValidatorSet,
+};
+use crate::network::gossip::GossipEvent;
+use crate::proto::{Block, BlockHeader, Height as ProtoHeight};
 pub use malachite_consensus::Params as ConsensusParams;
 pub use malachite_consensus::State as ConsensusState;
+use prost::Message;
 use tokio::time::Instant;
 
 pub type ConsensusRef<Ctx> = ActorRef<ConsensusMsg<Ctx>>;
 
-pub type TxDecision<Ctx> = mpsc::Sender<(<Ctx as Context>::Height, Round, <Ctx as Context>::Value)>;
+pub type Decision<Ctx> = (<Ctx as Context>::Height, Round, <Ctx as Context>::Value);
+pub type TxDecision<Ctx> = mpsc::Sender<Decision<Ctx>>;
 type Timers<Ctx> = TimerScheduler<Timeout, ConsensusMsg<Ctx>>;
 
 impl<Ctx: Context + SnapchainContext> From<TimeoutElapsed<Timeout>> for ConsensusMsg<Ctx> {
@@ -46,7 +54,7 @@ pub enum ConsensusMsg<Ctx: SnapchainContext> {
     ReceivedSignedProposal(SignedProposal<Ctx>),
     ReceivedProposalPart(SignedProposalPart<Ctx>),
 
-    RegisterValidator(Validator),
+    RegisterValidator(SnapchainValidator),
 
     TimeoutElapsed(TimeoutElapsed<Timeout>),
 }
@@ -84,16 +92,102 @@ impl Timeouts {
     }
 }
 
-pub struct Consensus<Ctx>
-where
-    Ctx: SnapchainContext,
-{
-    ctx: Ctx,
-    params: ConsensusParams<Ctx>,
+pub struct ShardValidator {
+    shard_d: SnapchainShard,
+    validator_set: SnapchainValidatorSet,
+    blocks: Vec<Block>,
+    confirmed_height: Option<Height>,
+    current_round: Round,
+    current_height: Option<Height>,
+    current_proposer: Option<Address>,
+    proposed_values: BTreeMap<ShardHash, Block>,
+}
+
+impl ShardValidator {
+    fn new() -> ShardValidator {
+        ShardValidator {
+            shard_d: SnapchainShard::new(0),
+            validator_set: SnapchainValidatorSet::new(vec![]),
+            blocks: vec![],
+            confirmed_height: None,
+            current_round: Round::new(0),
+            current_height: None,
+            current_proposer: None,
+            proposed_values: BTreeMap::new(),
+        }
+    }
+
+    pub fn get_validator_set(&self) -> SnapchainValidatorSet {
+        self.validator_set.clone()
+    }
+
+    pub fn add_validator(&mut self, validator: SnapchainValidator) -> bool {
+        self.validator_set.add(validator)
+    }
+
+    pub fn start_round(&mut self, height: Height, round: Round, proposer: Address) {
+        self.current_height = Some(height);
+        self.current_round = round;
+        self.current_proposer = Some(proposer);
+    }
+
+    pub fn decide(&mut self, height: Height, _: Round, value: ShardHash) {
+        let block = self.proposed_values.get(&value);
+        if block.is_some() {
+            self.blocks.push(block.unwrap().clone());
+            self.proposed_values.remove(&value);
+        }
+        self.confirmed_height = Some(height);
+        self.current_round = Round::Nil;
+    }
+
+    pub fn propose_block(&mut self, height: Height, round: Round) -> Block {
+        let previous_block = self.blocks.last();
+        let parent_hash = match previous_block {
+            Some(block) => block.hash.clone(),
+            None => vec![0, 32],
+        };
+        let block_header = BlockHeader {
+            parent_hash,
+            chain_id: 0,
+            version: 0,
+            shard_headers_hash: vec![],
+            validators_hash: vec![],
+            timestamp: 0,
+            height: Some(ProtoHeight {
+                block_number: height.block_number,
+                shard_index: height.shard_index as u32,
+            }),
+        };
+        let hash = blake3::hash(&block_header.encode_to_vec())
+            .as_bytes()
+            .to_vec();
+
+        let block = Block {
+            header: Some(block_header),
+            hash: hash.clone(),
+            validators: None,
+            votes: None,
+            shard_chunks: vec![],
+        };
+
+        let shard_hash = ShardHash {
+            hash: hash.clone(),
+            shard_index: height.shard_index as u32,
+        };
+        self.proposed_values.insert(shard_hash, block.clone());
+
+        block
+    }
+}
+
+pub struct Consensus {
+    ctx: SnapchainValidatorContext,
+    params: ConsensusParams<SnapchainValidatorContext>,
     timeout_config: TimeoutConfig,
     metrics: Metrics,
-    shard_id: Ctx::ShardId,
-    tx_decision: Option<TxDecision<Ctx>>,
+    shard_id: SnapchainShard,
+    tx_decision: Option<TxDecision<SnapchainValidatorContext>>,
 }
 
 // pub type ConsensusMsg<Ctx> = ConsensusMsg<Ctx>;
@@ -111,20 +205,18 @@ pub struct State<Ctx: SnapchainContext> {
     consensus: ConsensusState<Ctx>,
 
     /// The set of validators (by address) we are connected to.
-    connected_validators: BTreeSet<String>,
+    shard_validator: ShardValidator,
+    gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
 }
 
-impl<Ctx> Consensus<Ctx>
-where
-    Ctx: SnapchainContext,
-{
+impl Consensus {
     pub fn new(
-        ctx: Ctx,
-        shard_id: Ctx::ShardId,
-        params: ConsensusParams<Ctx>,
+        ctx: SnapchainValidatorContext,
+        shard_id: SnapchainShard,
+        params: ConsensusParams<SnapchainValidatorContext>,
         timeout_config: TimeoutConfig,
         metrics: Metrics,
-        tx_decision: Option<TxDecision<Ctx>>,
+        tx_decision: Option<TxDecision<SnapchainValidatorContext>>,
     ) -> Self {
         Self {
             ctx,
@@ -138,44 +230,46 @@ where
 
     #[allow(clippy::too_many_arguments)]
     pub async fn spawn(
-        ctx: Ctx,
-        shard_id: Ctx::ShardId,
-        params: ConsensusParams<Ctx>,
+        ctx: SnapchainValidatorContext,
+        shard_id: SnapchainShard,
+        params: ConsensusParams<SnapchainValidatorContext>,
         timeout_config: TimeoutConfig,
         metrics: Metrics,
-        tx_decision: Option<TxDecision<Ctx>>,
-    ) -> Result<ActorRef<ConsensusMsg<Ctx>>, ractor::SpawnErr> {
+        tx_decision: Option<TxDecision<SnapchainValidatorContext>>,
+        gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
+    ) -> Result<ActorRef<ConsensusMsg<SnapchainValidatorContext>>, ractor::SpawnErr> {
         let node = Self::new(ctx, shard_id, params, timeout_config, metrics, tx_decision);
 
-        let (actor_ref, _) = Actor::spawn(None, node, ()).await?;
+        let (actor_ref, _) = Actor::spawn(None, node, gossip_tx).await?;
         Ok(actor_ref)
     }
 
     async fn process_input(
         &self,
-        myself: &ActorRef<ConsensusMsg<Ctx>>,
-        state: &mut State<Ctx>,
-        input: ConsensusInput<Ctx>,
+        myself: &ActorRef<ConsensusMsg<SnapchainValidatorContext>>,
+        state: &mut State<SnapchainValidatorContext>,
+        input: ConsensusInput<SnapchainValidatorContext>,
     ) -> Result<(), ActorProcessingErr> {
         malachite_consensus::process!(
             input: input,
             state: &mut state.consensus,
             metrics: &self.metrics,
             with: effect => {
-                self.handle_effect(myself, &mut state.timers, &mut state.timeouts, effect).await
+                self.handle_effect(myself, &mut state.shard_validator, &mut state.timers, &mut state.timeouts, state.gossip_tx.clone(), effect).await
             }
         )
     }
 
     async fn handle_msg(
         &self,
-        myself: ActorRef<ConsensusMsg<Ctx>>,
-        state: &mut State<Ctx>,
-        msg: ConsensusMsg<Ctx>,
+        myself: ActorRef<ConsensusMsg<SnapchainValidatorContext>>,
+        state: &mut State<SnapchainValidatorContext>,
+        msg: ConsensusMsg<SnapchainValidatorContext>,
     ) -> Result<(), ActorProcessingErr> {
         match msg {
             ConsensusMsg::StartHeight(height) => {
-                let validator_set = self.get_validator_set(height).await?;
+                let validator_set = state.shard_validator.get_validator_set();
+                println!("Starting height: {height} with {:?} validators", validator_set.count());
                 let result = self
                     .process_input(
                         &myself,
@@ -208,6 +302,7 @@ where
             }
 
             ConsensusMsg::ReceivedSignedVote(vote) => {
+                println!("Received vote: {:?} for height: {:?}, round: {:?} at {:?}", vote.shard_hash, vote.height, vote.round, self.params.address);
                 if let Err(e) = self
                     .process_input(&myself, state, ConsensusInput::Vote(vote))
                     .await
@@ -218,6 +313,7 @@ where
             }
 
             ConsensusMsg::ReceivedSignedProposal(proposal) => {
+                println!("Received proposal: {:?} for height: {:?}, round: {:?} at {:?}", proposal.shard_hash, proposal.height, proposal.round, self.params.address);
                 if let Err(e) = self
                     .process_input(&myself, state, ConsensusInput::Proposal(proposal))
                     .await
@@ -229,38 +325,38 @@ where
 
             ConsensusMsg::RegisterValidator(validator) => {
                 let address = validator.address.to_hex();
-                if !state.connected_validators.insert(address.clone()) {
+                if !state.shard_validator.add_validator(validator.clone()) {
                     // We already saw that peer, ignoring...
                     return Ok(());
                 }
 
                 println!("Connected to peer {address}");
 
-                let connected_peers = state.connected_validators.len();
-                let total_peers = state.consensus.driver.validator_set().count() - 1;
+                // let connected_peers = state.shard_validator.validator_set.count();
+                // let total_peers = state.consensus.driver.validator_set().count() - 1;
 
-                debug!("Connected to {connected_peers}/{total_peers} peers");
+                // println!("Connected to {connected_peers}/{total_peers} peers");
 
                 self.metrics.connected_peers.inc();
 
-                if connected_peers == total_peers {
-                    info!("Enough peers ({connected_peers}) connected to start consensus");
-
-                    let height = state.consensus.driver.height();
-                    let validator_set = self.get_validator_set(height).await?;
-
-                    let result = self
-                        .process_input(
-                            &myself,
-                            state,
-                            ConsensusInput::StartHeight(height, validator_set),
-                        )
-                        .await;
-
-                    if let Err(e) = result {
-                        error!("Error when starting height {height}: {e:?}");
-                    }
-                }
+                // if connected_peers == total_peers {
+                //     println!("Enough peers ({connected_peers}) connected to start consensus");
+                //
+                //     let height = state.consensus.driver.height();
+                //     let validator_set = state.shard_validator.get_validator_set();
+                //
+                //     let result = self
+                //         .process_input(
+                //             &myself,
+                //             state,
+                //             ConsensusInput::StartHeight(height, validator_set),
+                //         )
+                //         .await;
+                //
+                //     if let Err(e) = result {
+                //         error!("Error when starting height {height}: {e:?}");
+                //     }
+                // }
                 Ok(())
             }
 
@@ -269,40 +365,6 @@ where
                 Ok(())
             }
 
-            // Msg::GossipEvent(event) => {
-            //     match event {
-            //         GossipEvent::PeerDisconnected(peer_id) => {
-            //             info!("Disconnected from peer {peer_id}");
-            //
-            //             if state.connected_peers.remove(&peer_id) {
-            //                 self.metrics.connected_peers.dec();
-            //
-            //                 // TODO: pause/stop consensus, if necessary
-            //             }
-            //
-            //             Ok(())
-            //         }
-            //
-            //         GossipEvent::ProposalPart(from, part) => {
-            //             self.host
-            //                 .call_and_forward(
-            //                     |reply_to| HostMsg::ReceivedProposalPart {
-            //                         from,
-            //                         part,
-            //                         reply_to,
-            //                     },
-            //                     &myself,
-            //                     |value| Msg::ReceivedProposedValue(value),
-            //                     None,
-            //                 )
-            //                 .map_err(|e| {
-            //                     eyre!("Error when forwarding proposal parts to host: {e:?}")
-            //                 })?;
-            //
-            //             Ok(())
-            //         }
-            //     }
-            // }
             ConsensusMsg::TimeoutElapsed(elapsed) => {
                 let Some(timeout) = state.timers.intercept_timer_msg(elapsed) else {
                     // Timer was cancelled or already processed, ignore
@@ -326,6 +388,7 @@ where
                 Ok(())
             }
             ConsensusMsg::ReceivedProposedValue(value) => {
+                println!("Received proposed value: {:?} for height: {:?}, round: {:?} at {:?}", value.value, value.height, value.round, self.params.address);
                 let result = self
                     .process_input(&myself, state, ConsensusInput::ReceivedProposedValue(value))
                     .await;
@@ -339,56 +402,16 @@ where
         }
     }
 
-    // #[tracing::instrument(skip(self, myself))]
-    // fn get_value(
-    //     &self,
-    //     myself: &ActorRef<Msg<Ctx>>,
-    //     height: Ctx::Height,
-    //     round: Round,
-    //     timeout_duration: Duration,
-    // ) -> Result<(), ActorProcessingErr> {
-    //     // Call `GetValue` on the Host actor, and forward the reply
-    //     // to the current actor, wrapping it in `Msg::ProposeValue`.
-    //     self.host.call_and_forward(
-    //         |reply| HostMsg::GetValue {
-    //             height,
-    //             round,
-    //             timeout_duration,
-    //             address: self.params.address.clone(),
-    //             reply_to: reply,
-    //         },
-    //         myself,
-    //         |proposed: LocallyProposedValue<Ctx>| {
-    //             Msg::<Ctx>::ProposeValue(proposed.height, proposed.round, proposed.value)
-    //         },
-    //         None,
-    //     )?;
-    //
-    //     Ok(())
-    // }
-    //
-    #[tracing::instrument(skip(self))]
-    async fn get_validator_set(
-        &self,
-        height: Ctx::Height,
-    ) -> Result<Ctx::ValidatorSet, ActorProcessingErr> {
-        // let validator_set = ractor::call!(self.host, |reply_to| HostMsg::GetValidatorSet {
-        //     height,
-        //     reply_to
-        // })
-        //     .map_err(|e| eyre!("Failed to query validator set at height {height}: {e:?}"))?;
-
-        Ok(self.params.initial_validator_set.clone())
-    }
-
     #[tracing::instrument(skip_all)]
     async fn handle_effect(
         &self,
-        myself: &ActorRef<ConsensusMsg<Ctx>>,
-        timers: &mut Timers<Ctx>,
+        myself: &ActorRef<ConsensusMsg<SnapchainValidatorContext>>,
+        shard_validator: &mut ShardValidator,
+        timers: &mut Timers<SnapchainValidatorContext>,
         timeouts: &mut Timeouts,
-        effect: Effect<Ctx>,
-    ) -> Result<Resume<Ctx>, ActorProcessingErr> {
+        gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
+        effect: Effect<SnapchainValidatorContext>,
+    ) -> Result<Resume<SnapchainValidatorContext>, ActorProcessingErr> {
         match effect {
             Effect::ResetTimeouts => {
                 timeouts.reset(self.timeout_config);
@@ -408,17 +431,12 @@ where
             Effect::ScheduleTimeout(timeout) => {
                 let duration = timeouts.duration_for(timeout.step);
                 timers.start_timer(timeout, duration);
-
                 Ok(Resume::Continue)
             }
 
             Effect::StartRound(height, round, proposer) => {
-                // self.host.cast(HostMsg::StartRound {
-                //     height,
-                //     round,
-                //     proposer,
-                // })?;
-
+                println!("Starting height: {height}, round: {round}, proposer: {proposer}");
+                shard_validator.start_round(height, round, proposer);
                 Ok(Resume::Continue)
             }
 
@@ -440,32 +458,44 @@ where
             }
 
             Effect::Broadcast(gossip_msg) => {
-                // TODO
-                // self.gossip_consensus
-                //     .cast(GossipConsensusMsg::BroadcastMsg(gossip_msg))
-                //     .map_err(|e| eyre!("Error when broadcasting gossip message: {e:?}"))?;
+                match gossip_msg {
+                    SignedConsensusMsg::Proposal(proposal) => {
+                        println!("Broadcasting proposal gossip message: {:?} {:?} from {:?}", proposal.height, proposal.round, proposal.proposer);
+                        gossip_tx
+                            .send(GossipEvent::BroadcastSignedProposal(proposal))
+                            .await?;
+                    }
+                    SignedConsensusMsg::Vote(vote) => {
+                        println!("Broadcasting vote gossip message: {:?} {:?} {:?} from {:?}", vote.vote_type, vote.height, vote.round, vote.voter);
+                        gossip_tx
+                            .send(GossipEvent::BroadcastSignedVote(vote))
+                            .await?;
+                    }
+                }
 
                 Ok(Resume::Continue)
             }
 
             Effect::GetValue(height, round, timeout) => {
                 let timeout_duration = timeouts.duration_for(timeout.step);
-
-                // self.get_value(myself, height, round, timeout_duration)
-                //     .map_err(|e| eyre!("Error when asking for value to be built: {e:?}"))?;
-
+                let block = shard_validator.propose_block(height, round);
+                let value = ShardHash {
+                    hash: block.hash.clone(),
+                    shard_index: height.shard_index as u32,
+                };
+                println!("Proposing value: {value} for height: {height}, round: {round}");
+                // TODO: Do we need to broadcast by parts?
+                let result = myself.cast(ConsensusMsg::ProposeValue(height, round, value, None));
+                if let Err(e) = result {
+                    error!("Error when forwarding locally proposed value: {e:?}");
+                }
                 Ok(Resume::Continue)
             }
 
-            Effect::GetValidatorSet(height) => {
-                // let validator_set = self
-                //     .get_validator_set(height)
-                //     .await
-                //     .map_err(|e| warn!("No validator set found for height {height}: {e:?}"))
-                //     .ok();
-
-                Ok(Resume::ValidatorSet(height, None))
-            }
+            Effect::GetValidatorSet(height) => Ok(Resume::ValidatorSet(
+                height,
+                Some(shard_validator.get_validator_set()),
+            )),
 
             Effect::Decide {
                 height,
@@ -476,17 +506,12 @@ where
                 if let Some(tx_decision) = &self.tx_decision {
                     let _ = tx_decision.send((height, round, value.clone())).await;
                 }
-
-                // self.host
-                //     .cast(HostMsg::Decide {
-                //         height,
-                //         round,
-                //         value,
-                //         commits,
-                //         consensus: myself.clone(),
-                //     })
-                //     .map_err(|e| eyre!("Error when sending decided value to host: {e:?}"))?;
-
+                println!("Deciding value: {value} for height: {height}");
+                shard_validator.decide(height, round, value.clone());
+                let result = myself.cast(ConsensusMsg::StartHeight(height.increment()));
+                if let Err(e) = result {
+                    error!("Error when starting next height after decision on {height}: {e:?}");
+                }
                 Ok(Resume::Continue)
             }
         }
@@ -494,37 +519,30 @@ where
 }
 
 #[async_trait]
-impl<Ctx> Actor for Consensus<Ctx>
-where
-    Ctx: SnapchainContext,
-{
-    type Msg = ConsensusMsg<Ctx>;
-    type State = State<Ctx>;
-    type Arguments = ();
+impl Actor for Consensus {
+    type Msg = ConsensusMsg<SnapchainValidatorContext>;
+    type State = State<SnapchainValidatorContext>;
+    type Arguments = mpsc::Sender<GossipEvent<SnapchainValidatorContext>>;
 
     #[tracing::instrument(name = "consensus", skip_all)]
     async fn pre_start(
         &self,
-        myself: ActorRef<ConsensusMsg<Ctx>>,
-        _args: (),
-    ) -> Result<State<Ctx>, ActorProcessingErr> {
-        // let forward = forward(myself.clone(), Some(myself.get_cell()), Msg::GossipEvent).await?;
-        //
-        // self.gossip_consensus
-        //     .cast(GossipConsensusMsg::Subscribe(forward))?;
-
+        myself: ActorRef<ConsensusMsg<SnapchainValidatorContext>>,
+        args: Self::Arguments,
+    ) -> Result<State<SnapchainValidatorContext>, ActorProcessingErr> {
         Ok(State {
             timers: Timers::new(myself),
             timeouts: Timeouts::new(self.timeout_config),
             consensus: ConsensusState::new(self.ctx.clone(), self.params.clone()),
-            connected_validators: BTreeSet::new(),
+            shard_validator: ShardValidator::new(),
+            gossip_tx: args,
         })
     }
 
     async fn post_start(
         &self,
-        _myself: ActorRef<ConsensusMsg<Ctx>>,
-        state: &mut State<Ctx>,
+        _myself: ActorRef<ConsensusMsg<SnapchainValidatorContext>>,
+        state: &mut State<SnapchainValidatorContext>,
     ) -> Result<(), ActorProcessingErr> {
         state.timers.cancel_all();
         Ok(())
@@ -540,9 +558,9 @@ where
     )]
     async fn handle(
         &self,
-        myself: ActorRef<ConsensusMsg<Ctx>>,
-        msg: ConsensusMsg<Ctx>,
-        state: &mut State<Ctx>,
+        myself: ActorRef<ConsensusMsg<SnapchainValidatorContext>>,
+        msg: ConsensusMsg<SnapchainValidatorContext>,
+        state: &mut State<SnapchainValidatorContext>,
     ) -> Result<(), ActorProcessingErr> {
         self.handle_msg(myself, state, msg).await
     }
@@ -558,7 +576,7 @@ where
     async fn post_stop(
         &self,
         _myself: ActorRef<Self::Msg>,
-        state: &mut State<Ctx>,
+        state: &mut State<SnapchainValidatorContext>,
     ) -> Result<(), ActorProcessingErr> {
         info!("Stopping...");
 

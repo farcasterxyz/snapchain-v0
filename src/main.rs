@@ -1,7 +1,7 @@
-mod consensus;
-mod core;
-mod network;
-mod connectors;
+pub mod consensus;
+pub mod core;
+pub mod network;
+pub mod connectors;
 
 use clap::Parser;
 use futures::stream::StreamExt;
@@ -17,20 +17,13 @@ use tracing_subscriber::EnvFilter;
 use connectors::fname::Fetcher;
 
 
-pub mod proto {
-    tonic::include_proto!("snapchain");
-}
-
 use crate::consensus::consensus::{Consensus, ConsensusMsg, ConsensusParams};
-use crate::core::types::{
-    Address, Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, Validator,
-    ValidatorSet,
-};
-use crate::network::gossip::{GossipEvent, SnapchainBehaviorEvent};
+use crate::core::types::{proto, Address, Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, SnapchainValidatorContext, SnapchainValidatorSet};
+use crate::network::gossip::{GossipEvent};
 use network::gossip::SnapchainGossip;
 
 pub enum SystemMessage {
-    Consensus(ConsensusMsg<SnapchainValidator>),
+    Consensus(ConsensusMsg<SnapchainValidatorContext>),
 }
 
 #[derive(Parser, Debug)]
@@ -85,27 +78,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let registry = SharedRegistry::global();
     let metrics = Metrics::register(registry);
 
-    let shard_id = SnapchainShard::new(0); // Single shard for now
+    let shard = SnapchainShard::new(0); // Single shard for now
     let validator_address = Address(keypair.public().to_bytes());
-    let validator = Validator::new(shard_id.clone(), keypair.public().clone());
-    let validator_set = ValidatorSet::new(vec![validator]);
+    let validator = SnapchainValidator::new(shard.clone(), keypair.public().clone());
+    let validator_set = SnapchainValidatorSet::new(vec![validator]);
 
     let consensus_params = ConsensusParams {
-        start_height: Height::new(shard_id.shard_id(), 1),
+        start_height: Height::new(shard.shard_id(), 1),
         initial_validator_set: validator_set,
         address: validator_address.clone(),
         threshold_params: Default::default(),
     };
 
-    let ctx = SnapchainValidator::new(keypair.secret());
+    let ctx = SnapchainValidatorContext::new(keypair.clone());
 
     let consensus_actor = Consensus::spawn(
         ctx,
-        shard_id,
+        shard,
         consensus_params,
         TimeoutConfig::default(),
         metrics.clone(),
         None,
+        gossip_tx.clone(),
     )
         .await
         .unwrap();

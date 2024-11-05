@@ -1,8 +1,6 @@
 use crate::consensus::consensus::ConsensusMsg;
-use crate::core::types::{
-    ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, Validator,
-};
-use crate::{proto, SystemMessage};
+use crate::core::types::{proto, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, SnapchainValidatorContext};
+use crate::{SystemMessage};
 use futures::StreamExt;
 use libp2p::identity::ed25519::Keypair;
 use libp2p::{
@@ -32,8 +30,8 @@ pub struct SnapchainBehavior {
 
 pub struct SnapchainGossip {
     pub swarm: Swarm<SnapchainBehavior>,
-    pub tx: mpsc::Sender<GossipEvent<SnapchainValidator>>,
-    rx: mpsc::Receiver<GossipEvent<SnapchainValidator>>,
+    pub tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
+    rx: mpsc::Receiver<GossipEvent<SnapchainValidatorContext>>,
     system_tx: Sender<SystemMessage>,
 }
 
@@ -151,7 +149,7 @@ impl SnapchainGossip {
                                                     println!("Failed to decode public key from peer: {}", peer_id);
                                                     continue;
                                                 }
-                                                let validator = Validator::new(SnapchainShard::new(0), public_key.unwrap());
+                                                let validator = SnapchainValidator::new(SnapchainShard::new(0), public_key.unwrap());
                                                 let consensus_message = ConsensusMsg::RegisterValidator(validator);
                                                 let res = self.system_tx.send(SystemMessage::Consensus(consensus_message)).await;
                                                 if let Err(e) = res {
@@ -172,8 +170,26 @@ impl SnapchainGossip {
                 event = self.rx.recv() => {
                     match event {
                         Some(GossipEvent::BroadcastSignedVote(vote)) => {
+                            let vote_proto = vote.to_proto();
+                            let gossip_message = proto::GossipMessage {
+                                message: Some(proto::gossip_message::Message::Consensus(proto::ConsensusMessage {
+                                    signature: vote.signature.0,
+                                    message: Some(proto::consensus_message::Message::Vote(vote_proto)),
+                                })),
+                            };
+                            let encoded_message = gossip_message.encode_to_vec();
+                            self.publish(encoded_message);
                         }
                         Some(GossipEvent::BroadcastSignedProposal(proposal)) => {
+                            let proposal_proto = proposal.to_proto();
+                            let gossip_message = proto::GossipMessage {
+                                message: Some(proto::gossip_message::Message::Consensus(proto::ConsensusMessage {
+                                    signature: proposal.signature.0,
+                                    message: Some(proto::consensus_message::Message::Proposal(proposal_proto)),
+                                })),
+                            };
+                            let encoded_message = gossip_message.encode_to_vec();
+                            self.publish(encoded_message);
                         }
                         Some(GossipEvent::BroadcastProposalPart(part)) => {
                         },

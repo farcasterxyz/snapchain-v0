@@ -17,11 +17,6 @@ message Height {
   uint64 block_number = 2;
 }
 
-message Round {
-  uint32 shard_index = 1;
-  uint64 round = 2;
-}
-
 
 // Consensus messages
 enum VoteType {
@@ -38,9 +33,9 @@ message ShardHash {
 message Vote {
   VoteType type = 1;
   Height height = 2;
-  Round round = 3;
+  int64 round = 3;
   ShardHash value = 4;
-  Validator voter = 5;
+  bytes voter = 5;
 }
 
 // Votes of at least 2/3 of the validators, required to independently verify that consensus was reached
@@ -51,10 +46,12 @@ message ConfirmedVotes {
 
 message Proposal {
   Height height = 1;
-  Round round = 2;
-  Validator proposer = 3;
-  repeated Transaction transactions = 4;  // Transactions for the shard level proposals (submitted by shard leader)
-  repeated ShardHeader shard_headers = 5; // shard headers for the block level proposal (submitted by the block leader)
+  int64 round = 2;
+  int64 pol_round = 3;
+  bytes proposer = 4;
+  ShardHash value = 5;
+//  repeated Transaction transactions = 4;  // Transactions for the shard level proposals (submitted by shard leader)
+//  repeated ShardHeader shard_headers = 5; // shard headers for the block level proposal (submitted by the block leader)
 }
 
 message ConsensusMessage {
