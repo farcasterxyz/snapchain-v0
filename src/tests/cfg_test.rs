@@ -1,6 +1,41 @@
 use std::env;
 use crate::cfg::load_and_merge_config;
 
+
+#[derive(Debug)]
+struct Env(String, Option<String>);
+
+fn set(key: &str, val: &str) -> Env {
+    Env(key.to_string(), Some(val.to_string()))
+}
+
+fn clr(key: &str) -> Env {
+    Env(key.to_string(), None)
+}
+
+fn set_envs(envs: &Vec<Env>) {
+    for Env(key, val) in envs {
+        match val {
+            Some(val) => {
+                env::set_var(key, val)
+            }
+            None => {
+                env::remove_var(key)
+            }
+        }
+    }
+}
+
+
+struct EnvRestorer(Vec<Env>);
+
+impl Drop for EnvRestorer {
+    fn drop(&mut self) {
+        set_envs(&self.0);
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use serial_test::serial; // for setting env vars
@@ -9,31 +44,24 @@ mod tests {
     use std::io::Write;
     use tempfile::{tempdir, TempDir};
 
-    fn clear_snapchain_env_vars() {
-        let keys_to_clear: Vec<String> = env::vars()
-            .filter(|(key, _)| key.starts_with("SNAPCHAIN_"))
-            .map(|(key, _)| key)
-            .collect();
 
-        for key in keys_to_clear {
-            env::remove_var(key);
-        }
-    }
-
-    struct EnvVarGuard;
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            clear_snapchain_env_vars();
-        }
-    }
-
-    fn run_test<T>(test: T)
+    fn run_test<T>(envs: Vec<Env>, test: T)
     where
         T: FnOnce(),
     {
-        clear_snapchain_env_vars();
-        let _guard = EnvVarGuard;
+        let mut restore: Vec<Env> = Vec::new();
+        for Env(key, val) in &envs {
+            let existing = env::var(key);
+            let to_push: Env = match existing {
+                Ok(val) => set(key, val.as_str()),
+                Err(_) => clr(key),
+            };
+            restore.push(to_push);
+        }
+        let _restorer = EnvRestorer(restore);
+
+        set_envs(&envs);
+
         test()
     }
 
@@ -51,7 +79,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_load_with_defaults() {
-        run_test(|| {
+        run_test(vec![], || {
             let args = vec!["test_binary".to_string()];
 
             let config = load_and_merge_config(args).expect("Failed to load config");
@@ -70,8 +98,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_load_with_config_file() {
-        run_test(|| {
-            let (tmpdir, file_path) = write_config_file(r#"
+        run_test(vec![], || {
+            let (_tmpdir, file_path) = write_config_file(r#"
                 id = 42
                 log_format = "json"
             "#);
@@ -92,14 +120,14 @@ mod tests {
     #[test]
     #[serial]
     fn test_load_with_env_vars() {
-        run_test(|| {
-            let (tmpdir, file_path) = write_config_file(r#"
+        run_test(vec![
+            set("SNAPCHAIN_ID", "43"),
+            set("SNAPCHAIN_LOG_FORMAT", "json"),
+        ], || {
+            let (_tmpdir, file_path) = write_config_file(r#"
                 id = 42
                 log_format = "text"
             "#);
-
-            env::set_var("SNAPCHAIN_ID", "43");
-            env::set_var("SNAPCHAIN_LOG_FORMAT", "json");
 
             let args = vec![
                 "test_binary".to_string(),
@@ -116,14 +144,14 @@ mod tests {
     #[test]
     #[serial]
     fn test_cli_overrides() {
-        run_test(|| {
-            let (tmpdir, file_path) = write_config_file(r#"
+        run_test(vec![
+            set("SNAPCHAIN_ID", "43"),
+            set("SNAPCHAIN_LOG_FORMAT", "text"),
+        ], || {
+            let (_tmpdir, file_path) = write_config_file(r#"
                 id = 42
                 log_format = "text"
             "#);
-
-            env::set_var("SNAPCHAIN_ID", "43");
-            env::set_var("SNAPCHAIN_LOG_FORMAT", "text");
 
             let args = vec![
                 "test_binary".to_string(),
@@ -145,8 +173,10 @@ mod tests {
     #[test]
     #[serial]
     fn test_subsection_config() {
-        run_test(|| {
-            let (tmpdir, file_path) = write_config_file(r#"
+        run_test(vec![
+            set("SNAPCHAIN_FNAMES__URL", "http://example.com/hello/universe"),
+        ], || {
+            let (_tmpdir, file_path) = write_config_file(r#"
                 id = 42
                 log_format = "text"
 
@@ -156,8 +186,6 @@ mod tests {
                 stop_at = 150
                 url = "http://example.com/hello/world"
             "#);
-
-            env::set_var("SNAPCHAIN_FNAMES__URL", "http://example.com/hello/universe");
 
             let args = vec![
                 "test_binary".to_string(),
@@ -173,11 +201,10 @@ mod tests {
         })
     }
 
-
     #[test]
     #[serial]
     fn test_missing_config_file() {
-        run_test(|| {
+        run_test(vec![], || {
             let args = vec![
                 "test_binary".to_string(),
                 "--config-path".to_string(),
