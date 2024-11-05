@@ -1,0 +1,8 @@
+log_format = "json"
+id = 1
+
+[fnames]
+disable = false
+stop_at = 9999999999
+start_from = 0
+url = "https://fnames.farcaster.xyz/transfers"
