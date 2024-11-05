@@ -1,7 +1,7 @@
-mod consensus;
-mod core;
-mod network;
-mod connectors;
+pub mod consensus;
+pub mod core;
+pub mod network;
+pub mod connectors;
 
 use clap::Parser;
 use futures::stream::StreamExt;
@@ -17,16 +17,9 @@ use tracing_subscriber::EnvFilter;
 use connectors::fname::Fetcher;
 
 
-pub mod proto {
-    tonic::include_proto!("snapchain");
-}
-
 use crate::consensus::consensus::{Consensus, ConsensusMsg, ConsensusParams};
-use crate::core::types::{
-    Address, Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator,
-    SnapchainValidatorContext, SnapchainValidatorSet,
-};
-use crate::network::gossip::{GossipEvent, SnapchainBehaviorEvent};
+use crate::core::types::{proto, Address, Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, SnapchainValidatorContext, SnapchainValidatorSet};
+use crate::network::gossip::{GossipEvent};
 use network::gossip::SnapchainGossip;
 
 pub enum SystemMessage {
@@ -97,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         threshold_params: Default::default(),
     };
 
-    let ctx = SnapchainValidatorContext::new(keypair.secret());
+    let ctx = SnapchainValidatorContext::new(keypair.clone());
 
     let consensus_actor = Consensus::spawn(
         ctx,

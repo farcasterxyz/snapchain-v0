@@ -1,8 +1,6 @@
 use crate::consensus::consensus::ConsensusMsg;
-use crate::core::types::{
-    ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
-};
-use crate::{proto, SystemMessage};
+use crate::core::types::{proto, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, SnapchainValidatorContext};
+use crate::{SystemMessage};
 use futures::StreamExt;
 use libp2p::identity::ed25519::Keypair;
 use libp2p::{
@@ -172,8 +170,26 @@ impl SnapchainGossip {
                 event = self.rx.recv() => {
                     match event {
                         Some(GossipEvent::BroadcastSignedVote(vote)) => {
+                            let vote_proto = vote.to_proto();
+                            let gossip_message = proto::GossipMessage {
+                                message: Some(proto::gossip_message::Message::Consensus(proto::ConsensusMessage {
+                                    signature: vote.signature.0,
+                                    message: Some(proto::consensus_message::Message::Vote(vote_proto)),
+                                })),
+                            };
+                            let encoded_message = gossip_message.encode_to_vec();
+                            self.publish(encoded_message);
                         }
                         Some(GossipEvent::BroadcastSignedProposal(proposal)) => {
+                            let proposal_proto = proposal.to_proto();
+                            let gossip_message = proto::GossipMessage {
+                                message: Some(proto::gossip_message::Message::Consensus(proto::ConsensusMessage {
+                                    signature: proposal.signature.0,
+                                    message: Some(proto::consensus_message::Message::Proposal(proposal_proto)),
+                                })),
+                            };
+                            let encoded_message = gossip_message.encode_to_vec();
+                            self.publish(encoded_message);
                         }
                         Some(GossipEvent::BroadcastProposalPart(part)) => {
                         },

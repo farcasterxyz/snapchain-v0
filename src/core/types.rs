@@ -7,13 +7,16 @@ use malachite_common::{
 };
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
+use std::io::Read;
 use std::sync::Arc;
+use libp2p::identity::ed25519::Keypair;
+use prost::Message;
 
-pub mod snapchain {
+pub mod proto {
     tonic::include_proto!("snapchain");
 }
 
-use snapchain::ShardHash;
+use proto::ShardHash;
 
 pub trait ShardId
 where
@@ -49,11 +52,15 @@ impl Address {
     pub fn to_hex(&self) -> String {
         hex::encode(&self.0)
     }
+
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.0.to_vec()
+    }
 }
 
 impl fmt::Display for Address {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        write!(f, "{}", self.to_hex())
     }
 }
 
@@ -78,7 +85,7 @@ impl fmt::Display for InvalidSignatureError {
 // Ed25519 signature
 // Todo: Do we need the consensus-critical version? https://github.com/penumbra-zone/ed25519-consensus
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Signature([u8; 64]);
+pub struct Signature(pub Vec<u8>);
 pub type PublicKey = libp2p::identity::ed25519::PublicKey;
 pub type PrivateKey = libp2p::identity::ed25519::SecretKey;
 
@@ -118,6 +125,13 @@ impl Height {
         Self {
             shard_index,
             block_number,
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::Height {
+        proto::Height {
+            shard_index: self.shard_index as u32,
+            block_number: self.block_number,
         }
     }
 
@@ -168,7 +182,7 @@ impl malachite_common::Height for Height {
 
 impl fmt::Display for ShardHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}] {:?}", self.shard_index, &self.hash)
+        write!(f, "[{}] {:?}", self.shard_index, hex::encode(&self.hash))
     }
 }
 
@@ -306,8 +320,26 @@ impl Vote {
         }
     }
 
-    pub fn to_sign_bytes(&self) -> Bytes {
-        todo!()
+    pub fn to_proto(&self) -> proto::Vote {
+        let vote_type = match self.vote_type {
+            VoteType::Prevote => proto::VoteType::Prevote,
+            VoteType::Precommit => proto::VoteType::Precommit,
+        };
+        let shard_hash = match &self.shard_hash {
+            NilOrVal::Nil => None,
+            NilOrVal::Val(shard_hash) => Some(shard_hash.clone()),
+        };
+        proto::Vote {
+            height: Some(self.height.to_proto()),
+            round: self.round.as_i64(),
+            voter: self.voter.to_vec(),
+            r#type: vote_type as i32,
+            value: shard_hash
+        }
+    }
+
+    pub fn to_sign_bytes(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
     }
 }
 
@@ -318,6 +350,22 @@ pub struct Proposal {
     pub shard_hash: ShardHash,
     pub pol_round: Round,
     pub proposer: Address,
+}
+
+impl Proposal {
+    pub fn to_proto(&self) -> proto::Proposal {
+        proto::Proposal {
+            height: Some(self.height.to_proto()),
+            round: self.round.as_i64(),
+            proposer: self.proposer.to_vec(),
+            value: Some(self.shard_hash.clone()),
+            pol_round: self.pol_round.as_i64(),
+        }
+    }
+    pub fn to_sign_bytes(&self) -> Vec<u8> {
+        // TODO: Should we be signing the hash?
+        self.to_proto().encode_to_vec()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -334,13 +382,13 @@ pub enum ProposalPart {
 
 #[derive(Clone, Debug)]
 pub struct SnapchainValidatorContext {
-    private_key: Arc<PrivateKey>,
+    keypair: Arc<Keypair>,
 }
 
 impl SnapchainValidatorContext {
-    pub fn new(private_key: PrivateKey) -> Self {
+    pub fn new(keypair: Keypair) -> Self {
         Self {
-            private_key: Arc::new(private_key),
+            keypair: Arc::new(keypair),
         }
     }
 }
@@ -383,7 +431,8 @@ impl malachite_common::Context for SnapchainValidatorContext {
     }
 
     fn sign_vote(&self, vote: Self::Vote) -> SignedVote<Self> {
-        SignedVote::new(vote, Signature([0; 64]))
+        let signature = self.keypair.sign(&vote.to_sign_bytes());
+        SignedVote::new(vote, Signature(signature))
     }
 
     fn verify_signed_vote(
@@ -392,11 +441,12 @@ impl malachite_common::Context for SnapchainValidatorContext {
         signature: &Signature,
         public_key: &PublicKey,
     ) -> bool {
-        false
+        public_key.verify(&vote.to_sign_bytes(), &signature.0)
     }
 
     fn sign_proposal(&self, proposal: Self::Proposal) -> SignedProposal<Self> {
-        SignedProposal::new(proposal, Signature([0; 64]))
+        let signature = self.keypair.sign(&proposal.to_sign_bytes());
+        SignedProposal::new(proposal, Signature(signature))
     }
 
     fn verify_signed_proposal(
@@ -405,12 +455,11 @@ impl malachite_common::Context for SnapchainValidatorContext {
         signature: &Signature,
         public_key: &PublicKey,
     ) -> bool {
-        // TODO
-        false
+        public_key.verify(&proposal.to_sign_bytes(), &signature.0)
     }
 
     fn sign_proposal_part(&self, proposal_part: Self::ProposalPart) -> SignedProposalPart<Self> {
-        SignedProposalPart::new(proposal_part, Signature([0; 64]))
+        SignedProposalPart::new(proposal_part, Signature(vec![]))
     }
 
     fn verify_signed_proposal_part(
@@ -543,7 +592,7 @@ impl malachite_common::ValidatorSet<SnapchainValidatorContext> for SnapchainVali
     }
 
     fn get_by_address(&self, address: &Address) -> Option<&SnapchainValidator> {
-        todo!()
+        self.validators.iter().find(|v| &v.address == address)
     }
 
     fn get_by_index(&self, index: usize) -> Option<&SnapchainValidator> {

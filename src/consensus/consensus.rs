@@ -16,7 +16,7 @@ use malachite_consensus::{Effect, ProposedValue, Resume, SignedConsensusMsg};
 use malachite_metrics::Metrics;
 
 use crate::consensus::timers::{TimeoutElapsed, TimerScheduler};
-use crate::core::types::snapchain::ShardHash;
+use crate::core::types::proto::ShardHash;
 use crate::core::types::{
     Address, Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator,
     SnapchainValidatorContext, SnapchainValidatorSet,
@@ -30,7 +30,8 @@ use tokio::time::Instant;
 
 pub type ConsensusRef<Ctx> = ActorRef<ConsensusMsg<Ctx>>;
 
-pub type TxDecision<Ctx> = mpsc::Sender<(<Ctx as Context>::Height, Round, <Ctx as Context>::Value)>;
+pub type Decision<Ctx> = (<Ctx as Context>::Height, Round, <Ctx as Context>::Value);
+pub type TxDecision<Ctx> = mpsc::Sender<Decision<Ctx>>;
 type Timers<Ctx> = TimerScheduler<Timeout, ConsensusMsg<Ctx>>;
 
 impl<Ctx: Context + SnapchainContext> From<TimeoutElapsed<Timeout>> for ConsensusMsg<Ctx> {
@@ -141,9 +142,13 @@ impl ShardValidator {
     }
 
     pub fn propose_block(&mut self, height: Height, round: Round) -> Block {
-        let previous_block = self.blocks.last().unwrap();
+        let previous_block = self.blocks.last();
+        let parent_hash = match previous_block {
+            Some(block) => block.hash.clone(),
+            None => vec![0, 32],
+        };
         let block_header = BlockHeader {
-            parent_hash: previous_block.hash.clone(),
+            parent_hash,
             chain_id: 0,
             version: 0,
             shard_headers_hash: vec![],
@@ -264,6 +269,7 @@ impl Consensus {
         match msg {
             ConsensusMsg::StartHeight(height) => {
                 let validator_set = state.shard_validator.get_validator_set();
+                println!("Starting height: {height} with {:?} validators", validator_set.count());
                 let result = self
                     .process_input(
                         &myself,
@@ -296,6 +302,7 @@ impl Consensus {
             }
 
             ConsensusMsg::ReceivedSignedVote(vote) => {
+                println!("Received vote: {:?} for height: {:?}, round: {:?} at {:?}", vote.shard_hash, vote.height, vote.round, self.params.address);
                 if let Err(e) = self
                     .process_input(&myself, state, ConsensusInput::Vote(vote))
                     .await
@@ -306,6 +313,7 @@ impl Consensus {
             }
 
             ConsensusMsg::ReceivedSignedProposal(proposal) => {
+                println!("Received proposal: {:?} for height: {:?}, round: {:?} at {:?}", proposal.shard_hash, proposal.height, proposal.round, self.params.address);
                 if let Err(e) = self
                     .process_input(&myself, state, ConsensusInput::Proposal(proposal))
                     .await
@@ -324,31 +332,31 @@ impl Consensus {
 
                 println!("Connected to peer {address}");
 
-                let connected_peers = state.shard_validator.validator_set.count();
-                let total_peers = state.consensus.driver.validator_set().count() - 1;
+                // let connected_peers = state.shard_validator.validator_set.count();
+                // let total_peers = state.consensus.driver.validator_set().count() - 1;
 
-                debug!("Connected to {connected_peers}/{total_peers} peers");
+                // println!("Connected to {connected_peers}/{total_peers} peers");
 
                 self.metrics.connected_peers.inc();
 
-                if connected_peers == total_peers {
-                    info!("Enough peers ({connected_peers}) connected to start consensus");
-
-                    let height = state.consensus.driver.height();
-                    let validator_set = state.shard_validator.get_validator_set();
-
-                    let result = self
-                        .process_input(
-                            &myself,
-                            state,
-                            ConsensusInput::StartHeight(height, validator_set),
-                        )
-                        .await;
-
-                    if let Err(e) = result {
-                        error!("Error when starting height {height}: {e:?}");
-                    }
-                }
+                // if connected_peers == total_peers {
+                //     println!("Enough peers ({connected_peers}) connected to start consensus");
+                //
+                //     let height = state.consensus.driver.height();
+                //     let validator_set = state.shard_validator.get_validator_set();
+                //
+                //     let result = self
+                //         .process_input(
+                //             &myself,
+                //             state,
+                //             ConsensusInput::StartHeight(height, validator_set),
+                //         )
+                //         .await;
+                //
+                //     if let Err(e) = result {
+                //         error!("Error when starting height {height}: {e:?}");
+                //     }
+                // }
                 Ok(())
             }
 
@@ -357,40 +365,6 @@ impl Consensus {
                 Ok(())
             }
 
-            // Msg::GossipEvent(event) => {
-            //     match event {
-            //         GossipEvent::PeerDisconnected(peer_id) => {
-            //             info!("Disconnected from peer {peer_id}");
-            //
-            //             if state.connected_peers.remove(&peer_id) {
-            //                 self.metrics.connected_peers.dec();
-            //
-            //                 // TODO: pause/stop consensus, if necessary
-            //             }
-            //
-            //             Ok(())
-            //         }
-            //
-            //         GossipEvent::ProposalPart(from, part) => {
-            //             self.host
-            //                 .call_and_forward(
-            //                     |reply_to| HostMsg::ReceivedProposalPart {
-            //                         from,
-            //                         part,
-            //                         reply_to,
-            //                     },
-            //                     &myself,
-            //                     |value| Msg::ReceivedProposedValue(value),
-            //                     None,
-            //                 )
-            //                 .map_err(|e| {
-            //                     eyre!("Error when forwarding proposal parts to host: {e:?}")
-            //                 })?;
-            //
-            //             Ok(())
-            //         }
-            //     }
-            // }
             ConsensusMsg::TimeoutElapsed(elapsed) => {
                 let Some(timeout) = state.timers.intercept_timer_msg(elapsed) else {
                     // Timer was cancelled or already processed, ignore
@@ -414,6 +388,7 @@ impl Consensus {
                 Ok(())
             }
             ConsensusMsg::ReceivedProposedValue(value) => {
+                println!("Received proposed value: {:?} for height: {:?}, round: {:?} at {:?}", value.value, value.height, value.round, self.params.address);
                 let result = self
                     .process_input(&myself, state, ConsensusInput::ReceivedProposedValue(value))
                     .await;
@@ -456,11 +431,11 @@ impl Consensus {
             Effect::ScheduleTimeout(timeout) => {
                 let duration = timeouts.duration_for(timeout.step);
                 timers.start_timer(timeout, duration);
-
                 Ok(Resume::Continue)
             }
 
             Effect::StartRound(height, round, proposer) => {
+                println!("Starting height: {height}, round: {round}, proposer: {proposer}");
                 shard_validator.start_round(height, round, proposer);
                 Ok(Resume::Continue)
             }
@@ -485,11 +460,13 @@ impl Consensus {
             Effect::Broadcast(gossip_msg) => {
                 match gossip_msg {
                     SignedConsensusMsg::Proposal(proposal) => {
+                        println!("Broadcasting proposal gossip message: {:?} {:?} from {:?}", proposal.height, proposal.round, proposal.proposer);
                         gossip_tx
                             .send(GossipEvent::BroadcastSignedProposal(proposal))
                             .await?;
                     }
                     SignedConsensusMsg::Vote(vote) => {
+                        println!("Broadcasting vote gossip message: {:?} {:?} {:?} from {:?}", vote.vote_type, vote.height, vote.round, vote.voter);
                         gossip_tx
                             .send(GossipEvent::BroadcastSignedVote(vote))
                             .await?;
@@ -506,6 +483,7 @@ impl Consensus {
                     hash: block.hash.clone(),
                     shard_index: height.shard_index as u32,
                 };
+                println!("Proposing value: {value} for height: {height}, round: {round}");
                 // TODO: Do we need to broadcast by parts?
                 let result = myself.cast(ConsensusMsg::ProposeValue(height, round, value, None));
                 if let Err(e) = result {
@@ -528,7 +506,12 @@ impl Consensus {
                 if let Some(tx_decision) = &self.tx_decision {
                     let _ = tx_decision.send((height, round, value.clone())).await;
                 }
+                println!("Deciding value: {value} for height: {height}");
                 shard_validator.decide(height, round, value.clone());
+                let result = myself.cast(ConsensusMsg::StartHeight(height.increment()));
+                if let Err(e) = result {
+                    error!("Error when starting next height after decision on {height}: {e:?}");
+                }
                 Ok(Resume::Continue)
             }
         }
