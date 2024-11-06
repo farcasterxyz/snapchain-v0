@@ -102,7 +102,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     if !app_config.onchain_events.disable {
         let mut onchain_events_subscriber =
-            connectors::onchain_events::Subscriber::new(app_config.onchain_events)?; // Fill in via config
+            connectors::onchain_events::Subscriber::new(app_config.onchain_events)?;
         tokio::spawn(async move {
             let result = onchain_events_subscriber.run().await;
             match result {
