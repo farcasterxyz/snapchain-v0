@@ -46,14 +46,12 @@ const RENT_EXPIRY_IN_SECONDS: u64 = 365 * 24 * 60 * 60; // One year
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     pub rpc_url: String,
-    pub disable: bool,
 }
 
 impl Default for Config {
     fn default() -> Config {
         return Config {
-            rpc_url: "must specify rpc url in config".to_string(),
-            disable: false,
+            rpc_url: String::new(),
         };
     }
 }
@@ -68,6 +66,9 @@ pub enum SubscribeError {
 
     #[error(transparent)]
     UnableToParseLog(#[from] alloy_sol_types::Error),
+
+    #[error("Empty rpc url")]
+    EmptyRpcUrl,
 
     #[error("Log missing block hash")]
     LogMissingBlockHash,
@@ -157,15 +158,18 @@ pub struct Subscriber {
 // TODO(aditi): Wait for 1 confirmation before "committing" an onchain event.
 impl Subscriber {
     pub fn new(config: Config) -> Result<Subscriber, SubscribeError> {
+        if config.rpc_url.is_empty() {
+            return Err(SubscribeError::EmptyRpcUrl);
+        }
         let url = config.rpc_url.parse()?;
         let provider = ProviderBuilder::new().on_http(url);
-        return Ok(Subscriber {
+        Ok(Subscriber {
             provider,
             onchain_events_by_block: HashMap::new(),
-        });
+        })
     }
 
-    pub fn add_onchain_event(
+    fn add_onchain_event(
         &mut self,
         fid: u64,
         block_number: u64,
@@ -197,19 +201,16 @@ impl Subscriber {
         }
     }
 
-    pub async fn get_block_timestamp(
-        &self,
-        block_hash: FixedBytes<32>,
-    ) -> Result<u64, SubscribeError> {
+    async fn get_block_timestamp(&self, block_hash: FixedBytes<32>) -> Result<u64, SubscribeError> {
         let block = self
             .provider
             .get_block_by_hash(block_hash, alloy::rpc::types::BlockTransactionsKind::Hashes)
             .await?
             .ok_or(SubscribeError::UnableToFindBlockByHash)?;
-        return Ok(block.header.timestamp);
+        Ok(block.header.timestamp)
     }
 
-    pub async fn process_log(&mut self, event: &Log) -> Result<(), SubscribeError> {
+    async fn process_log(&mut self, event: &Log) -> Result<(), SubscribeError> {
         let block_hash = event
             .block_hash
             .ok_or(SubscribeError::LogMissingBlockHash)?;
@@ -221,7 +222,7 @@ impl Subscriber {
             .transaction_index
             .ok_or(SubscribeError::LogMissingTxIndex)?;
         // TODO(aditi): Cache these queries for timestamp to optimize rpc calls.
-        // [block_timestamp] eists on [Log], however it's never populated in practice.
+        // [block_timestamp] exists on [Log], however it's never populated in practice.
         let block_timestamp = self.get_block_timestamp(block_hash).await?;
         let mut add_event = |fid, event_type| {
             self.add_onchain_event(
@@ -246,7 +247,7 @@ impl Subscriber {
                         expiry: block_timestamp + RENT_EXPIRY_IN_SECONDS,
                     }),
                 );
-                return Ok(());
+                Ok(())
             }
             Some(&IdRegistryAbi::Register::SIGNATURE_HASH) => {
                 let IdRegistryAbi::Register { to, id, recovery } = event.log_decode()?.inner.data;
@@ -258,7 +259,7 @@ impl Subscriber {
                         recovery_address: recovery,
                     }),
                 );
-                return Ok(());
+                Ok(())
             }
             Some(&IdRegistryAbi::Transfer::SIGNATURE_HASH) => {
                 let IdRegistryAbi::Transfer { from, to, id } = event.log_decode()?.inner.data;
@@ -267,7 +268,7 @@ impl Subscriber {
                     fid,
                     EventType::IdRegister(IdRegisterEvent::Transfer { to, from }),
                 );
-                return Ok(());
+                Ok(())
             }
             Some(&IdRegistryAbi::ChangeRecoveryAddress::SIGNATURE_HASH) => {
                 let IdRegistryAbi::ChangeRecoveryAddress { id, recovery } =
@@ -279,7 +280,7 @@ impl Subscriber {
                         recovery_address: recovery,
                     }),
                 );
-                return Ok(());
+                Ok(())
             }
             Some(&KeyRegistryAbi::Add::SIGNATURE_HASH) => {
                 let KeyRegistryAbi::Add {
@@ -300,7 +301,7 @@ impl Subscriber {
                         metadata_type: metadatatype,
                     }),
                 );
-                return Ok(());
+                Ok(())
             }
             Some(&KeyRegistryAbi::Remove::SIGNATURE_HASH) => {
                 let KeyRegistryAbi::Remove {
@@ -313,7 +314,7 @@ impl Subscriber {
                     fid,
                     EventType::Signer(SignerEvent::Remove { key: keyBytes }),
                 );
-                return Ok(());
+                Ok(())
             }
             Some(&KeyRegistryAbi::AdminReset::SIGNATURE_HASH) => {
                 let KeyRegistryAbi::AdminReset {
@@ -326,15 +327,15 @@ impl Subscriber {
                     fid,
                     EventType::Signer(SignerEvent::AdminReset { key: keyBytes }),
                 );
-                return Ok(());
+                Ok(())
             }
             Some(&KeyRegistryAbi::Migrated::SIGNATURE_HASH) => {
                 let KeyRegistryAbi::Migrated { keysMigratedAt } = event.log_decode()?.inner.data;
                 let migrated_at = Uint::to::<u64>(&keysMigratedAt);
                 add_event(0, EventType::SignerMigrated { migrated_at });
-                return Ok(());
+                Ok(())
             }
-            _ => return Ok(()),
+            _ => Ok(()),
         }
     }
 
@@ -346,15 +347,17 @@ impl Subscriber {
         while let Some(events) = stream.next().await {
             for event in events {
                 let result = self.process_log(&event).await;
-                if result.is_err() {
-                    error!(
-                        "Error processing onchain event. Error: {:#?}. Event: {:#?}",
-                        result.err(),
-                        event,
-                    )
+                match result {
+                    Err(err) => {
+                        error!(
+                            "Error processing onchain event. Error: {:#?}. Event: {:#?}",
+                            err, event,
+                        )
+                    }
+                    Ok(_) => {}
                 }
             }
         }
-        return Ok(());
+        Ok(())
     }
 }

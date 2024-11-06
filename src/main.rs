@@ -100,7 +100,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         });
     }
 
-    if !app_config.onchain_events.disable {
+    if !app_config.onchain_events.rpc_url.is_empty() {
         let mut onchain_events_subscriber =
             connectors::onchain_events::Subscriber::new(app_config.onchain_events)?;
         tokio::spawn(async move {
