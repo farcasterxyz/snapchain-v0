@@ -14,6 +14,7 @@ use std::time::Duration;
 use tokio::io;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
+use tracing::info;
 
 pub enum GossipEvent<Ctx: SnapchainContext> {
     BroadcastSignedVote(SignedVote<Ctx>),
@@ -124,7 +125,7 @@ impl SnapchainGossip {
                         SwarmEvent::Behaviour(SnapchainBehaviorEvent::Gossipsub(gossipsub::Event::Unsubscribed { peer_id, topic })) =>
                             println!("Peer: {peer_id} unsubscribed to topic: {topic}"),
                         SwarmEvent::NewListenAddr { address, .. } => {
-                            println!("Local node is listening on {address}");
+                            info!(address = address.to_string(), "Local node is listening");
                         },
                         SwarmEvent::Behaviour(SnapchainBehaviorEvent::Gossipsub(gossipsub::Event::Message {
                             propagation_source: peer_id,

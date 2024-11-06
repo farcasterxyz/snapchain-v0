@@ -4,6 +4,11 @@ pub mod network;
 pub mod connectors;
 mod cfg;
 
+use std::error::Error;
+use std::io;
+use std::net::SocketAddr;
+use clap::Parser;
+use futures::stream::StreamExt;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
 use malachite_metrics::{Metrics, SharedRegistry};
@@ -11,14 +16,19 @@ use std::time::Duration;
 use tokio::signal::ctrl_c;
 use tokio::sync::mpsc;
 use tokio::{select, time};
+use tokio::time::sleep;
+use tonic::transport::Server;
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 use connectors::fname::Fetcher;
 
 
 use crate::consensus::consensus::{Consensus, ConsensusMsg, ConsensusParams};
 use crate::core::types::{proto, Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext, SnapchainValidatorSet};
-use crate::network::gossip::{GossipEvent};
+use crate::network::gossip::GossipEvent;
 use network::gossip::SnapchainGossip;
+use network::server::MySnapchainService;
+use network::server::rpc::snapchain_service_server::SnapchainServiceServer;
 
 pub enum SystemMessage {
     Consensus(ConsensusMsg<SnapchainValidatorContext>),
@@ -26,7 +36,7 @@ pub enum SystemMessage {
 
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();
 
     let app_config = cfg::load_and_merge_config(args)?;
@@ -39,7 +49,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = base_port + app_config.id;
     let addr = format!("/ip4/0.0.0.0/udp/{}/quic-v1", port);
 
-    println!("SnapchainService (ID: {}) listening on {}", app_config.id, addr);
+    let base_grpc_port = 50060;
+    let grpc_port = base_grpc_port + app_config.id;
+    let grpc_addr = format!("0.0.0.0:{}", grpc_port);
+    let grpc_socket_addr: SocketAddr = grpc_addr.parse()?;
+
+    info!(
+        id = app_config.id,
+        addr = addr,
+        grpc_addr = grpc_addr,
+        "SnapchainService listening",
+    );
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     match app_config.log_format.as_str() {
@@ -60,7 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let gossip_result = SnapchainGossip::create(keypair.clone(), addr, system_tx.clone());
     if let Err(e) = gossip_result {
-        println!("Failed to create SnapchainGossip: {:?}", e);
+        error!(error = ?e, "Failed to create SnapchainGossip");
         return Ok(());
     }
 
@@ -68,9 +88,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let gossip_tx = gossip.tx.clone();
 
     tokio::spawn(async move {
-        println!("Starting gossip");
+        info!("Starting gossip");
         gossip.start().await;
-        println!("Gossip Stopped");
+        info!("Gossip Stopped");
     });
 
     if !app_config.fnames.disable {
@@ -80,6 +100,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             fetcher.run().await;
         });
     }
+
+    let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
+
+    tokio::spawn(async move {
+        let service = MySnapchainService::default();
+
+        let resp = Server::builder()
+            .add_service(SnapchainServiceServer::new(service))
+            .serve(grpc_socket_addr)
+            .await;
+
+        let msg = "grpc server stopped";
+        match resp {
+            Ok(()) => error!(msg),
+            Err(e) => error!(error = ?e, "{}", msg),
+        }
+
+        shutdown_tx.send(()).await.ok();
+    });
 
     let registry = SharedRegistry::global();
     let metrics = Metrics::register(registry);
@@ -119,7 +158,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         select! {
             _ = ctrl_c() => {
-                println!("Received Ctrl-C, shutting down");
+                info!("Received Ctrl-C, shutting down");
+                consensus_actor.stop(None);
+                return Ok(());
+            }
+            _ = shutdown_rx.recv() => {
+                error!("Received shutdown signal, shutting down");
                 consensus_actor.stop(None);
                 return Ok(());
             }
@@ -134,7 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }),
                         nonce: tick_count as u64,   // Need the nonce to avoid the gossip duplicate message check
                     };
-                    println!("Registering validator with nonce: {}", register_validator.nonce);
+                    info!("Registering validator with nonce: {}", register_validator.nonce);
                     gossip_tx.send(GossipEvent::RegisterValidator(register_validator)).await?;
                 }
             }
