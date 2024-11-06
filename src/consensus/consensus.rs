@@ -1,10 +1,11 @@
 use malachite_common::{ValidatorSet, Validity};
 use std::collections::{BTreeMap};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
 
 use malachite_common::{
@@ -12,7 +13,7 @@ use malachite_common::{
     SignedVote, Timeout, TimeoutStep,
 };
 use malachite_config::TimeoutConfig;
-use malachite_consensus::{Effect, ProposedValue, Resume, SignedConsensusMsg};
+use malachite_consensus::{Effect, Params, ProposedValue, Resume, SignedConsensusMsg};
 use malachite_metrics::Metrics;
 
 use crate::consensus::timers::{TimeoutElapsed, TimerScheduler};
@@ -23,7 +24,9 @@ use crate::proto::{Block, BlockHeader, Height as ProtoHeight};
 pub use malachite_consensus::Params as ConsensusParams;
 pub use malachite_consensus::State as ConsensusState;
 use prost::Message;
+use tokio::sync::mpsc::Receiver;
 use tokio::time::Instant;
+use crate::network::server::message::Message as FCMessage;
 
 pub type ConsensusRef<Ctx> = ActorRef<ConsensusMsg<Ctx>>;
 
@@ -100,10 +103,11 @@ pub struct ShardValidator {
     current_height: Option<Height>,
     current_proposer: Option<Address>,
     proposed_values: BTreeMap<ShardHash, Block>,
+    message_rx: Arc<Mutex<Receiver<FCMessage>>>,
 }
 
 impl ShardValidator {
-    fn new() -> ShardValidator {
+    fn new(message_rx: Arc<Mutex<Receiver<FCMessage>>>) -> ShardValidator {
         ShardValidator {
             shard_d: SnapchainShard::new(0),
             validator_set: SnapchainValidatorSet::new(vec![]),
@@ -113,6 +117,7 @@ impl ShardValidator {
             current_height: None,
             current_proposer: None,
             proposed_values: BTreeMap::new(),
+            message_rx,
         }
     }
 
@@ -196,6 +201,7 @@ pub struct Consensus {
     metrics: Metrics,
     shard_id: SnapchainShard,
     tx_decision: Option<TxDecision<SnapchainValidatorContext>>,
+    messages_rx: Arc<Mutex<Receiver<FCMessage>>>,
 }
 
 // pub type ConsensusMsg<Ctx> = ConsensusMsg<Ctx>;
@@ -225,6 +231,7 @@ impl Consensus {
         timeout_config: TimeoutConfig,
         metrics: Metrics,
         tx_decision: Option<TxDecision<SnapchainValidatorContext>>,
+        messages_rx: Arc<Mutex<Receiver<FCMessage>>>,
     ) -> Self {
         Self {
             ctx,
@@ -233,6 +240,7 @@ impl Consensus {
             timeout_config,
             metrics,
             tx_decision,
+            messages_rx,
         }
     }
 
@@ -245,8 +253,9 @@ impl Consensus {
         metrics: Metrics,
         tx_decision: Option<TxDecision<SnapchainValidatorContext>>,
         gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
+        messages_rx: Receiver<FCMessage>,
     ) -> Result<ActorRef<ConsensusMsg<SnapchainValidatorContext>>, ractor::SpawnErr> {
-        let node = Self::new(ctx, shard_id, params, timeout_config, metrics, tx_decision);
+        let node = Self::new(ctx, shard_id, params, timeout_config, metrics, tx_decision, Arc::new(Mutex::new(messages_rx)));
 
         let (actor_ref, _) = Actor::spawn(None, node, gossip_tx).await?;
         Ok(actor_ref)
@@ -352,7 +361,7 @@ impl Consensus {
 
                     let height = state.consensus.driver.height();
                     let validator_set = state.shard_validator.get_validator_set();
-                
+
                     let result = self
                         .process_input(
                             &myself,
@@ -574,11 +583,14 @@ impl Actor for Consensus {
         myself: ActorRef<ConsensusMsg<SnapchainValidatorContext>>,
         args: Self::Arguments,
     ) -> Result<State<SnapchainValidatorContext>, ActorProcessingErr> {
+        let messages_rx = Arc::clone(&self.messages_rx);
+        let shard_validator = ShardValidator::new(messages_rx);
+
         Ok(State {
             timers: Timers::new(myself),
             timeouts: Timeouts::new(self.timeout_config),
             consensus: ConsensusState::new(self.ctx.clone(), self.params.clone()),
-            shard_validator: ShardValidator::new(),
+            shard_validator: shard_validator,
             gossip_tx: args,
         })
     }

@@ -2,7 +2,7 @@ pub mod rpc {
     tonic::include_proto!("rpc");
 }
 
-mod message {
+pub mod message {
     tonic::include_proto!("message");
 }
 
@@ -16,11 +16,20 @@ use tonic::{transport::Server, Request, Response, Status};
 use tonic::Code::Unimplemented;
 use tracing::{info};
 use hex::ToHex;
+use tokio::sync::mpsc::Sender;
 use rpc::snapchain_service_server::{SnapchainService, SnapchainServiceServer};
 use message::{Message};
 
-#[derive(Default)]
-pub struct MySnapchainService;
+
+pub struct MySnapchainService {
+    messages_tx: Sender<Message>
+}
+
+impl MySnapchainService {
+    pub fn new(messages_tx: Sender<Message>) -> Self {
+        Self { messages_tx }
+    }
+}
 
 #[tonic::async_trait]
 impl SnapchainService for MySnapchainService {
