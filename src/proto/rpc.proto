@@ -1,0 +1,8 @@
+syntax = "proto3";
+package rpc;
+
+import "message.proto";
+
+service SnapchainService {
+  rpc SubmitMessage(message.Message) returns (message.Message);
+}
