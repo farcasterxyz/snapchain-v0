@@ -11,7 +11,7 @@ use alloy::{
 use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{debug, error};
+use tracing::{error, info};
 
 sol!(
     #[allow(missing_docs)]
@@ -186,6 +186,7 @@ impl Subscriber {
             chain_id: CHAIN_ID,
             version: 0,
         };
+        info!("Processed onchain event {:#?}", event);
         let events = self.onchain_events_by_block.get_mut(&block_number);
         match events {
             None => {
@@ -351,8 +352,6 @@ impl Subscriber {
                         result.err(),
                         event,
                     )
-                } else {
-                    debug!("Processed onchain event {:#?}", event);
                 }
             }
         }
