@@ -1,10 +1,11 @@
 use malachite_common::{ValidatorSet, Validity};
 use std::collections::{BTreeMap};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex, MutexGuard};
 use tracing::{error, info, warn};
 
 use malachite_common::{
@@ -12,18 +13,20 @@ use malachite_common::{
     SignedVote, Timeout, TimeoutStep,
 };
 use malachite_config::TimeoutConfig;
-use malachite_consensus::{Effect, ProposedValue, Resume, SignedConsensusMsg};
+use malachite_consensus::{Effect, Params, ProposedValue, Resume, SignedConsensusMsg};
 use malachite_metrics::Metrics;
 
 use crate::consensus::timers::{TimeoutElapsed, TimerScheduler};
-use crate::core::types::proto::{BlockProposal, ShardHash};
+use crate::core::types::proto::{BlockProposal, ShardChunk, ShardHash, ShardHeader, Transaction, UserMessage};
 use crate::core::types::{Address, Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, SnapchainValidatorContext, SnapchainValidatorSet};
 use crate::network::gossip::GossipEvent;
 use crate::proto::{Block, BlockHeader, Height as ProtoHeight};
 pub use malachite_consensus::Params as ConsensusParams;
 pub use malachite_consensus::State as ConsensusState;
 use prost::Message;
+use tokio::sync::mpsc::Receiver;
 use tokio::time::Instant;
+use crate::network::server::message::Message as FCMessage;
 
 pub type ConsensusRef<Ctx> = ActorRef<ConsensusMsg<Ctx>>;
 
@@ -149,7 +152,7 @@ impl ShardValidator {
         value
     }
 
-    pub fn propose_block(&mut self, height: Height) -> Block {
+    pub fn propose_block(&mut self, height: Height, messages: Vec<FCMessage>) -> Block {
         let previous_block = self.blocks.last();
         let parent_hash = match previous_block {
             Some(block) => block.hash.clone(),
@@ -176,7 +179,17 @@ impl ShardValidator {
             hash: hash.clone(),
             validators: None,
             votes: None,
-            shard_chunks: vec![],
+            shard_chunks: vec![ShardChunk {
+                hash: vec![0, 1, 2, 3],
+                header: None,
+                votes: None,
+                transactions: vec![Transaction {
+                    fid: 1234,
+                    account_root: vec![5, 5, 6, 6],
+                    system_messages: vec![],
+                    user_messages: messages.into_iter().map(|_| UserMessage {}).collect(), // TODO
+                }],
+            }],
         };
 
         let shard_hash = ShardHash {
@@ -196,6 +209,7 @@ pub struct Consensus {
     metrics: Metrics,
     shard_id: SnapchainShard,
     tx_decision: Option<TxDecision<SnapchainValidatorContext>>,
+    message_rx: Arc<Mutex<Receiver<FCMessage>>>,
 }
 
 // pub type ConsensusMsg<Ctx> = ConsensusMsg<Ctx>;
@@ -225,6 +239,7 @@ impl Consensus {
         timeout_config: TimeoutConfig,
         metrics: Metrics,
         tx_decision: Option<TxDecision<SnapchainValidatorContext>>,
+        message_rx: Arc<Mutex<Receiver<FCMessage>>>, // TODO: can we do this without Arc/Mutex
     ) -> Self {
         Self {
             ctx,
@@ -233,6 +248,7 @@ impl Consensus {
             timeout_config,
             metrics,
             tx_decision,
+            message_rx,
         }
     }
 
@@ -245,8 +261,9 @@ impl Consensus {
         metrics: Metrics,
         tx_decision: Option<TxDecision<SnapchainValidatorContext>>,
         gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
+        messages_rx: Receiver<FCMessage>,
     ) -> Result<ActorRef<ConsensusMsg<SnapchainValidatorContext>>, ractor::SpawnErr> {
-        let node = Self::new(ctx, shard_id, params, timeout_config, metrics, tx_decision);
+        let node = Self::new(ctx, shard_id, params, timeout_config, metrics, tx_decision, Arc::new(Mutex::new(messages_rx)));
 
         let (actor_ref, _) = Actor::spawn(None, node, gossip_tx).await?;
         Ok(actor_ref)
@@ -352,7 +369,7 @@ impl Consensus {
 
                     let height = state.consensus.driver.height();
                     let validator_set = state.shard_validator.get_validator_set();
-                
+
                     let result = self
                         .process_input(
                             &myself,
@@ -512,7 +529,18 @@ impl Consensus {
 
             Effect::GetValue(height, round, timeout) => {
                 let timeout_duration = timeouts.duration_for(timeout.step);
-                let block = shard_validator.propose_block(height);
+
+                let mut messages: Vec<FCMessage> = vec![];
+                {
+                    let mut message_rx = self.message_rx.lock().await;
+                    while let Ok(message) = message_rx.try_recv() {
+                        // Process each message
+                        println!("received fc message: {:?}", message);
+                        messages.push(message);
+                    }
+                }
+                let block = shard_validator.propose_block(height, messages);
+
                 let value = ShardHash {
                     hash: block.hash.clone(),
                     shard_index: height.shard_index as u32,
@@ -539,7 +567,7 @@ impl Consensus {
                     height,
                     Some(shard_validator.get_validator_set()),
                 ))
-            },
+            }
 
             Effect::Decide {
                 height,
@@ -574,11 +602,14 @@ impl Actor for Consensus {
         myself: ActorRef<ConsensusMsg<SnapchainValidatorContext>>,
         args: Self::Arguments,
     ) -> Result<State<SnapchainValidatorContext>, ActorProcessingErr> {
+        let messages_rx = Arc::clone(&self.message_rx);
+        let shard_validator = ShardValidator::new();
+
         Ok(State {
             timers: Timers::new(myself),
             timeouts: Timeouts::new(self.timeout_config),
             consensus: ConsensusState::new(self.ctx.clone(), self.params.clone()),
-            shard_validator: ShardValidator::new(),
+            shard_validator: shard_validator,
             gossip_tx: args,
         })
     }

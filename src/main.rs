@@ -114,10 +114,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         });
     }
 
+    let (messages_tx, mut messages_rx) = mpsc::channel::<network::server::message::Message>(100);
+
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
     tokio::spawn(async move {
-        let service = MySnapchainService::default();
+        let service = MySnapchainService::new(messages_tx);
 
         let resp = Server::builder()
             .add_service(SnapchainServiceServer::new(service))
@@ -158,9 +160,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         metrics.clone(),
         None,
         gossip_tx.clone(),
+        messages_rx,
     )
-    .await
-    .unwrap();
+        .await
+        .unwrap();
 
     // Create a timer for block creation
     let mut block_interval = time::interval(Duration::from_secs(2));
