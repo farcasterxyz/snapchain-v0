@@ -239,7 +239,7 @@ impl Consensus {
         timeout_config: TimeoutConfig,
         metrics: Metrics,
         tx_decision: Option<TxDecision<SnapchainValidatorContext>>,
-        messages_rx: Arc<Mutex<Receiver<FCMessage>>>,
+        message_rx: Arc<Mutex<Receiver<FCMessage>>>,
     ) -> Self {
         Self {
             ctx,
@@ -248,7 +248,7 @@ impl Consensus {
             timeout_config,
             metrics,
             tx_decision,
-            message_rx: messages_rx,
+            message_rx,
         }
     }
 
