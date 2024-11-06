@@ -346,12 +346,12 @@ impl Subscriber {
                 let result = self.process_log(&event).await;
                 if result.is_err() {
                     error!(
-                        "Error processing on chain event. Error: {:#?}. Event: {:#?}",
+                        "Error processing onchain event. Error: {:#?}. Event: {:#?}",
                         result.err(),
                         event,
                     )
                 } else {
-                    debug!("Processed event {:#?}", event);
+                    debug!("Processed onchain event {:#?}", event);
                 }
             }
         }
