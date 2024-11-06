@@ -22,7 +22,13 @@ use rpc::snapchain_service_client::SnapchainServiceClient;
 
 const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
 
-async fn compose_message(private_key: SigningKey) -> Result<(), Box<dyn Error>> {
+// compose message is a proof-of-concept script, is not guaranteed to be correct,
+// and clearly needs a lot of work. Use at your own risk.
+async fn compose_message(
+    private_key: SigningKey,
+    addr: String,
+    text: &str,
+) -> Result<(), Box<dyn Error>> {
     let fid = 6833; // FID of the user submitting the message
     let network = FarcasterNetwork::Mainnet;
 
@@ -33,7 +39,7 @@ async fn compose_message(private_key: SigningKey) -> Result<(), Box<dyn Error>> 
         - FARCASTER_EPOCH) as u32;
 
     let cast_add = CastAddBody {
-        text: "Welcome from Rust!".to_string(),
+        text: text.to_string(),
         embeds: vec![],
         embeds_deprecated: vec![],
         mentions: vec![],
@@ -64,7 +70,7 @@ async fn compose_message(private_key: SigningKey) -> Result<(), Box<dyn Error>> 
     msg.signer = private_key.verifying_key().to_bytes().to_vec();
     msg.data_bytes = Some(msg_data_bytes);
 
-    let mut client = SnapchainServiceClient::connect("http://127.0.0.1:50061").await?;
+    let mut client = SnapchainServiceClient::connect(addr).await?;
     let request = tonic::Request::new(msg);
     let response = client.submit_message(request).await?;
 
@@ -75,9 +81,14 @@ async fn compose_message(private_key: SigningKey) -> Result<(), Box<dyn Error>> 
 
 #[tokio::main]
 async fn main() {
+    // feel free to specify your own key
     let private_key = SigningKey::from_bytes(
         &SecretKey::from_hex("1000000000000000000000000000000000000000000000000000000000000000").unwrap()
     );
 
-    compose_message(private_key).await.unwrap();
+    compose_message(
+        private_key,
+        "http://127.0.0.1:50061".to_string(),
+        "Welcome from Rust!",
+    ).await.unwrap();
 }
