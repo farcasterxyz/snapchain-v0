@@ -2,10 +2,15 @@
 name = "snapchain"
 version = "0.1.0"
 edition = "2021"
+default-run = "snapchain"
 
 [lib]
 name = "snapchain"
 path = "src/main.rs"
+
+[[bin]]
+name = "submit-message"
+path = "src/bin/submit_message.rs"
 
 [dependencies]
 tokio = { version = "1.40.0", features = ["full"] }
@@ -38,6 +43,7 @@ futures-util = "0.3.31"
 url = "2.5.3"
 alloy-transport = "0.5.4"
 alloy-sol-types = "0.8.11"
+ed25519-dalek = "2.1.1"
 
 
 [build-dependencies]
