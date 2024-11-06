@@ -6,14 +6,10 @@ use ractor::{Actor, ActorRef};
 use tokio::{select, time};
 use tokio::sync::mpsc;
 
-use snapchain::{
-    consensus::consensus::{Consensus, ConsensusMsg},
-    core::types::{
-        Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
-        SnapchainValidatorSet,
-    },
-    network::gossip::GossipEvent,
-};
+use snapchain::{consensus::consensus::{Consensus, ConsensusMsg}, core::types::{
+    Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
+    SnapchainValidatorSet,
+}, network, network::gossip::GossipEvent};
 use snapchain::consensus::consensus::{Decision, TxDecision};
 
 struct NodeForTest {
@@ -44,6 +40,25 @@ impl NodeForTest {
         let (gossip_tx, gossip_rx) = mpsc::channel::<GossipEvent<SnapchainValidatorContext>>(100);
         let (decision_tx, decision_rx) = mpsc::channel::<Decision<SnapchainValidatorContext>>(100);
 
+        let (messages_tx, mut messages_rx) = mpsc::channel::<network::server::message::Message>(100);
+
+        tokio::spawn(async move {
+            let mut i: i32 = 0;
+            loop {
+                tokio::time::sleep(time::Duration::from_millis(200)).await;
+                messages_tx.send(network::server::message::Message {
+                    hash: vec![],
+                    data: None,
+                    data_bytes: None,
+                    hash_scheme: i,
+                    signature: vec![],
+                    signature_scheme: 0,
+                    signer: vec![],
+                }).await.unwrap();
+                i += 1;
+            }
+        });
+
         // Spawn consensus actor
         let consensus_actor = Consensus::spawn(
             ctx,
@@ -53,6 +68,7 @@ impl NodeForTest {
             metrics.clone(),
             Some(decision_tx),
             gossip_tx.clone(),
+            messages_rx,
         ).await.unwrap();
         Self {
             shard,
