@@ -4,9 +4,9 @@ use crate::{SystemMessage};
 use futures::StreamExt;
 use libp2p::identity::ed25519::Keypair;
 use libp2p::{
-    gossipsub, mdns, noise, swarm::NetworkBehaviour, swarm::SwarmEvent, tcp, yamux, PeerId, Swarm,
+    gossipsub, mdns, noise, swarm::NetworkBehaviour, swarm::SwarmEvent, tcp, yamux, Swarm,
 };
-use malachite_common::{SignedProposal, SignedProposalPart, SignedVote};
+use malachite_common::{SignedProposal, SignedVote};
 use prost::Message;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -18,7 +18,7 @@ use tokio::sync::mpsc::Sender;
 pub enum GossipEvent<Ctx: SnapchainContext> {
     BroadcastSignedVote(SignedVote<Ctx>),
     BroadcastSignedProposal(SignedProposal<Ctx>),
-    BroadcastProposalPart(SignedProposalPart<Ctx>),
+    BroadcastBlock(proto::BlockProposal),
     RegisterValidator(proto::RegisterValidator),
 }
 
@@ -134,9 +134,14 @@ impl SnapchainGossip {
                             match proto::GossipMessage::decode(&message.data[..]) {
                                 Ok(gossip_message) => {
                                     match gossip_message.message {
-                                        Some(proto::gossip_message::Message::Block(block)) => {
-                                            let height = block.header.unwrap().height.unwrap().block_number;
+                                        Some(proto::gossip_message::Message::BlockProposal(block_poposal)) => {
+                                            let height = block_poposal.clone().height.unwrap().block_number;
                                             println!("Received block with height {} from peer: {}", height, peer_id);
+                                            let consensus_message = ConsensusMsg::ReceivedBlockProposal(block_poposal);
+                                            let res = self.system_tx.send(SystemMessage::Consensus(consensus_message)).await;
+                                            if let Err(e) = res {
+                                                println!("Failed to send system block message: {:?}", e);
+                                            }
                                         },
                                         Some(proto::gossip_message::Message::Shard(shard)) => {
                                             println!("Received shard with height {} from peer: {}", shard.header.unwrap().height.unwrap().block_number, peer_id);
@@ -191,7 +196,12 @@ impl SnapchainGossip {
                             let encoded_message = gossip_message.encode_to_vec();
                             self.publish(encoded_message);
                         }
-                        Some(GossipEvent::BroadcastProposalPart(part)) => {
+                        Some(GossipEvent::BroadcastBlock(block_proposal)) => {
+                            let gossip_message = proto::GossipMessage {
+                                message: Some(proto::gossip_message::Message::BlockProposal(block_proposal)),
+                            };
+                            let encoded_message = gossip_message.encode_to_vec();
+                            self.publish(encoded_message);
                         },
                         Some(GossipEvent::RegisterValidator(register_validator)) => {
                             println!("Broadcasting validator registration");

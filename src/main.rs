@@ -4,13 +4,9 @@ pub mod network;
 pub mod connectors;
 mod cfg;
 
-use std::error::Error;
-use clap::Parser;
-use futures::stream::StreamExt;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
 use malachite_metrics::{Metrics, SharedRegistry};
-use prost::Message;
 use std::time::Duration;
 use tokio::signal::ctrl_c;
 use tokio::sync::mpsc;
@@ -20,7 +16,7 @@ use connectors::fname::Fetcher;
 
 
 use crate::consensus::consensus::{Consensus, ConsensusMsg, ConsensusParams};
-use crate::core::types::{proto, Address, Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, SnapchainValidatorContext, SnapchainValidatorSet};
+use crate::core::types::{proto, Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext, SnapchainValidatorSet};
 use crate::network::gossip::{GossipEvent};
 use network::gossip::SnapchainGossip;
 

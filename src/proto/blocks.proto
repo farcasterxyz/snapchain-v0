@@ -54,6 +54,14 @@ message Proposal {
 //  repeated ShardHeader shard_headers = 5; // shard headers for the block level proposal (submitted by the block leader)
 }
 
+// TODO: Make these proposal parts
+message BlockProposal {
+  Height height = 1;
+  int64 round = 2;
+  Block block = 3;
+  bytes proposer = 4;
+}
+
 message ConsensusMessage {
   oneof message {
     Vote vote = 1;
@@ -137,6 +145,7 @@ message GossipMessage {
     ShardChunk shard = 2;
     ConsensusMessage consensus = 3;
     RegisterValidator validator = 4;  // Remove before testnet, once in-protocol leader rotation is implemented
+    BlockProposal block_proposal = 5;
   }
 }
 
