@@ -1,0 +1,893 @@
+[
+    {
+        "inputs": [
+            {
+                "internaltype": "address",
+                "name": "_idRegistry",
+                "type": "address"
+            },
+            {
+                "internaltype": "address",
+                "name": "_initialOwner",
+                "type": "address"
+            }
+        ],
+        "stateMutability": "nonpayable",
+        "type": "constructor"
+    },
+    {
+        "inputs": [],
+        "name": "AlreadyMigrated",
+        "type": "error"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "address",
+                "name": "account",
+                "type": "address"
+            },
+            {
+                "internaltype": "uint256",
+                "name": "currentNonce",
+                "type": "uint256"
+            }
+        ],
+        "name": "InvalidAccountNonce",
+        "type": "error"
+    },
+    {
+        "inputs": [],
+        "name": "InvalidAddress",
+        "type": "error"
+    },
+    {
+        "inputs": [],
+        "name": "InvalidBatchInput",
+        "type": "error"
+    },
+    {
+        "inputs": [],
+        "name": "InvalidKeytype",
+        "type": "error"
+    },
+    {
+        "inputs": [],
+        "name": "InvalidMetadata",
+        "type": "error"
+    },
+    {
+        "inputs": [],
+        "name": "InvalidMetadatatype",
+        "type": "error"
+    },
+    {
+        "inputs": [],
+        "name": "InvalidShortString",
+        "type": "error"
+    },
+    {
+        "inputs": [],
+        "name": "InvalidSignature",
+        "type": "error"
+    },
+    {
+        "inputs": [],
+        "name": "InvalidState",
+        "type": "error"
+    },
+    {
+        "inputs": [],
+        "name": "OnlyTrustedCaller",
+        "type": "error"
+    },
+    {
+        "inputs": [],
+        "name": "Registrable",
+        "type": "error"
+    },
+    {
+        "inputs": [],
+        "name": "Seedable",
+        "type": "error"
+    },
+    {
+        "inputs": [],
+        "name": "SignatureExpired",
+        "type": "error"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "string",
+                "name": "str",
+                "type": "string"
+            }
+        ],
+        "name": "StringTooLong",
+        "type": "error"
+    },
+    {
+        "inputs": [],
+        "name": "Unauthorized",
+        "type": "error"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "uint32",
+                "name": "keytype",
+                "type": "uint32"
+            },
+            {
+                "internaltype": "uint8",
+                "name": "metadatatype",
+                "type": "uint8"
+            }
+        ],
+        "name": "ValidatorNotFound",
+        "type": "error"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": true,
+                "internaltype": "uint256",
+                "name": "fid",
+                "type": "uint256"
+            },
+            {
+                "indexed": true,
+                "internaltype": "uint32",
+                "name": "keytype",
+                "type": "uint32"
+            },
+            {
+                "indexed": true,
+                "internaltype": "bytes",
+                "name": "key",
+                "type": "bytes"
+            },
+            {
+                "indexed": false,
+                "internaltype": "bytes",
+                "name": "keyBytes",
+                "type": "bytes"
+            },
+            {
+                "indexed": false,
+                "internaltype": "uint8",
+                "name": "metadatatype",
+                "type": "uint8"
+            },
+            {
+                "indexed": false,
+                "internaltype": "bytes",
+                "name": "metadata",
+                "type": "bytes"
+            }
+        ],
+        "name": "Add",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": true,
+                "internaltype": "uint256",
+                "name": "fid",
+                "type": "uint256"
+            },
+            {
+                "indexed": true,
+                "internaltype": "bytes",
+                "name": "key",
+                "type": "bytes"
+            },
+            {
+                "indexed": false,
+                "internaltype": "bytes",
+                "name": "keyBytes",
+                "type": "bytes"
+            }
+        ],
+        "name": "AdminReset",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [],
+        "name": "DisableTrustedOnly",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [],
+        "name": "EIP712DomainChanged",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": true,
+                "internaltype": "uint256",
+                "name": "keysMigratedAt",
+                "type": "uint256"
+            }
+        ],
+        "name": "Migrated",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": true,
+                "internaltype": "address",
+                "name": "previousOwner",
+                "type": "address"
+            },
+            {
+                "indexed": true,
+                "internaltype": "address",
+                "name": "newOwner",
+                "type": "address"
+            }
+        ],
+        "name": "OwnershipTransferStarted",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": true,
+                "internaltype": "address",
+                "name": "previousOwner",
+                "type": "address"
+            },
+            {
+                "indexed": true,
+                "internaltype": "address",
+                "name": "newOwner",
+                "type": "address"
+            }
+        ],
+        "name": "OwnershipTransferred",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": true,
+                "internaltype": "uint256",
+                "name": "fid",
+                "type": "uint256"
+            },
+            {
+                "indexed": true,
+                "internaltype": "bytes",
+                "name": "key",
+                "type": "bytes"
+            },
+            {
+                "indexed": false,
+                "internaltype": "bytes",
+                "name": "keyBytes",
+                "type": "bytes"
+            }
+        ],
+        "name": "Remove",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": false,
+                "internaltype": "address",
+                "name": "oldIdRegistry",
+                "type": "address"
+            },
+            {
+                "indexed": false,
+                "internaltype": "address",
+                "name": "newIdRegistry",
+                "type": "address"
+            }
+        ],
+        "name": "SetIdRegistry",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": true,
+                "internaltype": "address",
+                "name": "oldCaller",
+                "type": "address"
+            },
+            {
+                "indexed": true,
+                "internaltype": "address",
+                "name": "newCaller",
+                "type": "address"
+            },
+            {
+                "indexed": false,
+                "internaltype": "address",
+                "name": "owner",
+                "type": "address"
+            }
+        ],
+        "name": "SetTrustedCaller",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": false,
+                "internaltype": "uint32",
+                "name": "keytype",
+                "type": "uint32"
+            },
+            {
+                "indexed": false,
+                "internaltype": "uint8",
+                "name": "metadatatype",
+                "type": "uint8"
+            },
+            {
+                "indexed": false,
+                "internaltype": "address",
+                "name": "oldValidator",
+                "type": "address"
+            },
+            {
+                "indexed": false,
+                "internaltype": "address",
+                "name": "newValidator",
+                "type": "address"
+            }
+        ],
+        "name": "SetValidator",
+        "type": "event"
+    },
+    {
+        "inputs": [],
+        "name": "acceptOwnership",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "uint32",
+                "name": "keytype",
+                "type": "uint32"
+            },
+            {
+                "internaltype": "bytes",
+                "name": "key",
+                "type": "bytes"
+            },
+            {
+                "internaltype": "uint8",
+                "name": "metadatatype",
+                "type": "uint8"
+            },
+            {
+                "internaltype": "bytes",
+                "name": "metadata",
+                "type": "bytes"
+            }
+        ],
+        "name": "add",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "address",
+                "name": "fidOwner",
+                "type": "address"
+            },
+            {
+                "internaltype": "uint32",
+                "name": "keytype",
+                "type": "uint32"
+            },
+            {
+                "internaltype": "bytes",
+                "name": "key",
+                "type": "bytes"
+            },
+            {
+                "internaltype": "uint8",
+                "name": "metadatatype",
+                "type": "uint8"
+            },
+            {
+                "internaltype": "bytes",
+                "name": "metadata",
+                "type": "bytes"
+            },
+            {
+                "internaltype": "uint256",
+                "name": "deadline",
+                "type": "uint256"
+            },
+            {
+                "internaltype": "bytes",
+                "name": "sig",
+                "type": "bytes"
+            }
+        ],
+        "name": "addFor",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "uint256[]",
+                "name": "fids",
+                "type": "uint256[]"
+            },
+            {
+                "internaltype": "bytes[][]",
+                "name": "fidKeys",
+                "type": "bytes[][]"
+            },
+            {
+                "internaltype": "bytes",
+                "name": "metadata",
+                "type": "bytes"
+            }
+        ],
+        "name": "bulkAddKeysForMigration",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "uint256[]",
+                "name": "fids",
+                "type": "uint256[]"
+            },
+            {
+                "internaltype": "bytes[][]",
+                "name": "fidKeys",
+                "type": "bytes[][]"
+            }
+        ],
+        "name": "bulkResetKeysForMigration",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "disableTrustedOnly",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "eip712Domain",
+        "outputs": [
+            {
+                "internaltype": "bytes1",
+                "name": "fields",
+                "type": "bytes1"
+            },
+            {
+                "internaltype": "string",
+                "name": "name",
+                "type": "string"
+            },
+            {
+                "internaltype": "string",
+                "name": "version",
+                "type": "string"
+            },
+            {
+                "internaltype": "uint256",
+                "name": "chainId",
+                "type": "uint256"
+            },
+            {
+                "internaltype": "address",
+                "name": "verifyingContract",
+                "type": "address"
+            },
+            {
+                "internaltype": "bytes32",
+                "name": "salt",
+                "type": "bytes32"
+            },
+            {
+                "internaltype": "uint256[]",
+                "name": "extensions",
+                "type": "uint256[]"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "gracePeriod",
+        "outputs": [
+            {
+                "internaltype": "uint24",
+                "name": "",
+                "type": "uint24"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "idRegistry",
+        "outputs": [
+            {
+                "internaltype": "contract IdRegistryLike",
+                "name": "",
+                "type": "address"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "isMigrated",
+        "outputs": [
+            {
+                "internaltype": "bool",
+                "name": "",
+                "type": "bool"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "uint256",
+                "name": "fid",
+                "type": "uint256"
+            },
+            {
+                "internaltype": "bytes",
+                "name": "key",
+                "type": "bytes"
+            }
+        ],
+        "name": "keyDataOf",
+        "outputs": [
+            {
+                "components": [
+                    {
+                        "internaltype": "enum KeyRegistry.KeyState",
+                        "name": "state",
+                        "type": "uint8"
+                    },
+                    {
+                        "internaltype": "uint32",
+                        "name": "keytype",
+                        "type": "uint32"
+                    }
+                ],
+                "internaltype": "struct KeyRegistry.KeyData",
+                "name": "",
+                "type": "tuple"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "uint256",
+                "name": "fid",
+                "type": "uint256"
+            },
+            {
+                "internaltype": "bytes",
+                "name": "key",
+                "type": "bytes"
+            }
+        ],
+        "name": "keys",
+        "outputs": [
+            {
+                "internaltype": "enum KeyRegistry.KeyState",
+                "name": "state",
+                "type": "uint8"
+            },
+            {
+                "internaltype": "uint32",
+                "name": "keytype",
+                "type": "uint32"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "keysMigratedAt",
+        "outputs": [
+            {
+                "internaltype": "uint40",
+                "name": "",
+                "type": "uint40"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "migrateKeys",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "address",
+                "name": "owner",
+                "type": "address"
+            }
+        ],
+        "name": "nonces",
+        "outputs": [
+            {
+                "internaltype": "uint256",
+                "name": "",
+                "type": "uint256"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "owner",
+        "outputs": [
+            {
+                "internaltype": "address",
+                "name": "",
+                "type": "address"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "pendingOwner",
+        "outputs": [
+            {
+                "internaltype": "address",
+                "name": "",
+                "type": "address"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "bytes",
+                "name": "key",
+                "type": "bytes"
+            }
+        ],
+        "name": "remove",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "address",
+                "name": "fidOwner",
+                "type": "address"
+            },
+            {
+                "internaltype": "bytes",
+                "name": "key",
+                "type": "bytes"
+            },
+            {
+                "internaltype": "uint256",
+                "name": "deadline",
+                "type": "uint256"
+            },
+            {
+                "internaltype": "bytes",
+                "name": "sig",
+                "type": "bytes"
+            }
+        ],
+        "name": "removeFor",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "renounceOwnership",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "address",
+                "name": "_idRegistry",
+                "type": "address"
+            }
+        ],
+        "name": "setIdRegistry",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "address",
+                "name": "_trustedCaller",
+                "type": "address"
+            }
+        ],
+        "name": "setTrustedCaller",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "uint32",
+                "name": "keytype",
+                "type": "uint32"
+            },
+            {
+                "internaltype": "uint8",
+                "name": "metadatatype",
+                "type": "uint8"
+            },
+            {
+                "internaltype": "contract IMetadataValidator",
+                "name": "validator",
+                "type": "address"
+            }
+        ],
+        "name": "setValidator",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "address",
+                "name": "newOwner",
+                "type": "address"
+            }
+        ],
+        "name": "transferOwnership",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "address",
+                "name": "fidOwner",
+                "type": "address"
+            },
+            {
+                "internaltype": "uint32",
+                "name": "keytype",
+                "type": "uint32"
+            },
+            {
+                "internaltype": "bytes",
+                "name": "key",
+                "type": "bytes"
+            },
+            {
+                "internaltype": "uint8",
+                "name": "metadatatype",
+                "type": "uint8"
+            },
+            {
+                "internaltype": "bytes",
+                "name": "metadata",
+                "type": "bytes"
+            }
+        ],
+        "name": "trustedAdd",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "trustedCaller",
+        "outputs": [
+            {
+                "internaltype": "address",
+                "name": "",
+                "type": "address"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "trustedOnly",
+        "outputs": [
+            {
+                "internaltype": "uint256",
+                "name": "",
+                "type": "uint256"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internaltype": "uint32",
+                "name": "keytype",
+                "type": "uint32"
+            },
+            {
+                "internaltype": "uint8",
+                "name": "metadatatype",
+                "type": "uint8"
+            }
+        ],
+        "name": "validators",
+        "outputs": [
+            {
+                "internaltype": "contract IMetadataValidator",
+                "name": "validator",
+                "type": "address"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]

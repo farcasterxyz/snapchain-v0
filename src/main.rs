@@ -1,39 +1,39 @@
+mod cfg;
+pub mod connectors;
 pub mod consensus;
 pub mod core;
 pub mod network;
-pub mod connectors;
-mod cfg;
 
-use std::error::Error;
-use std::io;
-use std::net::SocketAddr;
 use clap::Parser;
 use futures::stream::StreamExt;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
 use malachite_metrics::{Metrics, SharedRegistry};
+use std::error::Error;
+use std::io;
+use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::signal::ctrl_c;
 use tokio::sync::mpsc;
-use tokio::{select, time};
 use tokio::time::sleep;
+use tokio::{select, time};
 use tonic::transport::Server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
-use connectors::fname::Fetcher;
-
 
 use crate::consensus::consensus::{Consensus, ConsensusMsg, ConsensusParams};
-use crate::core::types::{proto, Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext, SnapchainValidatorSet};
+use crate::core::types::{
+    proto, Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
+    SnapchainValidatorSet,
+};
 use crate::network::gossip::GossipEvent;
 use network::gossip::SnapchainGossip;
-use network::server::MySnapchainService;
 use network::server::rpc::snapchain_service_server::SnapchainServiceServer;
+use network::server::MySnapchainService;
 
 pub enum SystemMessage {
     Consensus(ConsensusMsg<SnapchainValidatorContext>),
 }
-
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -63,12 +63,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     match app_config.log_format.as_str() {
-        "text" => {
-            tracing_subscriber::fmt().with_env_filter(env_filter).init()
-        }
-        "json" => {
-            tracing_subscriber::fmt().json().with_env_filter(env_filter).init()
-        }
+        "text" => tracing_subscriber::fmt().with_env_filter(env_filter).init(),
+        "json" => tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(env_filter)
+            .init(),
         _ => {
             return Err(format!("Invalid log format: {}", app_config.log_format).into());
         }
@@ -94,10 +93,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
 
     if !app_config.fnames.disable {
-        let mut fetcher = Fetcher::new(app_config.fnames.clone());
+        let mut fetcher = connectors::fname::Fetcher::new(app_config.fnames.clone());
 
         tokio::spawn(async move {
             fetcher.run().await;
+        });
+    }
+
+    if !app_config.onchain_events.rpc_url.is_empty() {
+        let mut onchain_events_subscriber =
+            connectors::onchain_events::Subscriber::new(app_config.onchain_events)?;
+        tokio::spawn(async move {
+            let result = onchain_events_subscriber.run().await;
+            match result {
+                Ok(()) => {}
+                Err(e) => {
+                    error!("Error subscribing to on chain events {:#?}", e);
+                }
+            }
         });
     }
 
@@ -146,8 +159,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None,
         gossip_tx.clone(),
     )
-        .await
-        .unwrap();
+    .await
+    .unwrap();
 
     // Create a timer for block creation
     let mut block_interval = time::interval(Duration::from_secs(2));
