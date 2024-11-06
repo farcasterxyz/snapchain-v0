@@ -40,7 +40,7 @@ static KEY_REGISTRY: Address = address!("00000000Fc1237824fb747aBDE0FF18990E59b7
 
 static ID_REGISTRY: Address = address!("00000000Fc6c5F01Fc30151999387Bb99A9f489b");
 
-static CHAIN_ID: u64 = 10;
+static CHAIN_ID: u64 = 10; // OP mainnet
 const RENT_EXPIRY_IN_SECONDS: u64 = 365 * 24 * 60 * 60; // One year
 
 #[derive(Debug, Serialize, Deserialize)]
