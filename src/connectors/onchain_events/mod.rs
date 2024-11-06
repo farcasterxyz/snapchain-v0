@@ -220,6 +220,7 @@ impl Subscriber {
             .transaction_index
             .ok_or(SubscribeError::LogMissingTxIndex)?;
         // TODO(aditi): Cache these queries for timestamp to optimize rpc calls.
+        // [block_timestamp] eists on [Log], however it's never populated in practice.
         let block_timestamp = self.get_block_timestamp(block_hash).await?;
         let mut add_event = |fid, event_type| {
             self.add_onchain_event(
