@@ -22,7 +22,7 @@ use rpc::snapchain_service_client::SnapchainServiceClient;
 
 const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
 
-// compose message is a proof-of-concept script, is not guaranteed to be correct,
+// compose_message is a proof-of-concept script, is not guaranteed to be correct,
 // and clearly needs a lot of work. Use at your own risk.
 async fn compose_message(
     private_key: SigningKey,
