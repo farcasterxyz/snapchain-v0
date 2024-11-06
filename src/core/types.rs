@@ -1,5 +1,4 @@
 use core::fmt;
-use libp2p::bytes::Bytes;
 use malachite_common;
 use malachite_common::{
     Extension, NilOrVal, Round, SignedProposal, SignedProposalPart, SignedVote, VoteType,
@@ -7,7 +6,6 @@ use malachite_common::{
 };
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
-use std::io::Read;
 use std::sync::Arc;
 use libp2p::identity::ed25519::Keypair;
 use prost::Message;
@@ -55,6 +53,12 @@ impl Address {
 
     pub fn to_vec(&self) -> Vec<u8> {
         self.0.to_vec()
+    }
+
+    pub fn from_vec(vec: Vec<u8>) -> Self {
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&vec);
+        Self(bytes)
     }
 }
 
@@ -134,6 +138,14 @@ impl Height {
             block_number: self.block_number,
         }
     }
+
+    pub(crate) fn from_proto(proto: proto::Height) -> Self {
+        Self {
+            block_number: proto.block_number,
+            shard_index: proto.shard_index as u8,
+        }
+    }
+
 
     pub const fn as_u64(&self) -> u64 {
         self.block_number
@@ -441,7 +453,11 @@ impl malachite_common::Context for SnapchainValidatorContext {
         signature: &Signature,
         public_key: &PublicKey,
     ) -> bool {
-        public_key.verify(&vote.to_sign_bytes(), &signature.0)
+        let valid = public_key.verify(&vote.to_sign_bytes(), &signature.0);
+        if !valid {
+            panic!("Invalid signature");
+        }
+        valid
     }
 
     fn sign_proposal(&self, proposal: Self::Proposal) -> SignedProposal<Self> {
@@ -455,7 +471,11 @@ impl malachite_common::Context for SnapchainValidatorContext {
         signature: &Signature,
         public_key: &PublicKey,
     ) -> bool {
-        public_key.verify(&proposal.to_sign_bytes(), &signature.0)
+        let valid = public_key.verify(&proposal.to_sign_bytes(), &signature.0);
+        if !valid {
+            panic!("Invalid signature");
+        }
+        valid
     }
 
     fn sign_proposal_part(&self, proposal_part: Self::ProposalPart) -> SignedProposalPart<Self> {
@@ -592,7 +612,12 @@ impl malachite_common::ValidatorSet<SnapchainValidatorContext> for SnapchainVali
     }
 
     fn get_by_address(&self, address: &Address) -> Option<&SnapchainValidator> {
-        self.validators.iter().find(|v| &v.address == address)
+        let option = self.validators.iter().find(|v| &v.address == address);
+        if option.is_none() {
+            println!("Looking for address: {}, among {:?}", address, self.validators);
+            panic!("Validator not found");
+        }
+        option
     }
 
     fn get_by_index(&self, index: usize) -> Option<&SnapchainValidator> {

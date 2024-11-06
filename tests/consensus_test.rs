@@ -27,7 +27,9 @@ struct NodeForTest {
 }
 
 impl NodeForTest {
-    pub async fn create(shard: SnapchainShard, keypair: Keypair, validator_set: SnapchainValidatorSet, metrics: Metrics) -> Self {
+    pub async fn create(shard: SnapchainShard, keypair: Keypair, validator_set: SnapchainValidatorSet) -> Self {
+        let metrics = Metrics::new();
+
         let address = Address(keypair.public().to_bytes());
         let consensus_params = ConsensusParams {
             start_height: Height::new(shard.shard_id(), 1),
@@ -74,10 +76,6 @@ impl NodeForTest {
 
 #[tokio::test]
 async fn test_basic_consensus() {
-    // Set up test environment
-    let registry = SharedRegistry::global();
-    let metrics = Metrics::register(registry);
-
     // Create validator keys
     let keypair1 = Keypair::generate();
     let keypair2 = Keypair::generate();
@@ -98,9 +96,9 @@ async fn test_basic_consensus() {
         validator3.clone(),
     ]);
 
-    let mut node1 = NodeForTest::create(shard.clone(), keypair1.clone(), validator_set.clone(), metrics.clone()).await;
-    let mut node2 = NodeForTest::create(shard.clone(), keypair2.clone(), validator_set.clone(), metrics.clone()).await;
-    let mut node3 = NodeForTest::create(shard.clone(), keypair3.clone(), validator_set.clone(), metrics.clone()).await;
+    let mut node1 = NodeForTest::create(shard.clone(), keypair1.clone(), validator_set.clone()).await;
+    let mut node2 = NodeForTest::create(shard.clone(), keypair2.clone(), validator_set.clone()).await;
+    let mut node3 = NodeForTest::create(shard.clone(), keypair3.clone(), validator_set.clone()).await;
 
     // Register validators
     for validator in validator_set.validators {
@@ -109,23 +107,46 @@ async fn test_basic_consensus() {
         node3.cast(ConsensusMsg::RegisterValidator(validator.clone()));
     }
 
+    //sleep 2 seconds to wait for validators to register
+    tokio::time::sleep(time::Duration::from_secs(2)).await;
+
     // Kick off consensus
     node1.cast(ConsensusMsg::StartHeight(Height::new(shard.shard_id(), 1)));
+    node2.cast(ConsensusMsg::StartHeight(Height::new(shard.shard_id(), 1)));
+    node3.cast(ConsensusMsg::StartHeight(Height::new(shard.shard_id(), 1)));
 
-    let mut blocks_count = 0;
+    let mut node1_blocks_count = 0;
+    let mut node2_blocks_count = 0;
+    let mut node3_blocks_count = 0;
 
     // Wait for gossip messages with a timeout
-    let timeout = tokio::time::Duration::from_secs(10);
+    let timeout = tokio::time::Duration::from_secs(5);
     let start = tokio::time::Instant::now();
     let mut timer = time::interval(tokio::time::Duration::from_secs(1));
 
-    while blocks_count < 3 {
+    loop {
         select! {
             Some(decision) = node1.decision_rx.recv() => {
                 match decision {
                     (height, round, value) => {
                         println!("Node 1: Decided block at height {}, round {}, value: {}", height, round, value);
-                        blocks_count += 1;
+                        node1_blocks_count += 1;
+                    }
+                }
+            }
+            Some(decision) = node2.decision_rx.recv() => {
+                match decision {
+                    (height, round, value) => {
+                        println!("Node 2: Decided block at height {}, round {}, value: {}", height, round, value);
+                        node2_blocks_count += 1;
+                    }
+                }
+            }
+            Some(decision) = node3.decision_rx.recv() => {
+                match decision {
+                    (height, round, value) => {
+                        println!("Node 3: Decided block at height {}, round {}, value: {}", height, round, value);
+                        node3_blocks_count += 1;
                     }
                 }
             }
@@ -142,6 +163,10 @@ async fn test_basic_consensus() {
                         node2.cast(ConsensusMsg::ReceivedSignedVote(vote.clone()));
                         node3.cast(ConsensusMsg::ReceivedSignedVote(vote.clone()));
                     }
+                    GossipEvent::BroadcastBlock(block) => {
+                        node2.cast(ConsensusMsg::ReceivedBlockProposal(block.clone()));;
+                        node3.cast(ConsensusMsg::ReceivedBlockProposal(block.clone()));;
+                    }
                     _ => {}}
             }
             Some(gossip_event) = node2.gossip_rx.recv() => {
@@ -153,6 +178,10 @@ async fn test_basic_consensus() {
                     GossipEvent::BroadcastSignedVote(vote) => {
                         node1.cast(ConsensusMsg::ReceivedSignedVote(vote.clone()));
                         node3.cast(ConsensusMsg::ReceivedSignedVote(vote.clone()));
+                    }
+                    GossipEvent::BroadcastBlock(block) => {
+                        node1.cast(ConsensusMsg::ReceivedBlockProposal(block.clone()));;
+                        node3.cast(ConsensusMsg::ReceivedBlockProposal(block.clone()));;
                     }
                     _ => {}}
             }
@@ -166,18 +195,27 @@ async fn test_basic_consensus() {
                         node1.cast(ConsensusMsg::ReceivedSignedVote(vote.clone()));
                         node2.cast(ConsensusMsg::ReceivedSignedVote(vote.clone()));
                     }
+                    GossipEvent::BroadcastBlock(block) => {
+                        node1.cast(ConsensusMsg::ReceivedBlockProposal(block.clone()));;
+                        node2.cast(ConsensusMsg::ReceivedBlockProposal(block.clone()));;
+                    }
                     _ => {}}
             }
 
             _ = timer.tick() => {
+                if node1_blocks_count == 3 && node2_blocks_count == 3 && node3_blocks_count == 3 {
+                    break;
+                }
                 if start.elapsed() > timeout {
-                    panic!("Test timed out waiting for blocks");
+                    break;
                 }
             }
         }
     }
 
-    assert!(blocks_count > 0, "Should have confirmed blocks");
+    assert!(node1_blocks_count >= 3, "Node 1 should have confirmed blocks");
+    assert!(node2_blocks_count >= 3, "Node 2 should have confirmed blocks");
+    assert!(node3_blocks_count >= 3, "Node 3 should have confirmed blocks");
 
     // Clean up
     node1.stop();
