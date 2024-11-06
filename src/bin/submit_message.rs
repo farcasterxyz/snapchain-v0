@@ -26,10 +26,10 @@ const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
 // and clearly needs a lot of work. Use at your own risk.
 async fn compose_message(
     private_key: SigningKey,
+    fid: u64,
     addr: String,
     text: &str,
 ) -> Result<(), Box<dyn Error>> {
-    let fid = 6833; // FID of the user submitting the message
     let network = FarcasterNetwork::Mainnet;
 
     let timestamp = (std::time::SystemTime::now()
@@ -88,6 +88,7 @@ async fn main() {
 
     compose_message(
         private_key,
+        6833,
         "http://127.0.0.1:50061".to_string(),
         "Welcome from Rust!",
     ).await.unwrap();
