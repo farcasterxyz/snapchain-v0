@@ -115,7 +115,7 @@ impl Timeouts {
 }
 
 pub struct ShardValidator {
-    shard_d: SnapchainShard,
+    shard_id: SnapchainShard,
     validator_set: SnapchainValidatorSet,
     blocks: Vec<Block>,
     confirmed_height: Option<Height>,
@@ -128,7 +128,7 @@ pub struct ShardValidator {
 impl ShardValidator {
     fn new() -> ShardValidator {
         ShardValidator {
-            shard_d: SnapchainShard::new(0),
+            shard_id: SnapchainShard::new(0),
             validator_set: SnapchainValidatorSet::new(vec![]),
             blocks: vec![],
             confirmed_height: None,
