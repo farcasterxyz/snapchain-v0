@@ -1,5 +1,5 @@
 use crate::consensus::consensus::ConsensusMsg;
-use crate::core::types::{proto, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, SnapchainValidatorContext};
+use crate::core::types::{proto, Proposal, ShardId, Signature, SnapchainContext, SnapchainShard, SnapchainValidator, SnapchainValidatorContext, Vote};
 use crate::{SystemMessage};
 use futures::StreamExt;
 use libp2p::identity::ed25519::Keypair;
@@ -14,7 +14,7 @@ use std::time::Duration;
 use tokio::io;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
-use tracing::info;
+use tracing::{debug, info, warn};
 
 pub enum GossipEvent<Ctx: SnapchainContext> {
     BroadcastSignedVote(SignedVote<Ctx>),
@@ -86,7 +86,7 @@ impl SnapchainGossip {
         // subscribes to our topic
         let result = swarm.behaviour_mut().gossipsub.subscribe(&topic);
         if let Err(e) = result {
-            println!("Failed to subscribe to topic: {:?}", e);
+            warn!("Failed to subscribe to topic: {:?}", e);
             return Err(Box::new(e));
         }
 
@@ -109,21 +109,21 @@ impl SnapchainGossip {
                     match gossip_event {
                         SwarmEvent::Behaviour(SnapchainBehaviorEvent::Mdns(mdns::Event::Discovered(list))) => {
                             for (peer_id, _multiaddr) in list {
-                                println!("mDNS discovered a new peer: {peer_id}");
+                                info!("mDNS discovered a new peer: {peer_id}");
                                 self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                             }
                         },
                         SwarmEvent::Behaviour(SnapchainBehaviorEvent::Mdns(mdns::Event::Expired(list))) => {
                             for (peer_id, _multiaddr) in list {
-                                println!("mDNS discover peer has expired: {peer_id}");
+                                info!("mDNS discover peer has expired: {peer_id}");
                                 self.swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer_id);
                                 // TODO: Remove validator
                             }
                         },
                         SwarmEvent::Behaviour(SnapchainBehaviorEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) =>
-                            println!("Peer: {peer_id} subscribed to topic: {topic}"),
+                            info!("Peer: {peer_id} subscribed to topic: {topic}"),
                         SwarmEvent::Behaviour(SnapchainBehaviorEvent::Gossipsub(gossipsub::Event::Unsubscribed { peer_id, topic })) =>
-                            println!("Peer: {peer_id} unsubscribed to topic: {topic}"),
+                            info!("Peer: {peer_id} unsubscribed to topic: {topic}"),
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(address = address.to_string(), "Local node is listening");
                         },
@@ -137,37 +137,67 @@ impl SnapchainGossip {
                                     match gossip_message.message {
                                         Some(proto::gossip_message::Message::BlockProposal(block_poposal)) => {
                                             let height = block_poposal.clone().height.unwrap().block_number;
-                                            println!("Received block with height {} from peer: {}", height, peer_id);
+                                            debug!("Received block with height {} from peer: {}", height, peer_id);
                                             let consensus_message = ConsensusMsg::ReceivedBlockProposal(block_poposal);
                                             let res = self.system_tx.send(SystemMessage::Consensus(consensus_message)).await;
                                             if let Err(e) = res {
-                                                println!("Failed to send system block message: {:?}", e);
+                                                warn!("Failed to send system block message: {:?}", e);
                                             }
                                         },
                                         Some(proto::gossip_message::Message::Shard(shard)) => {
-                                            println!("Received shard with height {} from peer: {}", shard.header.unwrap().height.unwrap().block_number, peer_id);
+                                            debug!("Received shard with height {} from peer: {}", shard.header.unwrap().height.unwrap().block_number, peer_id);
                                         },
                                         Some(proto::gossip_message::Message::Validator(validator)) => {
-                                            println!("Received validator registration from peer: {}", peer_id);
+                                            debug!("Received validator registration from peer: {}", peer_id);
                                             if let Some(validator) = validator.validator {
                                                 let public_key = libp2p::identity::ed25519::PublicKey::try_from_bytes(&validator.signer);
                                                 if public_key.is_err() {
-                                                    println!("Failed to decode public key from peer: {}", peer_id);
+                                                    warn!("Failed to decode public key from peer: {}", peer_id);
                                                     continue;
                                                 }
                                                 let validator = SnapchainValidator::new(SnapchainShard::new(0), public_key.unwrap());
                                                 let consensus_message = ConsensusMsg::RegisterValidator(validator);
                                                 let res = self.system_tx.send(SystemMessage::Consensus(consensus_message)).await;
                                                 if let Err(e) = res {
-                                                    println!("Failed to send system register validator message: {:?}", e);
+                                                    warn!("Failed to send system register validator message: {:?}", e);
                                                 }
                                             }
                                         },
-                                        _ => println!("Unhandled message from peer: {}", peer_id),
-                                        None => println!("Received empty gossip message from peer: {}", peer_id),
+                                        Some(proto::gossip_message::Message::Consensus(signed_consensus_msg)) => {
+                                            match signed_consensus_msg.message {
+                                                Some(proto::consensus_message::Message::Vote(vote)) => {
+                                                    let vote = Vote::from_proto(vote);
+                                                    let signed_vote = SignedVote {
+                                                        message: vote,
+                                                        signature: Signature(signed_consensus_msg.signature),
+                                                    };
+                                                    let consensus_message = ConsensusMsg::ReceivedSignedVote(signed_vote);
+                                                    let res = self.system_tx.send(SystemMessage::Consensus(consensus_message)).await;
+                                                    if let Err(e) = res {
+                                                        warn!("Failed to send system vote message: {:?}", e);
+                                                    }
+                                                },
+                                                Some(proto::consensus_message::Message::Proposal(proposal)) => {
+                                                    let proposal = Proposal::from_proto(proposal);
+                                                    let signed_proposal = SignedProposal {
+                                                        message: proposal,
+                                                        signature: Signature(signed_consensus_msg.signature),
+                                                    };
+                                                    let consensus_message = ConsensusMsg::ReceivedSignedProposal(signed_proposal);
+                                                    let res = self.system_tx.send(SystemMessage::Consensus(consensus_message)).await;
+                                                    if let Err(e) = res {
+                                                        warn!("Failed to send system proposal message: {:?}", e);
+                                                    }
+                                                },
+                                                None => warn!("Received empty consensus message from peer: {}", peer_id),
+                                            }
+
+                                        }
+                                        _ => warn!("Unhandled message from peer: {}", peer_id),
+                                        None => warn!("Received empty gossip message from peer: {}", peer_id),
                                     }
                                 },
-                                Err(e) => println!("Failed to decode gossip message: {}", e),
+                                Err(e) => warn!("Failed to decode gossip message: {}", e),
                             }
                         },
                         _ => {}
@@ -205,7 +235,7 @@ impl SnapchainGossip {
                             self.publish(encoded_message);
                         },
                         Some(GossipEvent::RegisterValidator(register_validator)) => {
-                            println!("Broadcasting validator registration");
+                            debug!("Broadcasting validator registration");
                             let gossip_message = proto::GossipMessage {
                                 message: Some(proto::gossip_message::Message::Validator(register_validator)),
                             };
@@ -224,7 +254,7 @@ impl SnapchainGossip {
     fn publish(&mut self, message: Vec<u8>) {
         let topic = gossipsub::IdentTopic::new("test-net");
         if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic, message) {
-            println!("Failed to publish gossip message: {:?}", e);
+            warn!("Failed to publish gossip message: {:?}", e);
         }
     }
 }

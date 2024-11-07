@@ -30,12 +30,18 @@ Before you begin, ensure you have the following installed:
 
 To run a Snapchain node, use the following command:
 
+First setup the node configs:
 ```
-cargo run -- --id 0
+cargo run --bin setup 
+```
+
+Then to run the first node:
+```
+cargo run -- --id 1
 ```
 
 To run additional nodes:
 ```
-cargo run -- --id 1
 cargo run -- --id 2
+cargo run -- --id 3
 ```

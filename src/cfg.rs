@@ -1,4 +1,4 @@
-use crate::connectors;
+use crate::{connectors, consensus};
 use clap::Parser;
 use figment::{
     providers::{Env, Format, Serialized, Toml},
@@ -14,6 +14,7 @@ pub struct Config {
     pub log_format: String,
     pub fnames: connectors::fname::Config,
     pub onchain_events: connectors::onchain_events::Config,
+    pub consensus: consensus::consensus::Config,
 }
 
 impl Default for Config {
@@ -23,6 +24,7 @@ impl Default for Config {
             log_format: "text".to_string(),
             fnames: connectors::fname::Config::default(),
             onchain_events: connectors::onchain_events::Config::default(),
+            consensus: consensus::consensus::Config::default(),
         }
     }
 }
@@ -48,11 +50,22 @@ pub fn load_and_merge_config(args: Vec<String>) -> Result<Config, Box<dyn Error>
 
     let mut figment = Figment::from(Serialized::defaults(Config::default()));
 
-    if let Some(config_path) = cli_args.config_path {
-        if !Path::new(&config_path).exists() {
+    let config_path: String;
+    if cli_args.id.is_some() && cli_args.config_path.is_none() {
+        config_path = format!("nodes/{:}/snapchain.toml", cli_args.id.unwrap());
+    } else if let Some(path) = &cli_args.config_path {
+        config_path = path.to_string();
+    } else {
+        config_path = "snapchain.toml".to_string();
+    }
+
+    if Path::new(&config_path).exists() {
+        figment = figment.merge(Toml::file(config_path));
+    } else {
+        // If the config path was explicitly set and we didn't find it, error
+        if cli_args.config_path.is_some() {
             return Err(format!("config file not found: {}", config_path).into());
         }
-        figment = figment.merge(Toml::file(config_path));
     }
 
     figment = figment.merge(Env::prefixed("SNAPCHAIN_").split("__"));

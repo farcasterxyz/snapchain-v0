@@ -73,7 +73,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let keypair = Keypair::generate();
+    let keypair = app_config.consensus.keypair().clone();
+
+    info!("Starting Snapchain node with public key: {}", hex::encode(keypair.public().to_bytes()));
 
     let (system_tx, mut system_rx) = mpsc::channel::<SystemMessage>(100);
 
