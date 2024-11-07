@@ -20,7 +20,7 @@ use crate::consensus::timers::{TimeoutElapsed, TimerScheduler};
 use crate::core::types::proto::{BlockProposal, ShardHash};
 use crate::core::types::{Address, Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, SnapchainValidatorContext, SnapchainValidatorSet};
 use crate::network::gossip::GossipEvent;
-use crate::proto::{Block, BlockHeader, Height as ProtoHeight};
+use crate::core::types::proto::{Block, BlockHeader, Height as ProtoHeight};
 pub use malachite_consensus::Params as ConsensusParams;
 pub use malachite_consensus::State as ConsensusState;
 use prost::Message;
@@ -31,6 +31,11 @@ pub type ConsensusRef<Ctx> = ActorRef<ConsensusMsg<Ctx>>;
 
 pub type Decision<Ctx> = (<Ctx as Context>::Height, Round, <Ctx as Context>::Value);
 pub type TxDecision<Ctx> = mpsc::Sender<Decision<Ctx>>;
+
+pub enum SystemMessage {
+    Consensus(ConsensusMsg<SnapchainValidatorContext>),
+}
+
 type Timers<Ctx> = TimerScheduler<Timeout, ConsensusMsg<Ctx>>;
 
 impl<Ctx: Context + SnapchainContext> From<TimeoutElapsed<Timeout>> for ConsensusMsg<Ctx> {

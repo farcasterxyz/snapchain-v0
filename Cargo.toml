@@ -6,11 +6,7 @@ default-run = "snapchain"
 
 [lib]
 name = "snapchain"
-path = "src/main.rs"
-
-[[bin]]
-name = "submit-message"
-path = "src/bin/submit_message.rs"
+path = "src/lib.rs"
 
 [dependencies]
 tokio = { version = "1.40.0", features = ["full"] }

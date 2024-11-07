@@ -6,6 +6,7 @@ use ractor::{Actor, ActorRef};
 use tokio::{select, time};
 use tokio::sync::mpsc;
 use tracing::debug;
+use tracing_subscriber::EnvFilter;
 use snapchain::{
     consensus::consensus::{Consensus, ConsensusMsg},
     core::types::{
@@ -76,6 +77,8 @@ impl NodeForTest {
 
 #[tokio::test]
 async fn test_basic_consensus() {
+    let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::new("info")).init();
+
     // Create validator keys
     let keypair1 = Keypair::generate();
     let keypair2 = Keypair::generate();
