@@ -11,7 +11,7 @@ use libp2p::identity::ed25519::Keypair;
 use prost::Message;
 use tracing::warn;
 
-pub use crate::proto::snapchain as proto;
+pub use crate::proto::snapchain as proto; // TODO: reconsider how this is imported
 
 use proto::ShardHash;
 
