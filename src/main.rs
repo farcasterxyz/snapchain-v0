@@ -21,7 +21,7 @@ use tonic::transport::Server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use crate::consensus::consensus::{Consensus, ConsensusMsg, ConsensusParams};
+use crate::consensus::consensus::{Consensus, ConsensusMsg, ConsensusParams, SystemMessage};
 use crate::core::types::{
     proto, Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
     SnapchainValidatorSet,
@@ -30,10 +30,6 @@ use crate::network::gossip::GossipEvent;
 use network::gossip::SnapchainGossip;
 use network::server::rpc::snapchain_service_server::SnapchainServiceServer;
 use network::server::MySnapchainService;
-
-pub enum SystemMessage {
-    Consensus(ConsensusMsg<SnapchainValidatorContext>),
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
