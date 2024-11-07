@@ -22,7 +22,7 @@ use snapchain::core::types::{
 };
 use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
-use snapchain::network::server::rpc::snapchain_service_server::SnapchainServiceServer;
+use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::network::server::MySnapchainService;
 
 #[tokio::main]
@@ -151,8 +151,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None,
         gossip_tx.clone(),
     )
-    .await
-    .unwrap();
+        .await
+        .unwrap();
 
     // Create a timer for block creation
     let mut block_interval = time::interval(Duration::from_secs(2));
