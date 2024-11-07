@@ -1,24 +1,13 @@
-mod rpc {
-    tonic::include_proto!("rpc");
-}
-
-mod message {
-    tonic::include_proto!("message");
-}
-
-mod username_proof {
-    tonic::include_proto!("username_proof");
-}
-
 use std::error::Error;
 use hex::{ToHex, FromHex};
 use prost::Message;
-use rpc::snapchain_service_server::{SnapchainService};
+use snapchain::proto::rpc::snapchain_service_server::{SnapchainService};
+use snapchain::proto::message;
 use message::{CastAddBody, FarcasterNetwork, MessageData};
 use message::CastType::{Cast};
 use message::MessageType::{CastAdd};
 use ed25519_dalek::{Signer, SigningKey, SecretKey};
-use rpc::snapchain_service_client::SnapchainServiceClient;
+use snapchain::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 
 const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
 

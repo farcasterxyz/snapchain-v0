@@ -11,9 +11,7 @@ use libp2p::identity::ed25519::Keypair;
 use prost::Message;
 use tracing::warn;
 
-pub mod proto {
-    tonic::include_proto!("snapchain");
-}
+pub use crate::proto::snapchain as proto; // TODO: reconsider how this is imported
 
 use proto::ShardHash;
 
@@ -347,10 +345,10 @@ impl Vote {
             round: self.round.as_i64(),
             voter: self.voter.to_vec(),
             r#type: vote_type as i32,
-            value: shard_hash
+            value: shard_hash,
         }
     }
-    
+
     pub fn from_proto(proto: proto::Vote) -> Self {
         let vote_type = match proto.r#type {
             0 => VoteType::Prevote,

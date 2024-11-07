@@ -1,9 +1,3 @@
-mod cfg;
-pub mod connectors;
-pub mod consensus;
-pub mod core;
-pub mod network;
-
 use clap::Parser;
 use futures::stream::StreamExt;
 use libp2p::identity::ed25519::Keypair;
@@ -21,21 +15,21 @@ use tonic::transport::Server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use crate::consensus::consensus::{Consensus, ConsensusMsg, ConsensusParams, SystemMessage};
-use crate::core::types::{
+use snapchain::consensus::consensus::{Consensus, ConsensusMsg, ConsensusParams, SystemMessage};
+use snapchain::core::types::{
     proto, Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
     SnapchainValidatorSet,
 };
-use crate::network::gossip::GossipEvent;
-use network::gossip::SnapchainGossip;
-use network::server::rpc::snapchain_service_server::SnapchainServiceServer;
-use network::server::MySnapchainService;
+use snapchain::network::gossip::GossipEvent;
+use snapchain::network::gossip::SnapchainGossip;
+use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
+use snapchain::network::server::MySnapchainService;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();
 
-    let app_config = cfg::load_and_merge_config(args)?;
+    let app_config = snapchain::cfg::load_and_merge_config(args)?;
 
     if app_config.id == 0 {
         return Err("node id must be specified greater than 0".into());
@@ -91,7 +85,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
 
     if !app_config.fnames.disable {
-        let mut fetcher = connectors::fname::Fetcher::new(app_config.fnames.clone());
+        let mut fetcher = snapchain::connectors::fname::Fetcher::new(app_config.fnames.clone());
 
         tokio::spawn(async move {
             fetcher.run().await;
@@ -100,7 +94,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     if !app_config.onchain_events.rpc_url.is_empty() {
         let mut onchain_events_subscriber =
-            connectors::onchain_events::Subscriber::new(app_config.onchain_events)?;
+            snapchain::connectors::onchain_events::Subscriber::new(app_config.onchain_events)?;
         tokio::spawn(async move {
             let result = onchain_events_subscriber.run().await;
             match result {
@@ -157,8 +151,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None,
         gossip_tx.clone(),
     )
-    .await
-    .unwrap();
+        .await
+        .unwrap();
 
     // Create a timer for block creation
     let mut block_interval = time::interval(Duration::from_secs(2));
