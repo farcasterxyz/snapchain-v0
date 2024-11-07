@@ -213,7 +213,6 @@ mod tests {
             TestMsg(elapsed): TestMsg,
             _state: &mut (),
         ) -> Result<(), ractor::ActorProcessingErr> {
-            println!("Received timer message: {elapsed:?}");
             Ok(())
         }
     }

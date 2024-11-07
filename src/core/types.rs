@@ -9,6 +9,7 @@ use std::fmt::{Debug, Display};
 use std::sync::Arc;
 use libp2p::identity::ed25519::Keypair;
 use prost::Message;
+use tracing::warn;
 
 pub mod proto {
     tonic::include_proto!("snapchain");
@@ -349,6 +350,26 @@ impl Vote {
             value: shard_hash
         }
     }
+    
+    pub fn from_proto(proto: proto::Vote) -> Self {
+        let vote_type = match proto.r#type {
+            0 => VoteType::Prevote,
+            1 => VoteType::Precommit,
+            _ => panic!("Invalid vote type"),
+        };
+        let shard_hash = match proto.value {
+            None => NilOrVal::Nil,
+            Some(value) => NilOrVal::Val(value),
+        };
+        Self {
+            vote_type,
+            height: Height::from_proto(proto.height.unwrap()),
+            round: Round::new(proto.round),
+            voter: Address::from_vec(proto.voter),
+            shard_hash,
+            extension: None,
+        }
+    }
 
     pub fn to_sign_bytes(&self) -> Vec<u8> {
         self.to_proto().encode_to_vec()
@@ -372,6 +393,16 @@ impl Proposal {
             proposer: self.proposer.to_vec(),
             value: Some(self.shard_hash.clone()),
             pol_round: self.pol_round.as_i64(),
+        }
+    }
+
+    pub fn from_proto(proto: proto::Proposal) -> Self {
+        Self {
+            height: Height::from_proto(proto.height.unwrap()),
+            round: Round::new(proto.round),
+            shard_hash: proto.value.unwrap(),
+            pol_round: Round::new(proto.pol_round),
+            proposer: Address::from_vec(proto.proposer),
         }
     }
     pub fn to_sign_bytes(&self) -> Vec<u8> {
@@ -402,6 +433,10 @@ impl SnapchainValidatorContext {
         Self {
             keypair: Arc::new(keypair),
         }
+    }
+
+    pub fn public_key(&self) -> PublicKey {
+        self.keypair.public()
     }
 }
 
@@ -614,8 +649,7 @@ impl malachite_common::ValidatorSet<SnapchainValidatorContext> for SnapchainVali
     fn get_by_address(&self, address: &Address) -> Option<&SnapchainValidator> {
         let option = self.validators.iter().find(|v| &v.address == address);
         if option.is_none() {
-            println!("Looking for address: {}, among {:?}", address, self.validators);
-            panic!("Validator not found");
+            warn!("Validator not found: {}", address);
         }
         option
     }

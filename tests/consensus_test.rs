@@ -5,7 +5,7 @@ use malachite_metrics::{Metrics, SharedRegistry};
 use ractor::{Actor, ActorRef};
 use tokio::{select, time};
 use tokio::sync::mpsc;
-
+use tracing::debug;
 use snapchain::{
     consensus::consensus::{Consensus, ConsensusMsg},
     core::types::{
@@ -129,7 +129,7 @@ async fn test_basic_consensus() {
             Some(decision) = node1.decision_rx.recv() => {
                 match decision {
                     (height, round, value) => {
-                        println!("Node 1: Decided block at height {}, round {}, value: {}", height, round, value);
+                        debug!("Node 1: Decided block at height {}, round {}, value: {}", height, round, value);
                         node1_blocks_count += 1;
                     }
                 }
@@ -137,7 +137,7 @@ async fn test_basic_consensus() {
             Some(decision) = node2.decision_rx.recv() => {
                 match decision {
                     (height, round, value) => {
-                        println!("Node 2: Decided block at height {}, round {}, value: {}", height, round, value);
+                        debug!("Node 2: Decided block at height {}, round {}, value: {}", height, round, value);
                         node2_blocks_count += 1;
                     }
                 }
@@ -145,7 +145,7 @@ async fn test_basic_consensus() {
             Some(decision) = node3.decision_rx.recv() => {
                 match decision {
                     (height, round, value) => {
-                        println!("Node 3: Decided block at height {}, round {}, value: {}", height, round, value);
+                        debug!("Node 3: Decided block at height {}, round {}, value: {}", height, round, value);
                         node3_blocks_count += 1;
                     }
                 }
