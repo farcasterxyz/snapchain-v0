@@ -166,9 +166,9 @@ async fn test_basic_consensus() {
                         node2.cast(ConsensusMsg::ReceivedSignedVote(vote.clone()));
                         node3.cast(ConsensusMsg::ReceivedSignedVote(vote.clone()));
                     }
-                    GossipEvent::BroadcastBlock(block) => {
-                        node2.cast(ConsensusMsg::ReceivedBlockProposal(block.clone()));;
-                        node3.cast(ConsensusMsg::ReceivedBlockProposal(block.clone()));;
+                    GossipEvent::BroadcastFullProposal(full_proposal) => {
+                        node2.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));;
+                        node3.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));;
                     }
                     _ => {}}
             }
@@ -182,9 +182,9 @@ async fn test_basic_consensus() {
                         node1.cast(ConsensusMsg::ReceivedSignedVote(vote.clone()));
                         node3.cast(ConsensusMsg::ReceivedSignedVote(vote.clone()));
                     }
-                    GossipEvent::BroadcastBlock(block) => {
-                        node1.cast(ConsensusMsg::ReceivedBlockProposal(block.clone()));;
-                        node3.cast(ConsensusMsg::ReceivedBlockProposal(block.clone()));;
+                    GossipEvent::BroadcastFullProposal(full_proposal) => {
+                        node1.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));;
+                        node3.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));;
                     }
                     _ => {}}
             }
@@ -198,9 +198,9 @@ async fn test_basic_consensus() {
                         node1.cast(ConsensusMsg::ReceivedSignedVote(vote.clone()));
                         node2.cast(ConsensusMsg::ReceivedSignedVote(vote.clone()));
                     }
-                    GossipEvent::BroadcastBlock(block) => {
-                        node1.cast(ConsensusMsg::ReceivedBlockProposal(block.clone()));;
-                        node2.cast(ConsensusMsg::ReceivedBlockProposal(block.clone()));;
+                    GossipEvent::BroadcastFullProposal(full_proposal) => {
+                        node1.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));;
+                        node2.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));;
                     }
                     _ => {}}
             }

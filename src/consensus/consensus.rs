@@ -17,8 +17,8 @@ use malachite_consensus::{Effect, ProposedValue, Resume, SignedConsensusMsg};
 use malachite_metrics::Metrics;
 
 use crate::consensus::timers::{TimeoutElapsed, TimerScheduler};
-use crate::core::types::proto::{BlockProposal, ShardHash};
-use crate::core::types::{Address, Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, SnapchainValidatorContext, SnapchainValidatorSet};
+use crate::core::types::proto::{ShardHash};
+use crate::core::types::{proto, Address, Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, SnapchainValidatorContext, SnapchainValidatorSet};
 use crate::network::gossip::GossipEvent;
 use crate::core::types::proto::{Block, BlockHeader, Height as ProtoHeight};
 pub use malachite_consensus::Params as ConsensusParams;
@@ -26,6 +26,7 @@ pub use malachite_consensus::State as ConsensusState;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
+use crate::proto::snapchain::FullProposal;
 
 pub type ConsensusRef<Ctx> = ActorRef<ConsensusMsg<Ctx>>;
 
@@ -80,7 +81,7 @@ pub enum ConsensusMsg<Ctx: SnapchainContext> {
     ReceivedSignedProposal(SignedProposal<Ctx>),
     ReceivedProposalPart(SignedProposalPart<Ctx>),
 
-    ReceivedBlockProposal(BlockProposal),
+    ReceivedFullProposal(FullProposal),
     RegisterValidator(SnapchainValidator),
 
     TimeoutElapsed(TimeoutElapsed<Timeout>),
@@ -121,6 +122,7 @@ impl Timeouts {
 
 pub struct ShardValidator {
     shard_id: SnapchainShard,
+    address: Address,
     validator_set: SnapchainValidatorSet,
     blocks: Vec<Block>,
     confirmed_height: Option<Height>,
@@ -131,9 +133,10 @@ pub struct ShardValidator {
 }
 
 impl ShardValidator {
-    fn new() -> ShardValidator {
+    fn new(address: Address) -> ShardValidator {
         ShardValidator {
             shard_id: SnapchainShard::new(0),
+            address,
             validator_set: SnapchainValidatorSet::new(vec![]),
             blocks: vec![],
             confirmed_height: None,
@@ -168,16 +171,23 @@ impl ShardValidator {
         self.current_round = Round::Nil;
     }
 
-    pub fn add_proposed_block(&mut self, block: Block) -> ShardHash {
-        let value = ShardHash {
-            hash: block.hash.clone(),
-            shard_index: block.header.as_ref().unwrap().height.as_ref().unwrap().shard_index,
-        };
-        self.proposed_values.insert(value.clone(), block);
-        value
+    pub fn add_proposed_value(&mut self, full_proposal: FullProposal) -> ProposedValue<SnapchainValidatorContext> {
+        let value = full_proposal.value();
+        if let Some(proto::full_proposal::ProposedValue::Block(block)) = full_proposal.proposed_value.clone() {
+            self.proposed_values.insert(value.clone(), block);
+        }
+
+        ProposedValue {
+            height: full_proposal.height(),
+            round: full_proposal.round(),
+            validator_address: full_proposal.proposer_address(),
+            value,
+            validity: Validity::Valid,  // TODO: Validate proposer signature?
+            extension: None,
+        }
     }
 
-    pub fn propose_block(&mut self, height: Height) -> Block {
+    pub fn propose_value(&mut self, height: Height, round: Round) -> FullProposal {
         let previous_block = self.blocks.last();
         let parent_hash = match previous_block {
             Some(block) => block.hash.clone(),
@@ -213,7 +223,12 @@ impl ShardValidator {
         };
         self.proposed_values.insert(shard_hash, block.clone());
 
-        block
+        FullProposal {
+            height: Some(height.to_proto()),
+            round: round.as_i64(),
+            proposed_value: Some(proto::full_proposal::ProposedValue::Block(block)),
+            proposer: self.address.to_vec(),
+        }
     }
 }
 
@@ -402,21 +417,11 @@ impl Consensus {
                 Ok(())
             }
 
-            ConsensusMsg::ReceivedBlockProposal(block_proposal) => {
-                let block = block_proposal.block.unwrap();
+            ConsensusMsg::ReceivedFullProposal(full_proposal) => {
+                let height = Height::from_proto(full_proposal.height.clone().unwrap());
+                debug!("Received proposed value: {:?} at {:?}", height, self.params.address);
+                let proposed_value = state.shard_validator.add_proposed_value(full_proposal);
 
-                let height = Height::from_proto(block_proposal.height.unwrap());
-                debug!("Received block: {:?} at {:?}", height, self.params.address);
-                let value = state.shard_validator.add_proposed_block(block);
-
-                let proposed_value = ProposedValue {
-                    height,
-                    round: Round::new(block_proposal.round),
-                    validator_address: Address::from_vec(block_proposal.proposer),
-                    value,
-                    validity: Validity::Valid,  // TODO: Validate proposer signature?
-                    extension: None,
-                };
                 let result = self
                     .process_input(&myself, state, ConsensusInput::ReceivedProposedValue(proposed_value))
                     .await;
@@ -541,11 +546,9 @@ impl Consensus {
 
             Effect::GetValue(height, round, timeout) => {
                 let timeout_duration = timeouts.duration_for(timeout.step);
-                let block = shard_validator.propose_block(height);
-                let value = ShardHash {
-                    hash: block.hash.clone(),
-                    shard_index: height.shard_index as u32,
-                };
+                let full_proposal = shard_validator.propose_value(height, round);
+
+                let value = full_proposal.value();
                 // Sleep before proposing the value so we don't produce blocks too fast
                 tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -555,13 +558,7 @@ impl Consensus {
                     error!("Error when forwarding locally proposed value: {e:?}");
                 }
 
-                let block_proposal = BlockProposal {
-                    height: Some(height.to_proto()),
-                    round: round.as_i64(),
-                    block: Some(block),
-                    proposer: self.params.address.to_vec(),
-                };
-                gossip_tx.send(GossipEvent::BroadcastBlock(block_proposal)).await?;
+                gossip_tx.send(GossipEvent::BroadcastFullProposal(full_proposal)).await?;
 
                 Ok(Resume::Continue)
             }
@@ -610,7 +607,7 @@ impl Actor for Consensus {
             timers: Timers::new(myself),
             timeouts: Timeouts::new(self.timeout_config),
             consensus: ConsensusState::new(self.ctx.clone(), self.params.clone()),
-            shard_validator: ShardValidator::new(),
+            shard_validator: ShardValidator::new(self.params.address.clone()),
             gossip_tx: args,
         })
     }

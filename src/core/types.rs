@@ -11,6 +11,8 @@ use tracing::warn;
 pub use crate::proto::snapchain as proto; // TODO: reconsider how this is imported
 
 use proto::ShardHash;
+use crate::proto::snapchain::full_proposal::ProposedValue;
+use crate::proto::snapchain::FullProposal;
 
 pub trait ShardId
 where
@@ -205,6 +207,40 @@ impl malachite_common::Value for ShardHash {
 
     fn id(&self) -> Self::Id {
         self.clone()
+    }
+}
+
+impl FullProposal {
+    pub fn value(&self) -> ShardHash {
+        match &self.proposed_value {
+            Some(ProposedValue::Block(block)) => {
+                ShardHash {
+                    shard_index: self.height().shard_index as u32,
+                    hash: block.hash.clone(),
+                }
+            },
+            Some(ProposedValue::Shard(shard_chunk)) => {
+                ShardHash {
+                    shard_index: self.height().shard_index as u32,
+                    hash: shard_chunk.hash.clone(),
+                }
+            }
+            _ => {
+                panic!("Invalid proposal type");
+            }
+        }
+    }
+
+    pub fn proposer_address(&self) -> Address {
+        Address::from_vec(self.proposer.clone())
+    }
+
+    pub fn height(&self) -> Height {
+        Height::from_proto(self.height.clone().unwrap())
+    }
+
+    pub fn round(&self) -> Round {
+        Round::new(self.round)
     }
 }
 
