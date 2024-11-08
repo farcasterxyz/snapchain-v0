@@ -15,7 +15,7 @@ use tonic::transport::Server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use snapchain::consensus::consensus::{Consensus, ConsensusMsg, ConsensusParams, SystemMessage};
+use snapchain::consensus::consensus::{BlockProposer, Consensus, ConsensusMsg, ConsensusParams, ShardValidator, SystemMessage};
 use snapchain::core::types::{
     proto, Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
     SnapchainValidatorSet,
@@ -141,7 +141,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let ctx = SnapchainValidatorContext::new(keypair.clone());
-
+    let block_proposer = BlockProposer::new(validator_address.clone(), shard.clone());
+    let shard_validator = ShardValidator::new(validator_address.clone(), block_proposer);
     let consensus_actor = Consensus::spawn(
         ctx,
         shard,
@@ -150,6 +151,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         metrics.clone(),
         None,
         gossip_tx.clone(),
+        shard_validator,
     )
         .await
         .unwrap();

@@ -15,7 +15,7 @@ use snapchain::{
     },
     network::gossip::GossipEvent,
 };
-use snapchain::consensus::consensus::{Decision, TxDecision};
+use snapchain::consensus::consensus::{BlockProposer, Decision, ShardValidator, TxDecision};
 
 struct NodeForTest {
     shard: SnapchainShard,
@@ -44,7 +44,8 @@ impl NodeForTest {
 
         let (gossip_tx, gossip_rx) = mpsc::channel::<GossipEvent<SnapchainValidatorContext>>(100);
         let (decision_tx, decision_rx) = mpsc::channel::<Decision<SnapchainValidatorContext>>(100);
-
+        let block_proposer = BlockProposer::new(address.clone(), shard.clone());
+        let shard_validator = ShardValidator::new(address.clone(), block_proposer);
         // Spawn consensus actor
         let consensus_actor = Consensus::spawn(
             ctx,
@@ -54,6 +55,7 @@ impl NodeForTest {
             metrics.clone(),
             Some(decision_tx),
             gossip_tx.clone(),
+            shard_validator,
         ).await.unwrap();
         Self {
             shard,
