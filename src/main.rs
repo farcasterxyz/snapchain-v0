@@ -1,23 +1,25 @@
 pub mod storage;
 use clap::Parser;
-use snapchain::consensus::consensus::Decision;
 use futures::stream::StreamExt;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
 use malachite_metrics::{Metrics, SharedRegistry};
+use snapchain::consensus::consensus::Decision;
 use std::error::Error;
 use std::io;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use storage::store::put_block;
 use tokio::signal::ctrl_c;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tokio::time::sleep;
 use tokio::{select, time};
 use tonic::transport::Server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
+use crate::storage::db::RocksDB;
 use snapchain::consensus::consensus::{
     BlockProposer, Consensus, ConsensusMsg, ConsensusParams, ShardValidator, SystemMessage,
 };
@@ -29,7 +31,6 @@ use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
 use snapchain::network::server::MySnapchainService;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
-use crate::storage::db::RocksDB;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -152,9 +153,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let ctx = SnapchainValidatorContext::new(keypair.clone());
-    let block_proposer = BlockProposer::new(validator_address.clone(), shard.clone());
-    let shard_validator =
-        ShardValidator::new(validator_address.clone(), Some(block_proposer), None);
+    let block_proposer = Arc::new(Mutex::new(BlockProposer::new(
+        validator_address.clone(),
+        shard.clone(),
+    )));
+    let shard_validator = ShardValidator::new(
+        validator_address.clone(),
+        Some(block_proposer.clone()),
+        None,
+    );
     let consensus_actor = Consensus::spawn(
         ctx,
         shard,
@@ -168,15 +175,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
     .await
     .unwrap();
 
-    let rocksdb = RocksDB::new("./rocks");
+    let rocksdb = RocksDB::new(format!("{}/farcaster", app_config.rocksdb_dir.as_str()).as_str());
+    match rocksdb.open() {
+        Err(err) => {
+            error!("Error opening rocksdb {:#?}", err)
+        }
+        Ok(()) => {}
+    }
+
     tokio::spawn(async move {
-        while let Some((height, round, shard_hash)) = decision_rx.recv().await {
-            let block = shard
-            match put_block(&rocksdb, block) {
-                Err(err) => {
-                    error!("Error writing block to db {:#?}", err)
+        let block_proposer = block_proposer.clone();
+        while let Some((_height, _round, shard_hash)) = decision_rx.recv().await {
+            let block_proposer = block_proposer.lock().await;
+            let block = block_proposer.get_proposed_value(&shard_hash);
+            match block {
+                Some(block) => match put_block(&rocksdb, block) {
+                    Err(err) => {
+                        error!("Error writing block to db {:#?}", err)
+                    }
+                    Ok(()) => {}
+                },
+                None => {
+                    error!("Missing block for proposal. Shard hash: {:#?}", shard_hash);
                 }
-                Ok(()) => {}
             }
         }
     });

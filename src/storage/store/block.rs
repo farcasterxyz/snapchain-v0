@@ -90,5 +90,6 @@ pub fn put_block(db: &RocksDB, block: &Block) -> Result<(), BlockStorageError> {
         .ok_or(BlockStorageError::BlockMissingHeight)?;
     let primary_key = make_primary_key(height.shard_index, height.block_number);
     txn.put(primary_key, block.encode_to_vec());
+    db.commit(txn)?;
     Ok(())
 }
