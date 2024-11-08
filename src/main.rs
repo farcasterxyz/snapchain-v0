@@ -3,27 +3,33 @@ use futures::stream::StreamExt;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
 use malachite_metrics::{Metrics, SharedRegistry};
+use snapchain::consensus::consensus::Decision;
+use std::collections::HashMap;
 use std::error::Error;
 use std::io;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::ctrl_c;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tokio::{select, time};
 use tonic::transport::Server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use snapchain::consensus::consensus::{BlockProposer, Consensus, ConsensusMsg, ConsensusParams, ShardValidator, SystemMessage};
+use snapchain::consensus::consensus::{
+    BlockProposer, Consensus, ConsensusMsg, ConsensusParams, ShardValidator, SystemMessage,
+};
 use snapchain::core::types::{
     proto, Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
     SnapchainValidatorSet,
 };
 use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
-use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::network::server::MySnapchainService;
+use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -65,9 +71,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let keypair = app_config.consensus.keypair().clone();
 
-    info!("Starting Snapchain node with public key: {}", hex::encode(keypair.public().to_bytes()));
+    info!(
+        "Starting Snapchain node with public key: {}",
+        hex::encode(keypair.public().to_bytes())
+    );
 
     let (system_tx, mut system_rx) = mpsc::channel::<SystemMessage>(100);
+    let (decision_tx, mut decision_rx) = mpsc::channel::<Decision<SnapchainValidatorContext>>(100);
 
     let gossip_result = SnapchainGossip::create(keypair.clone(), addr, system_tx.clone());
     if let Err(e) = gossip_result {
@@ -108,6 +118,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
+    let blocks_by_shard = Arc::new(Mutex::new(HashMap::new()));
+
     tokio::spawn(async move {
         let service = MySnapchainService::default();
 
@@ -141,20 +153,73 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let ctx = SnapchainValidatorContext::new(keypair.clone());
-    let block_proposer = BlockProposer::new(validator_address.clone(), shard.clone());
-    let shard_validator = ShardValidator::new(validator_address.clone(), Some(block_proposer), None);
+    let block_proposer = Arc::new(Mutex::new(BlockProposer::new(
+        validator_address.clone(),
+        shard.clone(),
+    )));
+    let shard_validator = ShardValidator::new(
+        validator_address.clone(),
+        Some(block_proposer.clone()),
+        None,
+    );
     let consensus_actor = Consensus::spawn(
         ctx,
         shard,
         consensus_params,
         TimeoutConfig::default(),
         metrics.clone(),
-        None,
+        Some(decision_tx.clone()),
         gossip_tx.clone(),
         shard_validator,
     )
-        .await
-        .unwrap();
+    .await
+    .unwrap();
+
+    tokio::spawn(async move {
+        let block_proposer = block_proposer.clone();
+        while let Some((decision_height, _round, shard_hash)) = decision_rx.recv().await {
+            let block_proposer = block_proposer.lock().await;
+            let block = block_proposer.get_proposed_value(&shard_hash);
+            let mut blocks_by_shard = blocks_by_shard.lock().await;
+            match block {
+                Some(block) => {
+                    // TODO(aditi): Substitute out with persistence
+                    let shard_index = shard_hash.shard_index;
+                    // Maintain sorted lists of blocks in blocks_by_shard
+                    match blocks_by_shard.get_mut(&shard_index) {
+                        None => {
+                            blocks_by_shard.insert(shard_index, vec![block.clone()]);
+                        }
+                        Some(blocks) => match blocks.binary_search_by(|block| match &block.header {
+                            None =>
+                            // This is unexpected, keep at end of list
+                            {
+                                std::cmp::Ordering::Greater
+                            }
+                            Some(header) => match &header.height {
+                                None =>
+                                // This is unexpected, keep at end of list
+                                {
+                                    std::cmp::Ordering::Greater
+                                }
+                                Some(height) => {
+                                    height.block_number.cmp(&decision_height.block_number)
+                                }
+                            },
+                        }) {
+                            Err(pos) => {
+                                blocks.insert(pos, block.clone());
+                            }
+                            Ok(_) => {}
+                        },
+                    }
+                }
+                None => {
+                    error!("Missing block for proposal. Shard hash: {:#?}", shard_hash);
+                }
+            }
+        }
+    });
 
     // Create a timer for block creation
     let mut block_interval = time::interval(Duration::from_secs(2));

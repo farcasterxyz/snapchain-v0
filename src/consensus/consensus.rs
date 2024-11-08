@@ -1,5 +1,6 @@
 use malachite_common::{ValidatorSet, Validity};
-use std::collections::{BTreeMap};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -9,24 +10,27 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use malachite_common::{
-    Context, Extension, Round, SignedProposal, SignedProposalPart,
-    SignedVote, Timeout, TimeoutStep,
+    Context, Extension, Round, SignedProposal, SignedProposalPart, SignedVote, Timeout, TimeoutStep,
 };
 use malachite_config::TimeoutConfig;
 use malachite_consensus::{Effect, ProposedValue, Resume, SignedConsensusMsg};
 use malachite_metrics::Metrics;
 
 use crate::consensus::timers::{TimeoutElapsed, TimerScheduler};
-use crate::core::types::proto::{ShardHash};
-use crate::core::types::{proto, Address, Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator, SnapchainValidatorContext, SnapchainValidatorSet};
-use crate::network::gossip::GossipEvent;
+use crate::core::types::proto::ShardHash;
 use crate::core::types::proto::{Block, BlockHeader, Height as ProtoHeight};
+use crate::core::types::{
+    proto, Address, Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator,
+    SnapchainValidatorContext, SnapchainValidatorSet,
+};
+use crate::network::gossip::GossipEvent;
+use crate::proto::snapchain::{FullProposal, ShardChunk, ShardHeader};
 pub use malachite_consensus::Params as ConsensusParams;
 pub use malachite_consensus::State as ConsensusState;
 use prost::Message;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 use tokio::time::Instant;
-use crate::proto::snapchain::{FullProposal, ShardChunk, ShardHeader};
 
 pub type ConsensusRef<Ctx> = ActorRef<ConsensusMsg<Ctx>>;
 
@@ -122,7 +126,11 @@ impl Timeouts {
 
 pub trait Proposer {
     // Create a new block/shard chunk for the given height that will be proposed for confirmation to the other validators
-    fn propose_value(&mut self, height: Height, round: Round) -> proto::full_proposal::ProposedValue;
+    fn propose_value(
+        &mut self,
+        height: Height,
+        round: Round,
+    ) -> proto::full_proposal::ProposedValue;
     // Receive a block/shard chunk proposed by another validator and return whether it is valid
     fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity;
     // Consensus has confirmed the block/shard_chunk, apply it to the local state
@@ -136,12 +144,14 @@ pub struct ShardProposer {
     proposed_chunks: BTreeMap<ShardHash, ShardChunk>,
 }
 
-impl ShardProposer {
-
-}
+impl ShardProposer {}
 
 impl Proposer for ShardProposer {
-    fn propose_value(&mut self, height: Height, round: Round) -> proto::full_proposal::ProposedValue {
+    fn propose_value(
+        &mut self,
+        height: Height,
+        round: Round,
+    ) -> proto::full_proposal::ProposedValue {
         let previous_chunk = self.chunks.last();
         let parent_hash = match previous_chunk {
             Some(chunk) => chunk.hash.clone(),
@@ -176,10 +186,12 @@ impl Proposer for ShardProposer {
     }
 
     fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity {
-        if let Some(proto::full_proposal::ProposedValue::Shard(chunk)) = full_proposal.proposed_value.clone() {
+        if let Some(proto::full_proposal::ProposedValue::Shard(chunk)) =
+            full_proposal.proposed_value.clone()
+        {
             self.proposed_chunks.insert(full_proposal.value(), chunk);
         }
-        Validity::Valid  // TODO: Validate proposer signature?
+        Validity::Valid // TODO: Validate proposer signature?
     }
 
     fn decide(&mut self, height: Height, round: Round, value: ShardHash) {
@@ -190,7 +202,6 @@ impl Proposer for ShardProposer {
         }
     }
 }
-
 
 pub struct BlockProposer {
     shard_id: SnapchainShard,
@@ -208,10 +219,18 @@ impl BlockProposer {
             proposed_blocks: BTreeMap::new(),
         }
     }
+
+    pub fn get_proposed_value(&self, shard_hash: &ShardHash) -> Option<&Block> {
+        self.proposed_blocks.get(shard_hash)
+    }
 }
 
 impl Proposer for BlockProposer {
-    fn propose_value(&mut self, height: Height, round: Round) -> proto::full_proposal::ProposedValue {
+    fn propose_value(
+        &mut self,
+        height: Height,
+        round: Round,
+    ) -> proto::full_proposal::ProposedValue {
         let previous_block = self.blocks.last();
         let parent_hash = match previous_block {
             Some(block) => block.hash.clone(),
@@ -250,10 +269,12 @@ impl Proposer for BlockProposer {
     }
 
     fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity {
-        if let Some(proto::full_proposal::ProposedValue::Block(block)) = full_proposal.proposed_value.clone() {
+        if let Some(proto::full_proposal::ProposedValue::Block(block)) =
+            full_proposal.proposed_value.clone()
+        {
             self.proposed_blocks.insert(full_proposal.value(), block);
         }
-        Validity::Valid  // TODO: Validate proposer signature?
+        Validity::Valid // TODO: Validate proposer signature?
     }
 
     fn decide(&mut self, height: Height, round: Round, value: ShardHash) {
@@ -275,12 +296,16 @@ pub struct ShardValidator {
     current_proposer: Option<Address>,
     // This should be proposer: Box<dyn Proposer> but that doesn't implement Send which is required for the actor system.
     // TODO: Fix once we remove the actor system
-    block_proposer: Option<BlockProposer>,
+    block_proposer: Option<Arc<Mutex<BlockProposer>>>,
     shard_proposer: Option<ShardProposer>,
 }
 
 impl ShardValidator {
-    pub fn new(address: Address, block_proposer: Option<BlockProposer>, shard_proposer: Option<ShardProposer>) -> ShardValidator {
+    pub fn new(
+        address: Address,
+        block_proposer: Option<Arc<Mutex<BlockProposer>>>,
+        shard_proposer: Option<ShardProposer>,
+    ) -> ShardValidator {
         let shard = SnapchainShard::new(0);
         ShardValidator {
             shard_id: shard.clone(),
@@ -309,8 +334,9 @@ impl ShardValidator {
         self.current_proposer = Some(proposer);
     }
 
-    pub fn decide(&mut self, height: Height, _: Round, value: ShardHash) {
+    pub async fn decide(&mut self, height: Height, _: Round, value: ShardHash) {
         if let Some(block_proposer) = &mut self.block_proposer {
+            let mut block_proposer = block_proposer.lock().await;
             block_proposer.decide(height, self.current_round, value);
         } else if let Some(shard_proposer) = &mut self.shard_proposer {
             shard_proposer.decide(height, self.current_round, value);
@@ -321,9 +347,13 @@ impl ShardValidator {
         self.current_round = Round::Nil;
     }
 
-    pub fn add_proposed_value(&mut self, full_proposal: FullProposal) -> ProposedValue<SnapchainValidatorContext> {
+    pub async fn add_proposed_value(
+        &mut self,
+        full_proposal: FullProposal,
+    ) -> ProposedValue<SnapchainValidatorContext> {
         let value = full_proposal.value();
         let validity = if let Some(block_proposer) = &mut self.block_proposer {
+            let mut block_proposer = block_proposer.lock().await;
             block_proposer.add_proposed_value(&full_proposal)
         } else if let Some(shard_proposer) = &mut self.shard_proposer {
             shard_proposer.add_proposed_value(&full_proposal)
@@ -341,8 +371,9 @@ impl ShardValidator {
         }
     }
 
-    pub fn propose_value(&mut self, height: Height, round: Round) -> FullProposal {
+    pub async fn propose_value(&mut self, height: Height, round: Round) -> FullProposal {
         let proposed_value = if let Some(block_proposer) = &mut self.block_proposer {
+            let mut block_proposer = block_proposer.lock().await;
             block_proposer.propose_value(height, round)
         } else if let Some(shard_proposer) = &mut self.shard_proposer {
             shard_proposer.propose_value(height, round)
@@ -448,7 +479,10 @@ impl Consensus {
         match msg {
             ConsensusMsg::StartHeight(height) => {
                 let validator_set = state.shard_validator.get_validator_set();
-                debug!("Starting height: {height} with {:?} validators", validator_set.count());
+                debug!(
+                    "Starting height: {height} with {:?} validators",
+                    validator_set.count()
+                );
                 let result = self
                     .process_input(
                         &myself,
@@ -481,7 +515,10 @@ impl Consensus {
             }
 
             ConsensusMsg::ReceivedSignedVote(vote) => {
-                debug!("Received vote: {:?} for height: {:?}, round: {:?} at {:?}", vote.shard_hash, vote.height, vote.round, self.params.address);
+                debug!(
+                    "Received vote: {:?} for height: {:?}, round: {:?} at {:?}",
+                    vote.shard_hash, vote.height, vote.round, self.params.address
+                );
                 if let Err(e) = self
                     .process_input(&myself, state, ConsensusInput::Vote(vote))
                     .await
@@ -492,7 +529,10 @@ impl Consensus {
             }
 
             ConsensusMsg::ReceivedSignedProposal(proposal) => {
-                debug!("Received proposal: {:?} for height: {:?}, round: {:?} at {:?}", proposal.shard_hash, proposal.height, proposal.round, self.params.address);
+                debug!(
+                    "Received proposal: {:?} for height: {:?}, round: {:?} at {:?}",
+                    proposal.shard_hash, proposal.height, proposal.round, self.params.address
+                );
                 if let Err(e) = self
                     .process_input(&myself, state, ConsensusInput::Proposal(proposal))
                     .await
@@ -509,10 +549,11 @@ impl Consensus {
                     return Ok(());
                 }
 
-
-
                 let connected_peers = state.shard_validator.validator_set.count();
-                info!("Connected to peer {address}. Total peers: {:?}", connected_peers);
+                info!(
+                    "Connected to peer {address}. Total peers: {:?}",
+                    connected_peers
+                );
                 // let total_peers = state.consensus.driver.validator_set().count() - 1;
 
                 // println!("Connected to {connected_peers}/{total_peers} peers");
@@ -524,7 +565,7 @@ impl Consensus {
 
                     let height = state.consensus.driver.height();
                     let validator_set = state.shard_validator.get_validator_set();
-                
+
                     let result = self
                         .process_input(
                             &myself,
@@ -547,11 +588,21 @@ impl Consensus {
 
             ConsensusMsg::ReceivedFullProposal(full_proposal) => {
                 let height = Height::from_proto(full_proposal.height.clone().unwrap());
-                debug!("Received proposed value: {:?} at {:?}", height, self.params.address);
-                let proposed_value = state.shard_validator.add_proposed_value(full_proposal);
+                debug!(
+                    "Received proposed value: {:?} at {:?}",
+                    height, self.params.address
+                );
+                let proposed_value = state
+                    .shard_validator
+                    .add_proposed_value(full_proposal)
+                    .await;
 
                 let result = self
-                    .process_input(&myself, state, ConsensusInput::ReceivedProposedValue(proposed_value))
+                    .process_input(
+                        &myself,
+                        state,
+                        ConsensusInput::ReceivedProposedValue(proposed_value),
+                    )
                     .await;
 
                 if let Err(e) = result {
@@ -584,7 +635,10 @@ impl Consensus {
                 Ok(())
             }
             ConsensusMsg::ReceivedProposedValue(value) => {
-                debug!("Received proposed value: {:?} for height: {:?}, round: {:?} at {:?}", value.value, value.height, value.round, self.params.address);
+                debug!(
+                    "Received proposed value: {:?} for height: {:?}, round: {:?} at {:?}",
+                    value.value, value.height, value.round, self.params.address
+                );
                 let result = self
                     .process_input(&myself, state, ConsensusInput::ReceivedProposedValue(value))
                     .await;
@@ -656,13 +710,19 @@ impl Consensus {
             Effect::Broadcast(gossip_msg) => {
                 match gossip_msg {
                     SignedConsensusMsg::Proposal(proposal) => {
-                        debug!("Broadcasting proposal gossip message: {:?} {:?} from {:?}", proposal.height, proposal.round, proposal.proposer);
+                        debug!(
+                            "Broadcasting proposal gossip message: {:?} {:?} from {:?}",
+                            proposal.height, proposal.round, proposal.proposer
+                        );
                         gossip_tx
                             .send(GossipEvent::BroadcastSignedProposal(proposal))
                             .await?;
                     }
                     SignedConsensusMsg::Vote(vote) => {
-                        debug!("Broadcasting vote gossip message: {:?} {:?} {:?} from {:?}", vote.vote_type, vote.height, vote.round, vote.voter);
+                        debug!(
+                            "Broadcasting vote gossip message: {:?} {:?} {:?} from {:?}",
+                            vote.vote_type, vote.height, vote.round, vote.voter
+                        );
                         gossip_tx
                             .send(GossipEvent::BroadcastSignedVote(vote))
                             .await?;
@@ -674,7 +734,7 @@ impl Consensus {
 
             Effect::GetValue(height, round, timeout) => {
                 let timeout_duration = timeouts.duration_for(timeout.step);
-                let full_proposal = shard_validator.propose_value(height, round);
+                let full_proposal = shard_validator.propose_value(height, round).await;
 
                 let value = full_proposal.value();
                 // Sleep before proposing the value so we don't produce blocks too fast
@@ -686,17 +746,17 @@ impl Consensus {
                     error!("Error when forwarding locally proposed value: {e:?}");
                 }
 
-                gossip_tx.send(GossipEvent::BroadcastFullProposal(full_proposal)).await?;
+                gossip_tx
+                    .send(GossipEvent::BroadcastFullProposal(full_proposal))
+                    .await?;
 
                 Ok(Resume::Continue)
             }
 
-            Effect::GetValidatorSet(height) => {
-                Ok(Resume::ValidatorSet(
-                    height,
-                    Some(shard_validator.get_validator_set()),
-                ))
-            },
+            Effect::GetValidatorSet(height) => Ok(Resume::ValidatorSet(
+                height,
+                Some(shard_validator.get_validator_set()),
+            )),
 
             Effect::Decide {
                 height,
@@ -707,7 +767,11 @@ impl Consensus {
                 if let Some(tx_decision) = &self.tx_decision {
                     let _ = tx_decision.send((height, round, value.clone())).await;
                 }
-                info!("Deciding value: {value} for height: {height} at {:?} with {:?} commits", self.params.address, commits.len());
+                info!(
+                    "Deciding value: {value} for height: {height} at {:?} with {:?} commits",
+                    self.params.address,
+                    commits.len()
+                );
                 shard_validator.decide(height, round, value.clone());
                 let result = myself.cast(ConsensusMsg::StartHeight(height.increment()));
                 if let Err(e) = result {
@@ -723,7 +787,10 @@ impl Consensus {
 impl Actor for Consensus {
     type Msg = ConsensusMsg<SnapchainValidatorContext>;
     type State = State<SnapchainValidatorContext>;
-    type Arguments = (mpsc::Sender<GossipEvent<SnapchainValidatorContext>>, ShardValidator);
+    type Arguments = (
+        mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
+        ShardValidator,
+    );
 
     #[tracing::instrument(name = "consensus", skip_all)]
     async fn pre_start(
@@ -747,7 +814,10 @@ impl Actor for Consensus {
     ) -> Result<(), ActorProcessingErr> {
         state.timers.cancel_all();
         // Add ourselves to the validator set
-        state.shard_validator.add_validator(SnapchainValidator::new(self.shard_id.clone(), self.ctx.public_key()));
+        state.shard_validator.add_validator(SnapchainValidator::new(
+            self.shard_id.clone(),
+            self.ctx.public_key(),
+        ));
         Ok(())
     }
 
