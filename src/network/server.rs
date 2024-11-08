@@ -1,12 +1,11 @@
-
+use crate::proto::message::Message;
+use crate::proto::rpc::snapchain_service_server::{SnapchainService, SnapchainServiceServer};
+use hex::ToHex;
 use std::error::Error;
 use std::net::SocketAddr;
-use tonic::{transport::Server, Request, Response, Status};
 use tonic::Code::Unimplemented;
-use tracing::{info};
-use hex::ToHex;
-use crate::proto::rpc::snapchain_service_server::{SnapchainService, SnapchainServiceServer};
-use crate::proto::message::{Message};
+use tonic::{transport::Server, Request, Response, Status};
+use tracing::info;
 
 #[derive(Default)]
 pub struct MySnapchainService;

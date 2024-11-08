@@ -15,15 +15,17 @@ use tonic::transport::Server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use snapchain::consensus::consensus::{BlockProposer, Consensus, ConsensusMsg, ConsensusParams, ShardValidator, SystemMessage};
+use snapchain::consensus::consensus::{
+    BlockProposer, Consensus, ConsensusMsg, ConsensusParams, ShardValidator, SystemMessage,
+};
 use snapchain::core::types::{
     proto, Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
     SnapchainValidatorSet,
 };
 use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
-use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::network::server::MySnapchainService;
+use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -65,7 +67,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let keypair = app_config.consensus.keypair().clone();
 
-    info!("Starting Snapchain node with public key: {}", hex::encode(keypair.public().to_bytes()));
+    info!(
+        "Starting Snapchain node with public key: {}",
+        hex::encode(keypair.public().to_bytes())
+    );
 
     let (system_tx, mut system_rx) = mpsc::channel::<SystemMessage>(100);
 
@@ -142,7 +147,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let ctx = SnapchainValidatorContext::new(keypair.clone());
     let block_proposer = BlockProposer::new(validator_address.clone(), shard.clone());
-    let shard_validator = ShardValidator::new(validator_address.clone(), Some(block_proposer), None);
+    let shard_validator =
+        ShardValidator::new(validator_address.clone(), Some(block_proposer), None);
     let consensus_actor = Consensus::spawn(
         ctx,
         shard,
@@ -153,8 +159,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         gossip_tx.clone(),
         shard_validator,
     )
-        .await
-        .unwrap();
+    .await
+    .unwrap();
 
     // Create a timer for block creation
     let mut block_interval = time::interval(Duration::from_secs(2));

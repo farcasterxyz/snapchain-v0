@@ -41,6 +41,8 @@ alloy-transport = "0.5.4"
 alloy-sol-types = "0.8.11"
 ed25519-dalek = "2.1.1"
 
+pre-commit = "0.5.2"
+
 
 [build-dependencies]
 tonic-build = "0.9.2"
@@ -49,3 +51,6 @@ tonic-build = "0.9.2"
 serial_test = "3.1.1"
 tempfile = "3.13.0"
 tracing-test = { version = "0.2.5", features = ["no-env-filter"] }
+
+[package.metadata.precommit]
+fmt = "cargo fmt --check --quiet"

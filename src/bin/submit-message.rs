@@ -1,13 +1,13 @@
-use std::error::Error;
-use hex::{ToHex, FromHex};
-use prost::Message;
-use snapchain::proto::rpc::snapchain_service_server::{SnapchainService};
-use snapchain::proto::message;
+use ed25519_dalek::{SecretKey, Signer, SigningKey};
+use hex::{FromHex, ToHex};
+use message::CastType::Cast;
+use message::MessageType::CastAdd;
 use message::{CastAddBody, FarcasterNetwork, MessageData};
-use message::CastType::{Cast};
-use message::MessageType::{CastAdd};
-use ed25519_dalek::{Signer, SigningKey, SecretKey};
+use prost::Message;
+use snapchain::proto::message;
 use snapchain::proto::rpc::snapchain_service_client::SnapchainServiceClient;
+use snapchain::proto::rpc::snapchain_service_server::SnapchainService;
+use std::error::Error;
 
 const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
 
@@ -72,7 +72,8 @@ async fn compose_message(
 async fn main() {
     // feel free to specify your own key
     let private_key = SigningKey::from_bytes(
-        &SecretKey::from_hex("1000000000000000000000000000000000000000000000000000000000000000").unwrap()
+        &SecretKey::from_hex("1000000000000000000000000000000000000000000000000000000000000000")
+            .unwrap(),
     );
 
     compose_message(
@@ -80,5 +81,7 @@ async fn main() {
         6833,
         "http://127.0.0.1:50061".to_string(),
         "Welcome from Rust!",
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 }
