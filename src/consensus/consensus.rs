@@ -26,7 +26,7 @@ pub use malachite_consensus::State as ConsensusState;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
-use crate::proto::snapchain::{FullProposal, ShardChunk};
+use crate::proto::snapchain::{FullProposal, ShardChunk, ShardHeader};
 
 pub type ConsensusRef<Ctx> = ActorRef<ConsensusMsg<Ctx>>;
 
@@ -142,15 +142,52 @@ impl ShardProposer {
 
 impl Proposer for ShardProposer {
     fn propose_value(&mut self, height: Height, round: Round) -> proto::full_proposal::ProposedValue {
-        todo!()
+        let previous_chunk = self.chunks.last();
+        let parent_hash = match previous_chunk {
+            Some(chunk) => chunk.hash.clone(),
+            None => vec![0, 32],
+        };
+        let shard_header = ShardHeader {
+            parent_hash,
+            timestamp: 0,
+            height: Some(ProtoHeight {
+                block_number: height.block_number,
+                shard_index: height.shard_index as u32,
+            }),
+            shard_root: vec![],
+        };
+        let hash = blake3::hash(&shard_header.encode_to_vec())
+            .as_bytes()
+            .to_vec();
+
+        let chunk = ShardChunk {
+            header: Some(shard_header),
+            hash: hash.clone(),
+            transactions: vec![],
+            votes: None,
+        };
+
+        let shard_hash = ShardHash {
+            hash: hash.clone(),
+            shard_index: height.shard_index as u32,
+        };
+        self.proposed_chunks.insert(shard_hash, chunk.clone());
+        proto::full_proposal::ProposedValue::Shard(chunk)
     }
 
     fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity {
-        todo!()
+        if let Some(proto::full_proposal::ProposedValue::Shard(chunk)) = full_proposal.proposed_value.clone() {
+            self.proposed_chunks.insert(full_proposal.value(), chunk);
+        }
+        Validity::Valid  // TODO: Validate proposer signature?
     }
 
     fn decide(&mut self, height: Height, round: Round, value: ShardHash) {
-        todo!()
+        let chunk = self.proposed_chunks.get(&value);
+        if chunk.is_some() {
+            self.chunks.push(chunk.unwrap().clone());
+            self.proposed_chunks.remove(&value);
+        }
     }
 }
 
@@ -236,11 +273,14 @@ pub struct ShardValidator {
     current_round: Round,
     current_height: Option<Height>,
     current_proposer: Option<Address>,
-    proposer: BlockProposer,
+    // This should be proposer: Box<dyn Proposer> but that doesn't implement Send which is required for the actor system.
+    // TODO: Fix once we remove the actor system
+    block_proposer: Option<BlockProposer>,
+    shard_proposer: Option<ShardProposer>,
 }
 
 impl ShardValidator {
-    pub fn new(address: Address, proposer: BlockProposer) -> ShardValidator {
+    pub fn new(address: Address, block_proposer: Option<BlockProposer>, shard_proposer: Option<ShardProposer>) -> ShardValidator {
         let shard = SnapchainShard::new(0);
         ShardValidator {
             shard_id: shard.clone(),
@@ -250,7 +290,8 @@ impl ShardValidator {
             current_round: Round::new(0),
             current_height: None,
             current_proposer: None,
-            proposer,
+            block_proposer,
+            shard_proposer,
         }
     }
 
@@ -269,14 +310,26 @@ impl ShardValidator {
     }
 
     pub fn decide(&mut self, height: Height, _: Round, value: ShardHash) {
-        self.proposer.decide(height, self.current_round, value);
+        if let Some(block_proposer) = &mut self.block_proposer {
+            block_proposer.decide(height, self.current_round, value);
+        } else if let Some(shard_proposer) = &mut self.shard_proposer {
+            shard_proposer.decide(height, self.current_round, value);
+        } else {
+            panic!("No proposer set");
+        }
         self.confirmed_height = Some(height);
         self.current_round = Round::Nil;
     }
 
     pub fn add_proposed_value(&mut self, full_proposal: FullProposal) -> ProposedValue<SnapchainValidatorContext> {
         let value = full_proposal.value();
-        let validity = self.proposer.add_proposed_value(&full_proposal);
+        let validity = if let Some(block_proposer) = &mut self.block_proposer {
+            block_proposer.add_proposed_value(&full_proposal)
+        } else if let Some(shard_proposer) = &mut self.shard_proposer {
+            shard_proposer.add_proposed_value(&full_proposal)
+        } else {
+            panic!("No proposer set");
+        };
 
         ProposedValue {
             height: full_proposal.height(),
@@ -289,7 +342,13 @@ impl ShardValidator {
     }
 
     pub fn propose_value(&mut self, height: Height, round: Round) -> FullProposal {
-        let proposed_value = self.proposer.propose_value(height, round);
+        let proposed_value = if let Some(block_proposer) = &mut self.block_proposer {
+            block_proposer.propose_value(height, round)
+        } else if let Some(shard_proposer) = &mut self.shard_proposer {
+            shard_proposer.propose_value(height, round)
+        } else {
+            panic!("No proposer set");
+        };
 
         FullProposal {
             height: Some(height.to_proto()),

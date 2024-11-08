@@ -45,7 +45,7 @@ impl NodeForTest {
         let (gossip_tx, gossip_rx) = mpsc::channel::<GossipEvent<SnapchainValidatorContext>>(100);
         let (decision_tx, decision_rx) = mpsc::channel::<Decision<SnapchainValidatorContext>>(100);
         let block_proposer = BlockProposer::new(address.clone(), shard.clone());
-        let shard_validator = ShardValidator::new(address.clone(), block_proposer);
+        let shard_validator = ShardValidator::new(address.clone(), Some(block_proposer), None);
         // Spawn consensus actor
         let consensus_actor = Consensus::spawn(
             ctx,
