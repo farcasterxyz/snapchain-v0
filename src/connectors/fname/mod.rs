@@ -1,14 +1,13 @@
-use std::sync::Arc;
-use tokio::time::{sleep, Duration};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, info, warn, error, span, Level, Span};
-
+use tokio::time::{sleep, Duration};
+use tracing::{debug, error, info, span, warn, Level, Span};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     pub start_from: u64, // for testing
-    pub stop_at: u64, // for testing
+    pub stop_at: u64,    // for testing
     pub url: String,
     pub disable: bool,
 }
@@ -41,14 +40,10 @@ struct Transfer {
     server_signature: String,
 }
 
-
 #[derive(Error, Debug)]
 enum FetchError {
     #[error("non-sequential IDs found")]
-    NonSequentialIds {
-        position: u64,
-        id: u64,
-    },
+    NonSequentialIds { position: u64, id: u64 },
 
     #[error("no new IDs found")]
     NoNewIDs,
@@ -60,13 +55,11 @@ enum FetchError {
     Reqwest(#[from] reqwest::Error),
 }
 
-
 pub struct Fetcher {
     position: u64,
     transfers: Vec<Transfer>,
     cfg: Config,
 }
-
 
 impl Fetcher {
     pub fn new(cfg: Config) -> Self {
@@ -82,10 +75,7 @@ impl Fetcher {
             let url = format!("{}?from_id={}", self.cfg.url, self.position);
             debug!(%url, "fetching transfers");
 
-            let response = reqwest::get(&url)
-                .await?
-                .json::<TransfersData>()
-                .await?;
+            let response = reqwest::get(&url).await?.json::<TransfersData>().await?;
 
             let count = response.transfers.len();
 
@@ -93,11 +83,14 @@ impl Fetcher {
                 return Ok(());
             }
 
-            info!(count, position=self.position, "found new transfers");
+            info!(count, position = self.position, "found new transfers");
 
             for t in response.transfers {
                 if t.id <= self.position {
-                    return Err(FetchError::NonSequentialIds { id: t.id, position: self.position });
+                    return Err(FetchError::NonSequentialIds {
+                        id: t.id,
+                        position: self.position,
+                    });
                 }
                 if t.id > self.cfg.stop_at {
                     return Err(FetchError::Stop);

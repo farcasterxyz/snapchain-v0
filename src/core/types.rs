@@ -1,18 +1,21 @@
 use core::fmt;
+use libp2p::identity::ed25519::Keypair;
 use malachite_common;
-use malachite_common::{Extension, NilOrVal, Round, SignedProposal, SignedProposalPart, SignedVote, Validator, VoteType, VotingPower};
+use malachite_common::{
+    Extension, NilOrVal, Round, SignedProposal, SignedProposalPart, SignedVote, Validator,
+    VoteType, VotingPower,
+};
+use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
 use std::sync::Arc;
-use libp2p::identity::ed25519::Keypair;
-use prost::Message;
 use tracing::warn;
 
 pub use crate::proto::snapchain as proto; // TODO: reconsider how this is imported
 
-use proto::ShardHash;
 use crate::proto::snapchain::full_proposal::ProposedValue;
 use crate::proto::snapchain::FullProposal;
+use proto::ShardHash;
 
 pub trait ShardId
 where
@@ -144,7 +147,6 @@ impl Height {
         }
     }
 
-
     pub const fn as_u64(&self) -> u64 {
         self.block_number
     }
@@ -213,18 +215,14 @@ impl malachite_common::Value for ShardHash {
 impl FullProposal {
     pub fn value(&self) -> ShardHash {
         match &self.proposed_value {
-            Some(ProposedValue::Block(block)) => {
-                ShardHash {
-                    shard_index: self.height().shard_index as u32,
-                    hash: block.hash.clone(),
-                }
+            Some(ProposedValue::Block(block)) => ShardHash {
+                shard_index: self.height().shard_index as u32,
+                hash: block.hash.clone(),
             },
-            Some(ProposedValue::Shard(shard_chunk)) => {
-                ShardHash {
-                    shard_index: self.height().shard_index as u32,
-                    hash: shard_chunk.hash.clone(),
-                }
-            }
+            Some(ProposedValue::Shard(shard_chunk)) => ShardHash {
+                shard_index: self.height().shard_index as u32,
+                hash: shard_chunk.hash.clone(),
+            },
             _ => {
                 panic!("Invalid proposal type");
             }

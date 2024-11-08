@@ -10,7 +10,6 @@ async fn main() {
         std::fs::create_dir("nodes").expect("Failed to create nodes directory");
     }
 
-
     for i in 1..=nodes {
         let id = i;
         let keypair = Keypair::generate();
@@ -29,7 +28,11 @@ private_key = "{secret_key}"
             "#,
         );
 
-        std::fs::write(format!("nodes/{id}/snapchain.toml", id = id), config_file_content).expect("Failed to write config file");
+        std::fs::write(
+            format!("nodes/{id}/snapchain.toml", id = id),
+            config_file_content,
+        )
+        .expect("Failed to write config file");
         // Print a message
     }
     println!("Created configs for {nodes} nodes");

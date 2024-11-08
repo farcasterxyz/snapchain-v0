@@ -1,5 +1,8 @@
 use crate::consensus::consensus::{ConsensusMsg, SystemMessage};
-use crate::core::types::{proto, Proposal, ShardId, Signature, SnapchainContext, SnapchainShard, SnapchainValidator, SnapchainValidatorContext, Vote};
+use crate::core::types::{
+    proto, Proposal, ShardId, Signature, SnapchainContext, SnapchainShard, SnapchainValidator,
+    SnapchainValidatorContext, Vote,
+};
 use futures::StreamExt;
 use libp2p::identity::ed25519::Keypair;
 use libp2p::{
@@ -14,8 +17,6 @@ use tokio::io;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, info, warn};
-
-
 
 pub enum GossipEvent<Ctx: SnapchainContext> {
     BroadcastSignedVote(SignedVote<Ctx>),

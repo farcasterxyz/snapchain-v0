@@ -3,10 +3,7 @@ use malachite_config::TimeoutConfig;
 use malachite_consensus::Params as ConsensusParams;
 use malachite_metrics::{Metrics, SharedRegistry};
 use ractor::{Actor, ActorRef};
-use tokio::{select, time};
-use tokio::sync::mpsc;
-use tracing::debug;
-use tracing_subscriber::EnvFilter;
+use snapchain::consensus::consensus::{BlockProposer, Decision, ShardValidator, TxDecision};
 use snapchain::{
     consensus::consensus::{Consensus, ConsensusMsg},
     core::types::{
@@ -15,7 +12,10 @@ use snapchain::{
     },
     network::gossip::GossipEvent,
 };
-use snapchain::consensus::consensus::{BlockProposer, Decision, ShardValidator, TxDecision};
+use tokio::sync::mpsc;
+use tokio::{select, time};
+use tracing::debug;
+use tracing_subscriber::EnvFilter;
 
 struct NodeForTest {
     shard: SnapchainShard,
@@ -28,7 +28,11 @@ struct NodeForTest {
 }
 
 impl NodeForTest {
-    pub async fn create(shard: SnapchainShard, keypair: Keypair, validator_set: SnapchainValidatorSet) -> Self {
+    pub async fn create(
+        shard: SnapchainShard,
+        keypair: Keypair,
+        validator_set: SnapchainValidatorSet,
+    ) -> Self {
         let metrics = Metrics::new();
 
         let address = Address(keypair.public().to_bytes());
@@ -56,7 +60,9 @@ impl NodeForTest {
             Some(decision_tx),
             gossip_tx.clone(),
             shard_validator,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         Self {
             shard,
             keypair,
@@ -79,7 +85,9 @@ impl NodeForTest {
 
 #[tokio::test]
 async fn test_basic_consensus() {
-    let _ = tracing_subscriber::fmt().with_env_filter(EnvFilter::new("info")).init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::new("info"))
+        .init();
 
     // Create validator keys
     let keypair1 = Keypair::generate();
@@ -101,9 +109,12 @@ async fn test_basic_consensus() {
         validator3.clone(),
     ]);
 
-    let mut node1 = NodeForTest::create(shard.clone(), keypair1.clone(), validator_set.clone()).await;
-    let mut node2 = NodeForTest::create(shard.clone(), keypair2.clone(), validator_set.clone()).await;
-    let mut node3 = NodeForTest::create(shard.clone(), keypair3.clone(), validator_set.clone()).await;
+    let mut node1 =
+        NodeForTest::create(shard.clone(), keypair1.clone(), validator_set.clone()).await;
+    let mut node2 =
+        NodeForTest::create(shard.clone(), keypair2.clone(), validator_set.clone()).await;
+    let mut node3 =
+        NodeForTest::create(shard.clone(), keypair3.clone(), validator_set.clone()).await;
 
     // Register validators
     for validator in validator_set.validators {
@@ -218,9 +229,18 @@ async fn test_basic_consensus() {
         }
     }
 
-    assert!(node1_blocks_count >= 3, "Node 1 should have confirmed blocks");
-    assert!(node2_blocks_count >= 3, "Node 2 should have confirmed blocks");
-    assert!(node3_blocks_count >= 3, "Node 3 should have confirmed blocks");
+    assert!(
+        node1_blocks_count >= 3,
+        "Node 1 should have confirmed blocks"
+    );
+    assert!(
+        node2_blocks_count >= 3,
+        "Node 2 should have confirmed blocks"
+    );
+    assert!(
+        node3_blocks_count >= 3,
+        "Node 3 should have confirmed blocks"
+    );
 
     // Clean up
     node1.stop();
