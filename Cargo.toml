@@ -29,7 +29,6 @@ malachite-config = { path = "../malachite/code/crates/config" }
 malachite-node = { path = "../malachite/code/crates/node" }
 malachite-metrics = { path = "../malachite/code/crates/metrics" }
 blake3 = "1.4.1"
-
 tracing = "0.1.40"
 thiserror = "1.0.66"
 reqwest = { version = "0.12.9", features = ["json"] }
@@ -40,9 +39,9 @@ url = "2.5.3"
 alloy-transport = "0.5.4"
 alloy-sol-types = "0.8.11"
 ed25519-dalek = "2.1.1"
-
 pre-commit = "0.5.2"
-
+rocksdb = {version="0.22.0", features=["multi-threaded-cf"]}
+walkdir = "2.5.0"
 
 [build-dependencies]
 tonic-build = "0.9.2"
