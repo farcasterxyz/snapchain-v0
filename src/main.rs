@@ -1,4 +1,13 @@
+<<<<<<< HEAD
+=======
+pub mod storage;
+use clap::Parser;
+use futures::stream::StreamExt;
+use libp2p::identity::ed25519::Keypair;
+use malachite_config::TimeoutConfig;
+>>>>>>> 67d33e4 (writing blocks to db)
 use malachite_metrics::{Metrics, SharedRegistry};
+use snapchain::consensus::consensus::Decision;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -6,14 +15,28 @@ use std::time::Duration;
 use storage::store::put_block;
 use tokio::signal::ctrl_c;
 use tokio::sync::{mpsc, Mutex};
+<<<<<<< HEAD
+=======
+use tokio::time::sleep;
+>>>>>>> 67d33e4 (writing blocks to db)
 use tokio::{select, time};
 use tonic::transport::Server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 use crate::storage::db::RocksDB;
+<<<<<<< HEAD
 use snapchain::consensus::consensus::{BlockStore, SystemMessage};
 use snapchain::core::types::proto;
+=======
+use snapchain::consensus::consensus::{
+    BlockProposer, Consensus, ConsensusMsg, ConsensusParams, ShardValidator, SystemMessage,
+};
+use snapchain::core::types::{
+    proto, Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
+    SnapchainValidatorSet,
+};
+>>>>>>> 67d33e4 (writing blocks to db)
 use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
 use snapchain::network::server::MySnapchainService;
@@ -155,6 +178,74 @@ async fn main() -> Result<(), Box<dyn Error>> {
         shutdown_tx.send(()).await.ok();
     });
 
+<<<<<<< HEAD
+=======
+    let registry = SharedRegistry::global();
+    let metrics = Metrics::register(registry);
+
+    let shard = SnapchainShard::new(0); // Single shard for now
+    let validator_address = Address(keypair.public().to_bytes());
+    let validator = SnapchainValidator::new(shard.clone(), keypair.public().clone());
+    let validator_set = SnapchainValidatorSet::new(vec![validator]);
+
+    let consensus_params = ConsensusParams {
+        start_height: Height::new(shard.shard_id(), 1),
+        initial_validator_set: validator_set,
+        address: validator_address.clone(),
+        threshold_params: Default::default(),
+    };
+
+    let ctx = SnapchainValidatorContext::new(keypair.clone());
+    let block_proposer = Arc::new(Mutex::new(BlockProposer::new(
+        validator_address.clone(),
+        shard.clone(),
+    )));
+    let shard_validator = ShardValidator::new(
+        validator_address.clone(),
+        Some(block_proposer.clone()),
+        None,
+    );
+    let consensus_actor = Consensus::spawn(
+        ctx,
+        shard,
+        consensus_params,
+        TimeoutConfig::default(),
+        metrics.clone(),
+        Some(decision_tx),
+        gossip_tx.clone(),
+        shard_validator,
+    )
+    .await
+    .unwrap();
+
+    let rocksdb = RocksDB::new(format!("{}/farcaster", app_config.rocksdb_dir.as_str()).as_str());
+    match rocksdb.open() {
+        Err(err) => {
+            error!("Error opening rocksdb {:#?}", err)
+        }
+        Ok(()) => {}
+    }
+
+    tokio::spawn(async move {
+        let block_proposer = block_proposer.clone();
+        while let Some((_height, _round, shard_hash)) = decision_rx.recv().await {
+            let block_proposer = block_proposer.lock().await;
+            let block = block_proposer.get_proposed_value(&shard_hash);
+            match block {
+                Some(block) => match put_block(&rocksdb, block) {
+                    Err(err) => {
+                        error!("Error writing block to db {:#?}", err)
+                    }
+                    Ok(()) => {}
+                },
+                None => {
+                    error!("Missing block for proposal. Shard hash: {:#?}", shard_hash);
+                }
+            }
+        }
+    });
+
+>>>>>>> 67d33e4 (writing blocks to db)
     // Create a timer for block creation
     let mut block_interval = time::interval(Duration::from_secs(2));
 

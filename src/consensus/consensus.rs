@@ -7,7 +7,7 @@ use tonic::Request;
 use async_trait::async_trait;
 use libp2p::identity::ed25519::{Keypair, SecretKey};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, warn};
 
 use malachite_common::{
@@ -180,6 +180,7 @@ pub trait Proposer {
     ) -> FullProposal;
     // Receive a block/shard chunk proposed by another validator and return whether it is valid
     fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity;
+
     // Consensus has confirmed the block/shard_chunk, apply it to the local state
     async fn decide(&mut self, height: Height, round: Round, value: ShardHash);
 }
@@ -581,7 +582,7 @@ pub struct ShardValidator {
     current_proposer: Option<Address>,
     // This should be proposer: Box<dyn Proposer> but that doesn't implement Send which is required for the actor system.
     // TODO: Fix once we remove the actor system
-    block_proposer: Option<BlockProposer>,
+    block_proposer: Option<Arc<Mutex<BlockProposer>>>,
     shard_proposer: Option<ShardProposer>,
     started: bool,
 }
@@ -664,6 +665,7 @@ impl ShardValidator {
     ) -> ProposedValue<SnapchainValidatorContext> {
         let value = full_proposal.shard_hash();
         let validity = if let Some(block_proposer) = &mut self.block_proposer {
+            let mut block_proposer = block_proposer.lock().await;
             block_proposer.add_proposed_value(&full_proposal)
         } else if let Some(shard_proposer) = &mut self.shard_proposer {
             shard_proposer.add_proposed_value(&full_proposal)

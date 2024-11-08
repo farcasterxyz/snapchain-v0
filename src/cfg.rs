@@ -17,6 +17,7 @@ pub struct Config {
     pub consensus: consensus::consensus::Config,
     pub gossip: network::gossip::Config,
     pub rpc_address: String,
+    pub rocksdb_dir: String,
 }
 
 impl Default for Config {
@@ -29,6 +30,7 @@ impl Default for Config {
             consensus: consensus::consensus::Config::default(),
             gossip: network::gossip::Config::default(),
             rpc_address: "0.0.0.0:3383".to_string(),
+            rocksdb_dir: ".rocks".to_string(),
         }
     }
 }
