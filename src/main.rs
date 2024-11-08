@@ -1,5 +1,6 @@
 pub mod storage;
 use clap::Parser;
+use snapchain::consensus::consensus::Decision;
 use futures::stream::StreamExt;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
@@ -8,6 +9,7 @@ use std::error::Error;
 use std::io;
 use std::net::SocketAddr;
 use std::time::Duration;
+use storage::store::put_block;
 use tokio::signal::ctrl_c;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
@@ -27,6 +29,7 @@ use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
 use snapchain::network::server::MySnapchainService;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
+use crate::storage::db::RocksDB;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -74,6 +77,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     );
 
     let (system_tx, mut system_rx) = mpsc::channel::<SystemMessage>(100);
+
+    let (decision_tx, mut decision_rx) = mpsc::channel::<Decision<SnapchainValidatorContext>>(100);
 
     let gossip_result = SnapchainGossip::create(keypair.clone(), addr, system_tx.clone());
     if let Err(e) = gossip_result {
@@ -156,12 +161,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
         consensus_params,
         TimeoutConfig::default(),
         metrics.clone(),
-        None,
+        Some(decision_tx),
         gossip_tx.clone(),
         shard_validator,
     )
     .await
     .unwrap();
+
+    let rocksdb = RocksDB::new("./rocks");
+    tokio::spawn(async move {
+        while let Some((height, round, shard_hash)) = decision_rx.recv().await {
+            let block = shard
+            match put_block(&rocksdb, block) {
+                Err(err) => {
+                    error!("Error writing block to db {:#?}", err)
+                }
+                Ok(()) => {}
+            }
+        }
+    });
 
     // Create a timer for block creation
     let mut block_interval = time::interval(Duration::from_secs(2));
