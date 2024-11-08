@@ -1,5 +1,6 @@
 use malachite_common::{ValidatorSet, Validity};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -28,6 +29,7 @@ pub use malachite_consensus::Params as ConsensusParams;
 pub use malachite_consensus::State as ConsensusState;
 use prost::Message;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tokio::{select, time};
 
@@ -336,6 +338,10 @@ impl BlockProposer {
         }
         confirmed_shard_chunks
     }
+
+    pub fn get_proposed_value(&self, shard_hash: &ShardHash) -> Option<&Block> {
+        self.proposed_blocks.get(shard_hash)
+    }
 }
 
 impl Proposer for BlockProposer {
@@ -423,7 +429,7 @@ pub struct ShardValidator {
     current_proposer: Option<Address>,
     // This should be proposer: Box<dyn Proposer> but that doesn't implement Send which is required for the actor system.
     // TODO: Fix once we remove the actor system
-    block_proposer: Option<BlockProposer>,
+    block_proposer: Option<Arc<Mutex<BlockProposer>>>,
     shard_proposer: Option<ShardProposer>,
 }
 
@@ -431,7 +437,7 @@ impl ShardValidator {
     pub fn new(
         address: Address,
         shard: SnapchainShard,
-        block_proposer: Option<BlockProposer>,
+        block_proposer: Option<Arc<Mutex<BlockProposer>>>,
         shard_proposer: Option<ShardProposer>,
     ) -> ShardValidator {
         ShardValidator {
@@ -463,6 +469,7 @@ impl ShardValidator {
 
     pub async fn decide(&mut self, height: Height, _: Round, value: ShardHash) {
         if let Some(block_proposer) = &mut self.block_proposer {
+            let mut block_proposer = block_proposer.lock().await;
             block_proposer
                 .decide(height, self.current_round, value)
                 .await;
@@ -477,12 +484,13 @@ impl ShardValidator {
         self.current_round = Round::Nil;
     }
 
-    pub fn add_proposed_value(
+    pub async fn add_proposed_value(
         &mut self,
         full_proposal: FullProposal,
     ) -> ProposedValue<SnapchainValidatorContext> {
         let value = full_proposal.shard_hash();
         let validity = if let Some(block_proposer) = &mut self.block_proposer {
+            let mut block_proposer = block_proposer.lock().await;
             block_proposer.add_proposed_value(&full_proposal)
         } else if let Some(shard_proposer) = &mut self.shard_proposer {
             shard_proposer.add_proposed_value(&full_proposal)
@@ -507,6 +515,7 @@ impl ShardValidator {
         timeout: Duration,
     ) -> FullProposal {
         if let Some(block_proposer) = &mut self.block_proposer {
+            let mut block_proposer = block_proposer.lock().await;
             block_proposer.propose_value(height, round, timeout).await
         } else if let Some(shard_proposer) = &mut self.shard_proposer {
             shard_proposer.propose_value(height, round, timeout).await
@@ -715,7 +724,10 @@ impl Consensus {
                     "Received proposed value: {:?} at {:?}",
                     height, self.params.address
                 );
-                let proposed_value = state.shard_validator.add_proposed_value(full_proposal);
+                let proposed_value = state
+                    .shard_validator
+                    .add_proposed_value(full_proposal)
+                    .await;
 
                 let result = self
                     .process_input(

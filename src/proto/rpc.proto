@@ -2,7 +2,17 @@ syntax = "proto3";
 package rpc;
 
 import "message.proto";
+import "blocks.proto";
+
+message BlocksRequest {
+  uint32 shard_index = 1;
+}
+
+message BlocksResponse {
+  repeated snapchain.Block blocks = 1;
+}
 
 service SnapchainService {
   rpc SubmitMessage(message.Message) returns (message.Message);
-}
+  rpc GetBlocks(BlocksRequest) returns (BlocksResponse);
+};

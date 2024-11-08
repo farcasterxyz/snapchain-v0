@@ -1,9 +1,11 @@
 use malachite_metrics::{Metrics, SharedRegistry};
+use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::ctrl_c;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tokio::{select, time};
 use tonic::transport::Server;
 use tracing::{error, info};
@@ -103,6 +105,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
+    let blocks_by_shard = Arc::new(Mutex::new(HashMap::new()));
+
     tokio::spawn(async move {
         let service = MySnapchainService::default();
 
@@ -131,6 +135,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
         gossip_tx.clone(),
     )
     .await;
+
+    tokio::spawn(async move {
+        let block_proposer = block_proposer.clone();
+        while let Some((_height, _round, shard_hash)) = decision_rx.recv().await {
+            let block_proposer = block_proposer.lock().await;
+            let block = block_proposer.get_proposed_value(&shard_hash);
+            match block {
+                Some(block) => match put_block(&rocksdb, block) {
+                    Err(err) => {
+                        error!("Error writing block to db {:#?}", err)
+                    }
+                    Ok(()) => {}
+                },
+                None => {
+                    error!("Missing block for proposal. Shard hash: {:#?}", shard_hash);
+                }
+            }
+        }
+    });
 
     // Create a timer for block creation
     let mut block_interval = time::interval(Duration::from_secs(2));
