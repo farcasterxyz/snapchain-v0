@@ -3,6 +3,7 @@ use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use storage::store::put_block;
 use tokio::signal::ctrl_c;
 use tokio::sync::{mpsc, Mutex};
 use tokio::{select, time};
@@ -10,6 +11,7 @@ use tonic::transport::Server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
+use crate::storage::db::RocksDB;
 use snapchain::consensus::consensus::{BlockStore, SystemMessage};
 use snapchain::core::types::proto;
 use snapchain::network::gossip::GossipEvent;
@@ -63,6 +65,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let gossip_result =
         SnapchainGossip::create(keypair.clone(), app_config.gossip, system_tx.clone());
+
     if let Err(e) = gossip_result {
         error!(error = ?e, "Failed to create SnapchainGossip");
         return Ok(());
