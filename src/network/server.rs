@@ -33,7 +33,24 @@ impl SnapchainService for MySnapchainService {
             None => vec![],
             Some(blocks) => blocks.clone(),
         };
-        let response = Response::new(BlocksResponse { blocks });
+        let start_block_number = request.get_ref().start_block_number;
+        let stop_block_number = request.get_ref().stop_block_number;
+        let blocks_in_range = blocks.into_iter().filter(|block| match &block.header {
+            None => false,
+            Some(header) => match &header.height {
+                None => false,
+                Some(height) => match stop_block_number {
+                    None => height.block_number >= start_block_number,
+                    Some(stop_block_number) => {
+                        height.block_number >= start_block_number
+                            && height.block_number <= stop_block_number
+                    }
+                },
+            },
+        });
+        let response = Response::new(BlocksResponse {
+            blocks: blocks_in_range.collect(),
+        });
         Ok(response)
     }
 }

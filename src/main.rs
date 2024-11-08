@@ -1,5 +1,6 @@
 use malachite_metrics::{Metrics, SharedRegistry};
 use snapchain::consensus::consensus::Decision;
+use snapchain::proto::snapchain::ConsensusMessage;
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
