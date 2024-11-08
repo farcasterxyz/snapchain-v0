@@ -20,7 +20,7 @@ use tracing::{debug, info, warn};
 pub enum GossipEvent<Ctx: SnapchainContext> {
     BroadcastSignedVote(SignedVote<Ctx>),
     BroadcastSignedProposal(SignedProposal<Ctx>),
-    BroadcastBlock(proto::BlockProposal),
+    BroadcastFullProposal(proto::FullProposal),
     RegisterValidator(proto::RegisterValidator),
 }
 
@@ -136,17 +136,14 @@ impl SnapchainGossip {
                             match proto::GossipMessage::decode(&message.data[..]) {
                                 Ok(gossip_message) => {
                                     match gossip_message.message {
-                                        Some(proto::gossip_message::Message::BlockProposal(block_poposal)) => {
-                                            let height = block_poposal.clone().height.unwrap().block_number;
+                                        Some(proto::gossip_message::Message::FullProposal(full_proposal)) => {
+                                            let height = full_proposal.height();
                                             debug!("Received block with height {} from peer: {}", height, peer_id);
-                                            let consensus_message = ConsensusMsg::ReceivedBlockProposal(block_poposal);
+                                            let consensus_message = ConsensusMsg::ReceivedFullProposal(full_proposal);
                                             let res = self.system_tx.send(SystemMessage::Consensus(consensus_message)).await;
                                             if let Err(e) = res {
                                                 warn!("Failed to send system block message: {:?}", e);
                                             }
-                                        },
-                                        Some(proto::gossip_message::Message::Shard(shard)) => {
-                                            debug!("Received shard with height {} from peer: {}", shard.header.unwrap().height.unwrap().block_number, peer_id);
                                         },
                                         Some(proto::gossip_message::Message::Validator(validator)) => {
                                             debug!("Received validator registration from peer: {}", peer_id);
@@ -228,9 +225,9 @@ impl SnapchainGossip {
                             let encoded_message = gossip_message.encode_to_vec();
                             self.publish(encoded_message);
                         }
-                        Some(GossipEvent::BroadcastBlock(block_proposal)) => {
+                        Some(GossipEvent::BroadcastFullProposal(full_proposal)) => {
                             let gossip_message = proto::GossipMessage {
-                                message: Some(proto::gossip_message::Message::BlockProposal(block_proposal)),
+                                message: Some(proto::gossip_message::Message::FullProposal(full_proposal)),
                             };
                             let encoded_message = gossip_message.encode_to_vec();
                             self.publish(encoded_message);
