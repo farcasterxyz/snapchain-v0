@@ -1,9 +1,6 @@
 use core::fmt;
 use malachite_common;
-use malachite_common::{
-    Extension, NilOrVal, Round, SignedProposal, SignedProposalPart, SignedVote, VoteType,
-    VotingPower,
-};
+use malachite_common::{Extension, NilOrVal, Round, SignedProposal, SignedProposalPart, SignedVote, Validator, VoteType, VotingPower};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
 use std::sync::Arc;
@@ -641,7 +638,7 @@ impl malachite_common::ValidatorSet<SnapchainValidatorContext> for SnapchainVali
     }
 
     fn total_voting_power(&self) -> VotingPower {
-        1
+        self.validators.iter().map(|v| v.voting_power()).sum()
     }
 
     fn get_by_address(&self, address: &Address) -> Option<&SnapchainValidator> {
