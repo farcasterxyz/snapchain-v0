@@ -1,3 +1,5 @@
+use crate::consensus::consensus::BlockProposer;
+use crate::core::types::{ShardId, SnapchainShard};
 use crate::proto::message::Message;
 use crate::proto::rpc::snapchain_service_server::{SnapchainService, SnapchainServiceServer};
 use crate::proto::rpc::{BlocksRequest, BlocksResponse};
@@ -10,7 +12,15 @@ use tracing::info;
 
 #[derive(Default)]
 pub struct MySnapchainService {
-    blocks_by_shard: Arc<Mutex<HashMap<u32, Vec<Block>>>>,
+    block_proposers: HashMap<SnapchainShard, Arc<Mutex<BlockProposer>>>,
+}
+
+impl MySnapchainService {
+    pub fn new(
+        block_proposers: HashMap<SnapchainShard, Arc<Mutex<BlockProposer>>>,
+    ) -> MySnapchainService {
+        MySnapchainService { block_proposers }
+    }
 }
 
 #[tonic::async_trait]
@@ -27,11 +37,15 @@ impl SnapchainService for MySnapchainService {
         &self,
         request: Request<BlocksRequest>,
     ) -> Result<Response<BlocksResponse>, Status> {
-        let shard_id = request.get_ref().shard_index;
-        let blocks_by_shard = self.blocks_by_shard.lock().await;
-        let blocks = match blocks_by_shard.get(&shard_id) {
+        let shard_id = request.get_ref().shard_id;
+        let shard = SnapchainShard::new(shard_id as u8);
+        let block_proposer = self.block_proposers.get(&shard);
+        let blocks = match block_proposer {
             None => vec![],
-            Some(blocks) => blocks.clone(),
+            Some(block_proposer) => {
+                let block_proposer = block_proposer.lock().await;
+                block_proposer.get_blocks().clone()
+            }
         };
         let start_block_number = request.get_ref().start_block_number;
         let stop_block_number = request.get_ref().stop_block_number;

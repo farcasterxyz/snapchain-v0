@@ -25,7 +25,7 @@ where
     fn shard_id(&self) -> u32;
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
 pub struct SnapchainShard(u32);
 
 impl ShardId for SnapchainShard {

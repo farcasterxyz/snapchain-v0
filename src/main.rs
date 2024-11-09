@@ -1,6 +1,8 @@
 use malachite_metrics::{Metrics, SharedRegistry};
+use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::ctrl_c;
 use tokio::sync::{mpsc, Mutex};
@@ -103,8 +105,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
+    let registry = SharedRegistry::global();
+    // Use the new non-global metrics registry when we upgrade to newer version of malachite
+    let _ = Metrics::register(registry);
+
+    let node = SnapchainNode::create(
+        keypair.clone(),
+        app_config.consensus.clone(),
+        Some(app_config.rpc_address.clone()),
+        gossip_tx,
+    );
+
     tokio::spawn(async move {
-        let service = MySnapchainService::default();
+        let mut block_proposers = HashMap::new();
+        block_proposers.insert(shard, block_proposer.clone());
+        let service = MySnapchainService::new(block_proposers);
 
         let resp = Server::builder()
             .add_service(SnapchainServiceServer::new(service))
@@ -119,17 +134,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         shutdown_tx.send(()).await.ok();
     });
-
-    let registry = SharedRegistry::global();
-    // Use the new non-global metrics registry when we upgrade to newer version of malachite
-    let _ = Metrics::register(registry);
-
-    let node = SnapchainNode::create(
-        keypair.clone(),
-        app_config.consensus.clone(),
-        Some(app_config.rpc_address.clone()),
-        gossip_tx,
-    );
 
     // Create a timer for block creation
     let mut block_interval = time::interval(Duration::from_secs(2));
