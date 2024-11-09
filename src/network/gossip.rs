@@ -154,7 +154,8 @@ impl SnapchainGossip {
                                                     warn!("Failed to decode public key from peer: {}", peer_id);
                                                     continue;
                                                 }
-                                                let validator = SnapchainValidator::new(SnapchainShard::new(0), public_key.unwrap());
+                                                let rpc_address = validator.rpc_address;
+                                                let validator = SnapchainValidator::new(SnapchainShard::new(0), public_key.unwrap(), Some(rpc_address));
                                                 let consensus_message = ConsensusMsg::RegisterValidator(validator);
                                                 let res = self.system_tx.send(SystemMessage::Consensus(consensus_message)).await;
                                                 if let Err(e) = res {
