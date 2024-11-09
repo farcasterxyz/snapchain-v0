@@ -8,7 +8,6 @@ use malachite_common::{
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
-use std::net::IpAddr;
 use std::sync::Arc;
 use tracing::warn;
 
