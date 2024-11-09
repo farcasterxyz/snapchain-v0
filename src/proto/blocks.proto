@@ -7,6 +7,7 @@ message Validator {
   uint64 fid = 1;
   bytes signer = 2;
   string rpc_address = 3;
+  uint32 shard_index = 4;
 }
 
 message ValidatorSet {

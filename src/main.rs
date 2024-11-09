@@ -126,7 +126,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let node = SnapchainNode::create(
         keypair.clone(),
-        app_config.consensus,
+        app_config.consensus.clone(),
         Some(app_config.rpc_address.clone()),
         gossip_tx.clone(),
     )
@@ -154,16 +154,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 tick_count += 1;
                 // Every 5 ticks, re-register the validators so that new nodes can discover each other
                 if tick_count % 5 == 0 {
-                    let register_validator = proto::RegisterValidator {
-                        validator: Some(proto::Validator {
-                            signer: keypair.public().to_bytes().to_vec(),
-                            fid: 0,
-                            rpc_address: app_config.rpc_address.clone()
-                        }),
-                        nonce: tick_count as u64,   // Need the nonce to avoid the gossip duplicate message check
-                    };
-                    info!("Registering validator with nonce: {}", register_validator.nonce);
-                    gossip_tx.send(GossipEvent::RegisterValidator(register_validator)).await?;
+                    let nonce = tick_count as u64;
+                    for i in 0..=app_config.consensus.num_shards() {
+                        let register_validator = proto::RegisterValidator {
+                            validator: Some(proto::Validator {
+                                signer: keypair.public().to_bytes().to_vec(),
+                                fid: 0,
+                                rpc_address: app_config.rpc_address.clone(),
+                                shard_index: i,
+                            }),
+                            nonce,   // Need the nonce to avoid the gossip duplicate message check
+                        };
+                        gossip_tx.send(GossipEvent::RegisterValidator(register_validator)).await?;
+                    }
+                    info!("Registering validator with nonce: {}", nonce);
+
                 }
             }
             Some(msg) = system_rx.recv() => {

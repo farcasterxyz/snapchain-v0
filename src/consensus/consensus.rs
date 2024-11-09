@@ -48,7 +48,7 @@ impl<Ctx: Context + SnapchainContext> From<TimeoutElapsed<Timeout>> for Consensu
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub private_key: String,
     pub shard_ids: String,
@@ -66,6 +66,10 @@ impl Config {
             .split(',')
             .map(|s| s.parse().unwrap())
             .collect()
+    }
+
+    pub fn num_shards(&self) -> u32 {
+        self.shard_ids.len() as u32
     }
 }
 

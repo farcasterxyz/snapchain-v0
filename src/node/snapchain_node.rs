@@ -13,6 +13,7 @@ use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::BTreeMap;
 use tokio::sync::mpsc;
+use tracing::warn;
 
 const MAX_SHARDS: u32 = 3;
 
@@ -31,7 +32,6 @@ impl SnapchainNode {
         let validator_address = Address(keypair.public().to_bytes());
 
         let mut consensus_actors = BTreeMap::new();
-        let num_shards = config.shard_ids().len() as u32;
 
         let (shard_decision_tx, shard_decision_rx) = mpsc::channel::<Decision>(100);
         let (block_decision_tx, block_decision_rx) = mpsc::channel::<Decision>(100);
@@ -106,7 +106,7 @@ impl SnapchainNode {
             validator_address.clone(),
             block_shard.clone(),
             shard_decision_rx,
-            num_shards,
+            config.num_shards(),
             Some(block_decision_tx),
         );
         let block_validator = ShardValidator::new(
@@ -146,7 +146,7 @@ impl SnapchainNode {
         for (shard, actor) in self.consensus_actors.iter() {
             let result = actor.cast(ConsensusMsg::StartHeight(Height::new(*shard, block_number)));
             if let Err(e) = result {
-                panic!("Failed to start height: {:?}", e);
+                warn!("Failed to start height: {:?}", e);
             }
         }
     }
@@ -156,10 +156,10 @@ impl SnapchainNode {
         if let Some(actor) = self.consensus_actors.get(&shard_id) {
             let result = actor.cast(msg);
             if let Err(e) = result {
-                panic!("Failed to forward message to actor: {:?}", e);
+                warn!("Failed to forward message to actor: {:?}", e);
             }
         } else {
-            panic!("No actor found for shard, could not forward message");
+            warn!("No actor found for shard, could not forward message");
         }
     }
 }
