@@ -61,6 +61,10 @@ impl Address {
         bytes.copy_from_slice(&vec);
         Self(bytes)
     }
+
+    pub fn prefix(&self) -> String {
+        format!("0x{}", &self.to_hex()[0..4])
+    }
 }
 
 impl fmt::Display for Address {

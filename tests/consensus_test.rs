@@ -56,7 +56,7 @@ impl NodeForTest {
     }
 
     pub fn register_keypair(&self, keypair: Keypair) {
-        for i in 1..=self.num_shards {
+        for i in 0..=self.num_shards {
             self.cast(ConsensusMsg::RegisterValidator(SnapchainValidator::new(
                 SnapchainShard::new(i),
                 keypair.public().clone(),
@@ -121,7 +121,7 @@ async fn test_basic_consensus() {
     // Wait for gossip messages with a timeout
     let timeout = tokio::time::Duration::from_secs(5);
     let start = tokio::time::Instant::now();
-    let mut timer = time::interval(tokio::time::Duration::from_secs(1));
+    let mut timer = time::interval(tokio::time::Duration::from_millis(10));
 
     // create a lambda function to assert on the proposal
     let assert_valid_block = |decision: &Decision| match decision {
@@ -216,6 +216,11 @@ async fn test_basic_consensus() {
                         node2.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));;
                     }
                     _ => {}}
+            }
+            _ = timer.tick() => {
+                if start.elapsed() > timeout {
+                    break;
+                }
             }
         }
     }

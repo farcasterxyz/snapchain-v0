@@ -13,7 +13,7 @@ use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::BTreeMap;
 use tokio::sync::mpsc;
-use tracing::warn;
+use tracing::{info, warn};
 
 const MAX_SHARDS: u32 = 3;
 
@@ -64,11 +64,15 @@ impl SnapchainNode {
                 shard.clone(),
                 Some(shard_decision_tx.clone()),
             );
-            let shard_validator =
-                ShardValidator::new(validator_address.clone(), None, Some(shard_proposer));
+            let shard_validator = ShardValidator::new(
+                validator_address.clone(),
+                shard.clone(),
+                None,
+                Some(shard_proposer),
+            );
             let consensus_actor = Consensus::spawn(
                 ctx,
-                shard,
+                shard.clone(),
                 shard_consensus_params,
                 TimeoutConfig::default(),
                 Metrics::new(),
@@ -106,8 +110,12 @@ impl SnapchainNode {
             num_shards,
             Some(block_decision_tx),
         );
-        let block_validator =
-            ShardValidator::new(validator_address.clone(), Some(block_proposer), None);
+        let block_validator = ShardValidator::new(
+            validator_address.clone(),
+            block_shard.clone(),
+            Some(block_proposer),
+            None,
+        );
         let ctx = SnapchainValidatorContext::new(keypair.clone());
         let block_consensus_actor = Consensus::spawn(
             ctx,

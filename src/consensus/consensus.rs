@@ -194,7 +194,7 @@ impl Proposer for ShardProposer {
         timeout: Duration,
     ) -> FullProposal {
         // Sleep before proposing the value so we don't produce blocks too fast
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // tokio::time::sleep(Duration::from_millis(100)).await;
 
         let previous_chunk = self.chunks.last();
         let parent_hash = match previous_chunk {
@@ -206,7 +206,7 @@ impl Proposer for ShardProposer {
             timestamp: 0,
             height: Some(ProtoHeight {
                 block_number: height.block_number,
-                shard_index: height.shard_index as u32,
+                shard_index: height.shard_index,
             }),
             shard_root: vec![],
         };
@@ -426,10 +426,10 @@ pub struct ShardValidator {
 impl ShardValidator {
     pub fn new(
         address: Address,
+        shard: SnapchainShard,
         block_proposer: Option<BlockProposer>,
         shard_proposer: Option<ShardProposer>,
     ) -> ShardValidator {
-        let shard = SnapchainShard::new(0);
         ShardValidator {
             shard_id: shard.clone(),
             address: address.clone(),
@@ -537,6 +537,7 @@ pub struct State<Ctx: SnapchainContext> {
     /// The set of validators (by address) we are connected to.
     shard_validator: ShardValidator,
     gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
+    name: String,
 }
 
 impl Consensus {
@@ -678,7 +679,7 @@ impl Consensus {
 
                 self.metrics.connected_peers.inc();
 
-                if connected_peers == 3 {
+                if connected_peers == 4 {
                     info!("Enough peers ({connected_peers}) connected to start consensus");
 
                     let height = state.consensus.driver.height();
@@ -908,12 +909,23 @@ impl Actor for Consensus {
         myself: ActorRef<ConsensusMsg<SnapchainValidatorContext>>,
         args: Self::Arguments,
     ) -> Result<State<SnapchainValidatorContext>, ActorProcessingErr> {
+        let address_prefix = self.params.address.prefix();
+        let name = if args.1.shard_id.shard_id() == 0 {
+            format!("{:} Block", address_prefix)
+        } else {
+            format!(
+                "{:} Shard {:}",
+                address_prefix,
+                shard_id = args.1.shard_id.shard_id()
+            )
+        };
         Ok(State {
             timers: Timers::new(myself),
             timeouts: Timeouts::new(self.timeout_config),
             consensus: ConsensusState::new(self.ctx.clone(), self.params.clone()),
             shard_validator: args.1,
             gossip_tx: args.0,
+            name,
         })
     }
 
@@ -946,6 +958,8 @@ impl Actor for Consensus {
         msg: ConsensusMsg<SnapchainValidatorContext>,
         state: &mut State<SnapchainValidatorContext>,
     ) -> Result<(), ActorProcessingErr> {
+        let span = tracing::info_span!("node", name = %state.name);
+        let _enter = span.enter();
         self.handle_msg(myself, state, msg).await
     }
 
