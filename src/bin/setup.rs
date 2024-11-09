@@ -18,7 +18,7 @@ async fn main() {
             std::fs::create_dir(format!("nodes/{id}")).expect("Failed to create node directory");
         }
         let secret_key = hex::encode(SecretKey::generate());
-        let rpc_port = 2283 + i;
+        let rpc_port = 3383 + i;
 
         let config_file_content = format!(
             r#"
