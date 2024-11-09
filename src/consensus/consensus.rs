@@ -494,6 +494,7 @@ impl Proposer for BlockProposer {
         if let Some(proto::full_proposal::ProposedValue::Block(_block)) =
             full_proposal.proposed_value.clone()
         {
+            // TODO(aditi): Handle error
             self.sync_missing_blocks(validator_set, &block).await;
             self.proposed_blocks
                 .insert(full_proposal.shard_hash(), full_proposal.clone());
