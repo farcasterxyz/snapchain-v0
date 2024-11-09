@@ -26,7 +26,7 @@ impl Default for Config {
             fnames: connectors::fname::Config::default(),
             onchain_events: connectors::onchain_events::Config::default(),
             consensus: consensus::consensus::Config::default(),
-            rpc_address: "0.0.0.0:2283".to_string(),
+            rpc_address: "0.0.0.0:3383".to_string(),
         }
     }
 }
