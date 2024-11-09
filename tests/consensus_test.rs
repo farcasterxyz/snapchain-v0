@@ -24,7 +24,7 @@ struct NodeForTest {
     gossip_rx: mpsc::Receiver<GossipEvent<SnapchainValidatorContext>>,
     gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
     consensus_actor: ActorRef<ConsensusMsg<SnapchainValidatorContext>>,
-    decision_rx: mpsc::Receiver<Decision<SnapchainValidatorContext>>,
+    decision_rx: mpsc::Receiver<Decision>,
 }
 
 impl NodeForTest {
@@ -47,8 +47,9 @@ impl NodeForTest {
         let ctx = SnapchainValidatorContext::new(keypair.clone());
 
         let (gossip_tx, gossip_rx) = mpsc::channel::<GossipEvent<SnapchainValidatorContext>>(100);
-        let (decision_tx, decision_rx) = mpsc::channel::<Decision<SnapchainValidatorContext>>(100);
-        let block_proposer = BlockProposer::new(address.clone(), shard.clone());
+        let (decision_tx, decision_rx) = mpsc::channel::<Decision>(100);
+        let block_proposer =
+            BlockProposer::new(address.clone(), shard.clone(), Some(decision_tx.clone()));
         let shard_validator = ShardValidator::new(address.clone(), Some(block_proposer), None);
         // Spawn consensus actor
         let consensus_actor = Consensus::spawn(
@@ -57,7 +58,6 @@ impl NodeForTest {
             consensus_params,
             TimeoutConfig::default(),
             metrics.clone(),
-            Some(decision_tx),
             gossip_tx.clone(),
             shard_validator,
         )
@@ -144,24 +144,24 @@ async fn test_basic_consensus() {
         select! {
             Some(decision) = node1.decision_rx.recv() => {
                 match decision {
-                    (height, round, value) => {
-                        debug!("Node 1: Decided block at height {}, round {}, value: {}", height, round, value);
+                    proposal => {
+                        debug!("Node 1: Decided block at height {}, round {}, value: {}", proposal.height(), proposal.round(), proposal.shard_hash());
                         node1_blocks_count += 1;
                     }
                 }
             }
             Some(decision) = node2.decision_rx.recv() => {
                 match decision {
-                    (height, round, value) => {
-                        debug!("Node 2: Decided block at height {}, round {}, value: {}", height, round, value);
+                    proposal => {
+                        debug!("Node 2: Decided block at height {}, round {}, value: {}", proposal.height(), proposal.round(), proposal.shard_hash());
                         node2_blocks_count += 1;
                     }
                 }
             }
             Some(decision) = node3.decision_rx.recv() => {
                 match decision {
-                    (height, round, value) => {
-                        debug!("Node 3: Decided block at height {}, round {}, value: {}", height, round, value);
+                    proposal => {
+                        debug!("Node 3: Decided block at height {}, round {}, value: {}", proposal.height(), proposal.round(), proposal.shard_hash());
                         node3_blocks_count += 1;
                     }
                 }

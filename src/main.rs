@@ -150,7 +150,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let ctx = SnapchainValidatorContext::new(keypair.clone());
-    let block_proposer = BlockProposer::new(validator_address.clone(), shard.clone());
+    let block_proposer = BlockProposer::new(validator_address.clone(), shard.clone(), None);
     let shard_validator =
         ShardValidator::new(validator_address.clone(), Some(block_proposer), None);
     let consensus_actor = Consensus::spawn(
@@ -159,7 +159,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         consensus_params,
         TimeoutConfig::default(),
         metrics.clone(),
-        None,
         gossip_tx.clone(),
         shard_validator,
     )
