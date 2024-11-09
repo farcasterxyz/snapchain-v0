@@ -67,7 +67,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     );
 
     let (system_tx, mut system_rx) = mpsc::channel::<SystemMessage>(100);
-    let (decision_tx, mut decision_rx) = mpsc::channel::<Decision<SnapchainValidatorContext>>(100);
 
     let gossip_result = SnapchainGossip::create(keypair.clone(), addr, system_tx.clone());
     if let Err(e) = gossip_result {
@@ -108,8 +107,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
-    let blocks_by_shard = Arc::new(Mutex::new(HashMap::new()));
-
     tokio::spawn(async move {
         let service = MySnapchainService::default();
 
@@ -131,6 +128,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Use the new non-global metrics registry when we upgrade to newer version of malachite
     let _ = Metrics::register(registry);
 
+<<<<<<< HEAD
     let node = SnapchainNode::create(
         keypair.clone(),
         app_config.consensus.clone(),
@@ -140,9 +138,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     );
     let validator_set = SnapchainValidatorSet::new(vec![validator]);
 
+=======
+    let shard = SnapchainShard::new(0); // Single shard for now
+    let validator_address = Address(keypair.public().to_bytes());
+    let validator = SnapchainValidator::new(shard.clone(), keypair.public().clone(), None);
+    let initial_validator_set = SnapchainValidatorSet::new(vec![validator]);
+>>>>>>> 13eb989 (request missing messages)
     let consensus_params = ConsensusParams {
         start_height: Height::new(shard.shard_id(), 1),
-        initial_validator_set: validator_set,
+        initial_validator_set,
         address: validator_address.clone(),
         threshold_params: Default::default(),
     };
@@ -157,63 +161,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Some(block_proposer.clone()),
         None,
     );
+
     let consensus_actor = Consensus::spawn(
         ctx,
         shard,
         consensus_params,
         TimeoutConfig::default(),
         metrics.clone(),
+<<<<<<< HEAD
         Some(decision_tx.clone()),
 >>>>>>> 5430457 (wire block proposals)
+=======
+        None,
+>>>>>>> 13eb989 (request missing messages)
         gossip_tx.clone(),
     )
     .await;
-
-    tokio::spawn(async move {
-        let block_proposer = block_proposer.clone();
-        while let Some((decision_height, _round, shard_hash)) = decision_rx.recv().await {
-            let block_proposer = block_proposer.lock().await;
-            let block = block_proposer.get_proposed_value(&shard_hash);
-            let mut blocks_by_shard = blocks_by_shard.lock().await;
-            match block {
-                Some(block) => {
-                    // TODO(aditi): Substitute out with persistence
-                    let shard_index = shard_hash.shard_index;
-                    // Maintain sorted lists of blocks in blocks_by_shard
-                    match blocks_by_shard.get_mut(&shard_index) {
-                        None => {
-                            blocks_by_shard.insert(shard_index, vec![block.clone()]);
-                        }
-                        Some(blocks) => match blocks.binary_search_by(|block| match &block.header {
-                            None =>
-                            // This is unexpected, keep at end of list
-                            {
-                                std::cmp::Ordering::Greater
-                            }
-                            Some(header) => match &header.height {
-                                None =>
-                                // This is unexpected, keep at end of list
-                                {
-                                    std::cmp::Ordering::Greater
-                                }
-                                Some(height) => {
-                                    height.block_number.cmp(&decision_height.block_number)
-                                }
-                            },
-                        }) {
-                            Err(pos) => {
-                                blocks.insert(pos, block.clone());
-                            }
-                            Ok(_) => {}
-                        },
-                    }
-                }
-                None => {
-                    error!("Missing block for proposal. Shard hash: {:#?}", shard_hash);
-                }
-            }
-        }
-    });
 
     // Create a timer for block creation
     let mut block_interval = time::interval(Duration::from_secs(2));

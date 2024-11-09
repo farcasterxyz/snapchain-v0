@@ -2,6 +2,7 @@ use malachite_common::{ValidatorSet, Validity};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
+use tonic::Request;
 
 use async_trait::async_trait;
 use libp2p::identity::ed25519::{Keypair, SecretKey};
@@ -24,11 +25,14 @@ use crate::core::types::{
     SnapchainValidatorContext, SnapchainValidatorSet,
 };
 use crate::network::gossip::GossipEvent;
+use crate::proto::rpc::snapchain_service_client::SnapchainServiceClient;
+use crate::proto::rpc::BlocksRequest;
 use crate::proto::snapchain::{FullProposal, ShardChunk, ShardHeader};
 pub use malachite_consensus::Params as ConsensusParams;
 pub use malachite_consensus::State as ConsensusState;
 use prost::Message;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tokio::{select, time};
@@ -163,7 +167,11 @@ pub trait Proposer {
         timeout: Duration,
     ) -> FullProposal;
     // Receive a block/shard chunk proposed by another validator and return whether it is valid
-    fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity;
+    async fn add_proposed_value(
+        &mut self,
+        full_proposal: &FullProposal,
+        validator_set: &SnapchainValidatorSet,
+    ) -> Validity;
     // Consensus has confirmed the block/shard_chunk, apply it to the local state
     async fn decide(&mut self, height: Height, round: Round, value: ShardHash);
 }
@@ -241,7 +249,11 @@ impl Proposer for ShardProposer {
         proposal
     }
 
-    fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity {
+    fn add_proposed_value(
+        &mut self,
+        full_proposal: &FullProposal,
+        _validator_set: &SnapchainValidatorSet,
+    ) -> Validity {
         if let Some(proto::full_proposal::ProposedValue::Shard(_)) =
             full_proposal.proposed_value.clone()
         {
@@ -260,6 +272,24 @@ impl Proposer for ShardProposer {
             self.proposed_chunks.remove(&value);
         }
     }
+}
+
+#[derive(Error, Debug)]
+pub enum BlockProposerError {
+    #[error("Block missing header")]
+    BlockMissingHeader,
+
+    #[error("Block missing height")]
+    BlockMissingHeight,
+
+    #[error("No peers")]
+    NoPeers,
+
+    #[error(transparent)]
+    RpcTransportError(#[from] tonic::transport::Error),
+
+    #[error(transparent)]
+    RpcResponseError(#[from] tonic::Status),
 }
 
 pub struct BlockProposer {
@@ -342,6 +372,60 @@ impl BlockProposer {
     pub fn get_proposed_value(&self, shard_hash: &ShardHash) -> Option<&Block> {
         self.proposed_blocks.get(shard_hash)
     }
+
+    async fn sync_missing_blocks(
+        &mut self,
+        validator_set: &SnapchainValidatorSet,
+        new_block: &Block,
+    ) -> Result<(), BlockProposerError> {
+        let header = new_block
+            .header
+            .as_ref()
+            .ok_or(BlockProposerError::BlockMissingHeader)?;
+        let height = header
+            .height
+            .as_ref()
+            .ok_or(BlockProposerError::BlockMissingHeight)?;
+        let prev_block = self.blocks.last();
+        let prev_block_number = match prev_block {
+            None => 0,
+            Some(prev_block) => {
+                let header = prev_block
+                    .header
+                    .as_ref()
+                    .ok_or(BlockProposerError::BlockMissingHeader)?;
+                let height = header
+                    .height
+                    .as_ref()
+                    .ok_or(BlockProposerError::BlockMissingHeight)?;
+                height.block_number
+            }
+        };
+
+        if height.block_number > prev_block_number + 1 {
+            // TODO(aditi): Select peer in a smarter way
+            let peer = validator_set
+                .validators
+                .iter()
+                .find(|validator| validator.rpc_address.is_some());
+            match peer {
+                None => return Err(BlockProposerError::NoPeers),
+                Some(peer) => {
+                    let mut rpc_client =
+                        SnapchainServiceClient::connect(peer.rpc_address.clone().unwrap()).await?;
+                    let request = Request::new(BlocksRequest {
+                        shard_index: height.shard_index,
+                        start_block_number: prev_block_number + 1,
+                        stop_block_number: Some(height.block_number),
+                    });
+                    let missing_blocks = rpc_client.get_blocks(request).await?;
+                    self.blocks.extend(missing_blocks.get_ref().blocks.clone());
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Proposer for BlockProposer {
@@ -398,10 +482,15 @@ impl Proposer for BlockProposer {
         proposal
     }
 
-    fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity {
+    async fn add_proposed_value(
+        &mut self,
+        full_proposal: &FullProposal,
+        validator_set: &SnapchainValidatorSet,
+    ) -> Validity {
         if let Some(proto::full_proposal::ProposedValue::Block(_block)) =
             full_proposal.proposed_value.clone()
         {
+            self.sync_missing_blocks(validator_set, &block).await;
             self.proposed_blocks
                 .insert(full_proposal.shard_hash(), full_proposal.clone());
         }
@@ -491,9 +580,13 @@ impl ShardValidator {
         let value = full_proposal.shard_hash();
         let validity = if let Some(block_proposer) = &mut self.block_proposer {
             let mut block_proposer = block_proposer.lock().await;
-            block_proposer.add_proposed_value(&full_proposal)
+            block_proposer
+                .add_proposed_value(&full_proposal, &self.validator_set)
+                .await
         } else if let Some(shard_proposer) = &mut self.shard_proposer {
-            shard_proposer.add_proposed_value(&full_proposal)
+            shard_proposer
+                .add_proposed_value(&full_proposal, &self.validator_set)
+                .await
         } else {
             panic!("No proposer set");
         };
