@@ -15,6 +15,7 @@ pub struct Config {
     pub fnames: connectors::fname::Config,
     pub onchain_events: connectors::onchain_events::Config,
     pub consensus: consensus::consensus::Config,
+    pub rpc_address: String,
 }
 
 impl Default for Config {
@@ -25,6 +26,7 @@ impl Default for Config {
             fnames: connectors::fname::Config::default(),
             onchain_events: connectors::onchain_events::Config::default(),
             consensus: consensus::consensus::Config::default(),
+            rpc_address: "0.0.0.0:2283".to_string(),
         }
     }
 }

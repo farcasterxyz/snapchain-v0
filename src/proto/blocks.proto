@@ -6,6 +6,7 @@ package snapchain;
 message Validator {
   uint64 fid = 1;
   bytes signer = 2;
+  string rpc_address = 3;
 }
 
 message ValidatorSet {

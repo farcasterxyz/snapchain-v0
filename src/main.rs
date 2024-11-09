@@ -135,7 +135,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let shard = SnapchainShard::new(0); // Single shard for now
     let validator_address = Address(keypair.public().to_bytes());
-    let validator = SnapchainValidator::new(shard.clone(), keypair.public().clone());
+    let validator = SnapchainValidator::new(
+        shard.clone(),
+        keypair.public().clone(),
+        Some(app_config.rpc_address.clone()),
+    );
     let validator_set = SnapchainValidatorSet::new(vec![validator]);
 
     let consensus_params = ConsensusParams {
@@ -188,6 +192,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         validator: Some(proto::Validator {
                             signer: keypair.public().to_bytes().to_vec(),
                             fid: 0,
+                            rpc_address: app_config.rpc_address.clone()
                         }),
                         nonce: tick_count as u64,   // Need the nonce to avoid the gossip duplicate message check
                     };

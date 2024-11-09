@@ -805,6 +805,7 @@ impl Actor for Consensus {
         state.shard_validator.add_validator(SnapchainValidator::new(
             self.shard_id.clone(),
             self.ctx.public_key(),
+            None,
         ));
         Ok(())
     }

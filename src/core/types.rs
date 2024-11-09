@@ -8,6 +8,7 @@ use malachite_common::{
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
+use std::net::IpAddr;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -247,14 +248,20 @@ pub struct SnapchainValidator {
     pub shard_index: u8,
     pub address: Address,
     pub public_key: PublicKey,
+    pub rpc_address: Option<String>,
 }
 
 impl SnapchainValidator {
-    pub fn new(shard_index: SnapchainShard, public_key: PublicKey) -> Self {
+    pub fn new(
+        shard_index: SnapchainShard,
+        public_key: PublicKey,
+        rpc_address: Option<String>,
+    ) -> Self {
         Self {
             shard_index: shard_index.shard_id(),
             address: Address(public_key.to_bytes()),
             public_key,
+            rpc_address,
         }
     }
 }
