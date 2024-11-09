@@ -1,6 +1,5 @@
 use malachite_common::{ValidatorSet, Validity};
 use std::collections::BTreeMap;
-use std::sync::Arc;
 use std::time::Duration;
 use tonic::Request;
 
@@ -33,7 +32,6 @@ pub use malachite_consensus::State as ConsensusState;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tokio::{select, time};
 
@@ -518,15 +516,14 @@ pub struct ShardValidator {
     current_proposer: Option<Address>,
     // This should be proposer: Box<dyn Proposer> but that doesn't implement Send which is required for the actor system.
     // TODO: Fix once we remove the actor system
-    block_proposer: Option<Arc<Mutex<BlockProposer>>>,
+    block_proposer: Option<BlockProposer>,
     shard_proposer: Option<ShardProposer>,
 }
 
 impl ShardValidator {
     pub fn new(
         address: Address,
-        shard: SnapchainShard,
-        block_proposer: Option<Arc<Mutex<BlockProposer>>>,
+        block_proposer: Option<BlockProposer>,
         shard_proposer: Option<ShardProposer>,
     ) -> ShardValidator {
         ShardValidator {
@@ -558,10 +555,7 @@ impl ShardValidator {
 
     pub async fn decide(&mut self, height: Height, _: Round, value: ShardHash) {
         if let Some(block_proposer) = &mut self.block_proposer {
-            let mut block_proposer = block_proposer.lock().await;
-            block_proposer
-                .decide(height, self.current_round, value)
-                .await;
+            block_proposer.decide(height, self.current_round, value);
         } else if let Some(shard_proposer) = &mut self.shard_proposer {
             shard_proposer
                 .decide(height, self.current_round, value)
@@ -579,7 +573,6 @@ impl ShardValidator {
     ) -> ProposedValue<SnapchainValidatorContext> {
         let value = full_proposal.shard_hash();
         let validity = if let Some(block_proposer) = &mut self.block_proposer {
-            let mut block_proposer = block_proposer.lock().await;
             block_proposer
                 .add_proposed_value(&full_proposal, &self.validator_set)
                 .await
@@ -607,14 +600,13 @@ impl ShardValidator {
         round: Round,
         timeout: Duration,
     ) -> FullProposal {
-        if let Some(block_proposer) = &mut self.block_proposer {
-            let mut block_proposer = block_proposer.lock().await;
-            block_proposer.propose_value(height, round, timeout).await
+        let proposed_value = if let Some(block_proposer) = &mut self.block_proposer {
+            block_proposer.propose_value(height, round, timeout)
         } else if let Some(shard_proposer) = &mut self.shard_proposer {
             shard_proposer.propose_value(height, round, timeout).await
         } else {
             panic!("No proposer set");
-        }
+        };
     }
 }
 

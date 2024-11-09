@@ -1,10 +1,6 @@
 use malachite_metrics::{Metrics, SharedRegistry};
-use snapchain::consensus::consensus::Decision;
-use snapchain::proto::snapchain::ConsensusMessage;
-use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::ctrl_c;
 use tokio::sync::{mpsc, Mutex};
@@ -128,55 +124,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Use the new non-global metrics registry when we upgrade to newer version of malachite
     let _ = Metrics::register(registry);
 
-<<<<<<< HEAD
     let node = SnapchainNode::create(
         keypair.clone(),
         app_config.consensus.clone(),
         Some(app_config.rpc_address.clone()),
-<<<<<<< HEAD
-=======
+        gossip_tx,
     );
-    let validator_set = SnapchainValidatorSet::new(vec![validator]);
-
-=======
-    let shard = SnapchainShard::new(0); // Single shard for now
-    let validator_address = Address(keypair.public().to_bytes());
-    let validator = SnapchainValidator::new(shard.clone(), keypair.public().clone(), None);
-    let initial_validator_set = SnapchainValidatorSet::new(vec![validator]);
->>>>>>> 13eb989 (request missing messages)
-    let consensus_params = ConsensusParams {
-        start_height: Height::new(shard.shard_id(), 1),
-        initial_validator_set,
-        address: validator_address.clone(),
-        threshold_params: Default::default(),
-    };
-
-    let ctx = SnapchainValidatorContext::new(keypair.clone());
-    let block_proposer = Arc::new(Mutex::new(BlockProposer::new(
-        validator_address.clone(),
-        shard.clone(),
-    )));
-    let shard_validator = ShardValidator::new(
-        validator_address.clone(),
-        Some(block_proposer.clone()),
-        None,
-    );
-
-    let consensus_actor = Consensus::spawn(
-        ctx,
-        shard,
-        consensus_params,
-        TimeoutConfig::default(),
-        metrics.clone(),
-<<<<<<< HEAD
-        Some(decision_tx.clone()),
->>>>>>> 5430457 (wire block proposals)
-=======
-        None,
->>>>>>> 13eb989 (request missing messages)
-        gossip_tx.clone(),
-    )
-    .await;
 
     // Create a timer for block creation
     let mut block_interval = time::interval(Duration::from_secs(2));
