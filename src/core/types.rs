@@ -104,11 +104,11 @@ impl malachite_common::SigningScheme for Ed25519 {
     type PublicKey = PublicKey;
     type PrivateKey = PrivateKey;
 
-    fn decode_signature(bytes: &[u8]) -> Result<Self::Signature, Self::DecodingError> {
+    fn decode_signature(_bytes: &[u8]) -> Result<Self::Signature, Self::DecodingError> {
         todo!()
     }
 
-    fn encode_signature(signature: &Self::Signature) -> Vec<u8> {
+    fn encode_signature(_signature: &Self::Signature) -> Vec<u8> {
         todo!()
     }
 }
@@ -572,11 +572,11 @@ impl malachite_common::Context for SnapchainValidatorContext {
 
     fn verify_signed_proposal_part(
         &self,
-        proposal_part: &ProposalPart,
-        signature: &Signature,
-        public_key: &PublicKey,
+        _proposal_part: &ProposalPart,
+        _signature: &Signature,
+        _public_key: &PublicKey,
     ) -> bool {
-        false
+        todo!()
     }
 
     fn new_proposal(

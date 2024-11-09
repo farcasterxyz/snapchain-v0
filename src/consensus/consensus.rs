@@ -191,7 +191,7 @@ impl Proposer for ShardProposer {
         &mut self,
         height: Height,
         round: Round,
-        timeout: Duration,
+        _timeout: Duration,
     ) -> FullProposal {
         // Sleep before proposing the value so we don't produce blocks too fast
         // tokio::time::sleep(Duration::from_millis(100)).await;
@@ -245,7 +245,7 @@ impl Proposer for ShardProposer {
         Validity::Valid // TODO: Validate proposer signature?
     }
 
-    async fn decide(&mut self, height: Height, round: Round, value: ShardHash) {
+    async fn decide(&mut self, _height: Height, _round: Round, value: ShardHash) {
         if let Some(proposal) = self.proposed_chunks.get(&value) {
             if let Some(tx_decision) = &self.tx_decision {
                 let _ = tx_decision.send(proposal.clone()).await;
@@ -389,7 +389,7 @@ impl Proposer for BlockProposer {
     }
 
     fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity {
-        if let Some(proto::full_proposal::ProposedValue::Block(block)) =
+        if let Some(proto::full_proposal::ProposedValue::Block(_block)) =
             full_proposal.proposed_value.clone()
         {
             self.proposed_blocks
@@ -398,7 +398,7 @@ impl Proposer for BlockProposer {
         Validity::Valid // TODO: Validate proposer signature?
     }
 
-    async fn decide(&mut self, height: Height, round: Round, value: ShardHash) {
+    async fn decide(&mut self, _height: Height, _round: Round, value: ShardHash) {
         if let Some(proposal) = self.proposed_blocks.get(&value) {
             if let Some(tx_decision) = &self.tx_decision {
                 let _ = tx_decision.send(proposal.clone()).await;
@@ -700,7 +700,7 @@ impl Consensus {
                 Ok(())
             }
 
-            ConsensusMsg::ReceivedProposalPart(part) => {
+            ConsensusMsg::ReceivedProposalPart(_part) => {
                 // TODO: implement
                 Ok(())
             }
@@ -913,11 +913,7 @@ impl Actor for Consensus {
         let name = if args.1.shard_id.shard_id() == 0 {
             format!("{:} Block", address_prefix)
         } else {
-            format!(
-                "{:} Shard {:}",
-                address_prefix,
-                shard_id = args.1.shard_id.shard_id()
-            )
+            format!("{:} Shard {:}", address_prefix, args.1.shard_id.shard_id())
         };
         Ok(State {
             timers: Timers::new(myself),

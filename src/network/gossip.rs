@@ -131,7 +131,7 @@ impl SnapchainGossip {
                         },
                         SwarmEvent::Behaviour(SnapchainBehaviorEvent::Gossipsub(gossipsub::Event::Message {
                             propagation_source: peer_id,
-                            message_id: id,
+                            message_id: _id,
                             message,
                         })) => {
                             match proto::GossipMessage::decode(&message.data[..]) {
@@ -194,7 +194,6 @@ impl SnapchainGossip {
 
                                         }
                                         _ => warn!("Unhandled message from peer: {}", peer_id),
-                                        None => warn!("Received empty gossip message from peer: {}", peer_id),
                                     }
                                 },
                                 Err(e) => warn!("Failed to decode gossip message: {}", e),

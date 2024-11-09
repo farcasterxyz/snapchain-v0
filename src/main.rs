@@ -1,4 +1,3 @@
-use malachite_config::TimeoutConfig;
 use malachite_metrics::{Metrics, SharedRegistry};
 use std::error::Error;
 use std::net::SocketAddr;
@@ -10,13 +9,8 @@ use tonic::transport::Server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use snapchain::consensus::consensus::{
-    BlockProposer, Consensus, ConsensusParams, Decision, ShardValidator, SystemMessage,
-};
-use snapchain::core::types::{
-    proto, Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
-    SnapchainValidatorSet,
-};
+use snapchain::consensus::consensus::SystemMessage;
+use snapchain::core::types::proto;
 use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
 use snapchain::network::server::MySnapchainService;
@@ -127,7 +121,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
 
     let registry = SharedRegistry::global();
-    let metrics = Metrics::register(registry);
+    // Use the new non-global metrics registry when we upgrade to newer version of malachite
+    let _ = Metrics::register(registry);
 
     let node = SnapchainNode::create(
         keypair.clone(),

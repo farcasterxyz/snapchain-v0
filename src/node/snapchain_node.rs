@@ -13,7 +13,6 @@ use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::BTreeMap;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
 
 const MAX_SHARDS: u32 = 3;
 

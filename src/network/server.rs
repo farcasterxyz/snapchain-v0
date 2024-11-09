@@ -1,10 +1,7 @@
 use crate::proto::message::Message;
 use crate::proto::rpc::snapchain_service_server::{SnapchainService, SnapchainServiceServer};
 use hex::ToHex;
-use std::error::Error;
-use std::net::SocketAddr;
-use tonic::Code::Unimplemented;
-use tonic::{transport::Server, Request, Response, Status};
+use tonic::{Request, Response, Status};
 use tracing::info;
 
 #[derive(Default)]
