@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use thiserror::Error;
 use tokio::time::{sleep, Duration};
-use tracing::{debug, error, info, span, warn, Level, Span};
+use tracing::{debug, error, info, warn};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {

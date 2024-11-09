@@ -3,6 +3,7 @@ pub mod connectors;
 pub mod consensus;
 pub mod core;
 pub mod network;
+pub mod node;
 
 mod tests;
 

@@ -1,12 +1,11 @@
 use ed25519_dalek::{SecretKey, Signer, SigningKey};
-use hex::{FromHex, ToHex};
+use hex::FromHex;
 use message::CastType::Cast;
 use message::MessageType::CastAdd;
 use message::{CastAddBody, FarcasterNetwork, MessageData};
 use prost::Message;
 use snapchain::proto::message;
 use snapchain::proto::rpc::snapchain_service_client::SnapchainServiceClient;
-use snapchain::proto::rpc::snapchain_service_server::SnapchainService;
 use std::error::Error;
 
 const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
@@ -37,10 +36,10 @@ async fn compose_message(
         r#type: Cast as i32,
     };
 
-    let mut msg_data = MessageData {
+    let msg_data = MessageData {
         fid,
         r#type: CastAdd as i32,
-        timestamp: timestamp,
+        timestamp,
         network: network as i32,
         body: Some(message::message_data::Body::CastAddBody(cast_add)),
     };

@@ -14,25 +14,25 @@ use tracing::warn;
 pub use crate::proto::snapchain as proto; // TODO: reconsider how this is imported
 
 use crate::proto::snapchain::full_proposal::ProposedValue;
-use crate::proto::snapchain::FullProposal;
+use crate::proto::snapchain::{Block, FullProposal, ShardChunk};
 use proto::ShardHash;
 
 pub trait ShardId
 where
     Self: Sized + Clone + Send + Sync + 'static,
 {
-    fn new(id: u8) -> Self;
-    fn shard_id(&self) -> u8;
+    fn new(id: u32) -> Self;
+    fn shard_id(&self) -> u32;
 }
 
 #[derive(Clone, Debug)]
-pub struct SnapchainShard(u8);
+pub struct SnapchainShard(u32);
 
 impl ShardId for SnapchainShard {
-    fn new(id: u8) -> Self {
+    fn new(id: u32) -> Self {
         Self(id)
     }
-    fn shard_id(&self) -> u8 {
+    fn shard_id(&self) -> u32 {
         self.0
     }
 }
@@ -60,6 +60,10 @@ impl Address {
         let mut bytes = [0u8; 32];
         bytes.copy_from_slice(&vec);
         Self(bytes)
+    }
+
+    pub fn prefix(&self) -> String {
+        format!("0x{}", &self.to_hex()[0..4])
     }
 }
 
@@ -100,11 +104,11 @@ impl malachite_common::SigningScheme for Ed25519 {
     type PublicKey = PublicKey;
     type PrivateKey = PrivateKey;
 
-    fn decode_signature(bytes: &[u8]) -> Result<Self::Signature, Self::DecodingError> {
+    fn decode_signature(_bytes: &[u8]) -> Result<Self::Signature, Self::DecodingError> {
         todo!()
     }
 
-    fn encode_signature(signature: &Self::Signature) -> Vec<u8> {
+    fn encode_signature(_signature: &Self::Signature) -> Vec<u8> {
         todo!()
     }
 }
@@ -121,12 +125,12 @@ impl Display for Hash {
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Height {
-    pub shard_index: u8,
+    pub shard_index: u32,
     pub block_number: u64,
 }
 
 impl Height {
-    pub const fn new(shard_index: u8, block_number: u64) -> Self {
+    pub const fn new(shard_index: u32, block_number: u64) -> Self {
         Self {
             shard_index,
             block_number,
@@ -135,7 +139,7 @@ impl Height {
 
     pub fn to_proto(&self) -> proto::Height {
         proto::Height {
-            shard_index: self.shard_index as u32,
+            shard_index: self.shard_index,
             block_number: self.block_number,
         }
     }
@@ -143,7 +147,7 @@ impl Height {
     pub(crate) fn from_proto(proto: proto::Height) -> Self {
         Self {
             block_number: proto.block_number,
-            shard_index: proto.shard_index as u8,
+            shard_index: proto.shard_index,
         }
     }
 
@@ -213,7 +217,7 @@ impl malachite_common::Value for ShardHash {
 }
 
 impl FullProposal {
-    pub fn value(&self) -> ShardHash {
+    pub fn shard_hash(&self) -> ShardHash {
         match &self.proposed_value {
             Some(ProposedValue::Block(block)) => ShardHash {
                 shard_index: self.height().shard_index as u32,
@@ -226,6 +230,20 @@ impl FullProposal {
             _ => {
                 panic!("Invalid proposal type");
             }
+        }
+    }
+
+    pub fn block(&self) -> Option<Block> {
+        match &self.proposed_value {
+            Some(ProposedValue::Block(block)) => Some(block.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn shard_chunk(&self) -> Option<ShardChunk> {
+        match &self.proposed_value {
+            Some(ProposedValue::Shard(chunk)) => Some(chunk.clone()),
+            _ => None,
         }
     }
 
@@ -244,7 +262,7 @@ impl FullProposal {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SnapchainValidator {
-    pub shard_index: u8,
+    pub shard_index: u32,
     pub address: Address,
     pub public_key: PublicKey,
     pub rpc_address: Option<String>,
@@ -299,7 +317,7 @@ impl SnapchainValidatorSet {
         self.validators.iter().any(|v| v.address == *address)
     }
 
-    pub fn shard_id(&self) -> u8 {
+    pub fn shard_id(&self) -> u32 {
         if self.validators.is_empty() {
             0
         } else {
@@ -554,11 +572,11 @@ impl malachite_common::Context for SnapchainValidatorContext {
 
     fn verify_signed_proposal_part(
         &self,
-        proposal_part: &ProposalPart,
-        signature: &Signature,
-        public_key: &PublicKey,
+        _proposal_part: &ProposalPart,
+        _signature: &Signature,
+        _public_key: &PublicKey,
     ) -> bool {
-        false
+        todo!()
     }
 
     fn new_proposal(

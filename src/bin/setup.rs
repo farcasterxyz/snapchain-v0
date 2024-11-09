@@ -1,4 +1,4 @@
-use libp2p::identity::ed25519::{Keypair, SecretKey};
+use libp2p::identity::ed25519::SecretKey;
 
 #[tokio::main]
 async fn main() {
@@ -12,7 +12,6 @@ async fn main() {
 
     for i in 1..=nodes {
         let id = i;
-        let keypair = Keypair::generate();
 
         if !std::path::Path::new(format!("nodes/{id}").as_str()).exists() {
             std::fs::create_dir(format!("nodes/{id}")).expect("Failed to create node directory");

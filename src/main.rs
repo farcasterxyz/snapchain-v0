@@ -1,30 +1,20 @@
-use clap::Parser;
-use futures::stream::StreamExt;
-use libp2p::identity::ed25519::Keypair;
-use malachite_config::TimeoutConfig;
 use malachite_metrics::{Metrics, SharedRegistry};
 use std::error::Error;
-use std::io;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::signal::ctrl_c;
 use tokio::sync::mpsc;
-use tokio::time::sleep;
 use tokio::{select, time};
 use tonic::transport::Server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use snapchain::consensus::consensus::{
-    BlockProposer, Consensus, ConsensusMsg, ConsensusParams, ShardValidator, SystemMessage,
-};
-use snapchain::core::types::{
-    proto, Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
-    SnapchainValidatorSet,
-};
+use snapchain::consensus::consensus::SystemMessage;
+use snapchain::core::types::proto;
 use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
 use snapchain::network::server::MySnapchainService;
+use snapchain::node::snapchain_node::SnapchainNode;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 
 #[tokio::main]
@@ -131,40 +121,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
 
     let registry = SharedRegistry::global();
-    let metrics = Metrics::register(registry);
+    // Use the new non-global metrics registry when we upgrade to newer version of malachite
+    let _ = Metrics::register(registry);
 
-    let shard = SnapchainShard::new(0); // Single shard for now
-    let validator_address = Address(keypair.public().to_bytes());
-    let validator = SnapchainValidator::new(
-        shard.clone(),
-        keypair.public().clone(),
+    let node = SnapchainNode::create(
+        keypair.clone(),
+        app_config.consensus.clone(),
         Some(app_config.rpc_address.clone()),
-    );
-    let validator_set = SnapchainValidatorSet::new(vec![validator]);
-
-    let consensus_params = ConsensusParams {
-        start_height: Height::new(shard.shard_id(), 1),
-        initial_validator_set: validator_set,
-        address: validator_address.clone(),
-        threshold_params: Default::default(),
-    };
-
-    let ctx = SnapchainValidatorContext::new(keypair.clone());
-    let block_proposer = BlockProposer::new(validator_address.clone(), shard.clone());
-    let shard_validator =
-        ShardValidator::new(validator_address.clone(), Some(block_proposer), None);
-    let consensus_actor = Consensus::spawn(
-        ctx,
-        shard,
-        consensus_params,
-        TimeoutConfig::default(),
-        metrics.clone(),
-        None,
         gossip_tx.clone(),
-        shard_validator,
     )
-    .await
-    .unwrap();
+    .await;
 
     // Create a timer for block creation
     let mut block_interval = time::interval(Duration::from_secs(2));
@@ -176,35 +142,40 @@ async fn main() -> Result<(), Box<dyn Error>> {
         select! {
             _ = ctrl_c() => {
                 info!("Received Ctrl-C, shutting down");
-                consensus_actor.stop(None);
+                node.stop();
                 return Ok(());
             }
             _ = shutdown_rx.recv() => {
                 error!("Received shutdown signal, shutting down");
-                consensus_actor.stop(None);
+                node.stop();
                 return Ok(());
             }
             _ = block_interval.tick() => {
                 tick_count += 1;
                 // Every 5 ticks, re-register the validators so that new nodes can discover each other
                 if tick_count % 5 == 0 {
-                    let register_validator = proto::RegisterValidator {
-                        validator: Some(proto::Validator {
-                            signer: keypair.public().to_bytes().to_vec(),
-                            fid: 0,
-                            rpc_address: app_config.rpc_address.clone()
-                        }),
-                        nonce: tick_count as u64,   // Need the nonce to avoid the gossip duplicate message check
-                    };
-                    info!("Registering validator with nonce: {}", register_validator.nonce);
-                    gossip_tx.send(GossipEvent::RegisterValidator(register_validator)).await?;
+                    let nonce = tick_count as u64;
+                    for i in 0..=app_config.consensus.num_shards() {
+                        let register_validator = proto::RegisterValidator {
+                            validator: Some(proto::Validator {
+                                signer: keypair.public().to_bytes().to_vec(),
+                                fid: 0,
+                                rpc_address: app_config.rpc_address.clone(),
+                                shard_index: i,
+                            }),
+                            nonce,   // Need the nonce to avoid the gossip duplicate message check
+                        };
+                        gossip_tx.send(GossipEvent::RegisterValidator(register_validator)).await?;
+                    }
+                    info!("Registering validator with nonce: {}", nonce);
+
                 }
             }
             Some(msg) = system_rx.recv() => {
                 match msg {
                     SystemMessage::Consensus(consensus_msg) => {
-                        // Forward to consesnsus actor
-                        consensus_actor.cast(consensus_msg).unwrap();
+                        // Forward to apropriate consesnsus actors
+                        node.dispatch(consensus_msg);
                     }
                 }
             }
