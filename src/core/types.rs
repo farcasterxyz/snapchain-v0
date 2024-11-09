@@ -21,18 +21,18 @@ pub trait ShardId
 where
     Self: Sized + Clone + Send + Sync + 'static,
 {
-    fn new(id: u8) -> Self;
-    fn shard_id(&self) -> u8;
+    fn new(id: u32) -> Self;
+    fn shard_id(&self) -> u32;
 }
 
 #[derive(Clone, Debug)]
-pub struct SnapchainShard(u8);
+pub struct SnapchainShard(u32);
 
 impl ShardId for SnapchainShard {
-    fn new(id: u8) -> Self {
+    fn new(id: u32) -> Self {
         Self(id)
     }
-    fn shard_id(&self) -> u8 {
+    fn shard_id(&self) -> u32 {
         self.0
     }
 }
@@ -121,12 +121,12 @@ impl Display for Hash {
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Height {
-    pub shard_index: u8,
+    pub shard_index: u32,
     pub block_number: u64,
 }
 
 impl Height {
-    pub const fn new(shard_index: u8, block_number: u64) -> Self {
+    pub const fn new(shard_index: u32, block_number: u64) -> Self {
         Self {
             shard_index,
             block_number,
@@ -135,7 +135,7 @@ impl Height {
 
     pub fn to_proto(&self) -> proto::Height {
         proto::Height {
-            shard_index: self.shard_index as u32,
+            shard_index: self.shard_index,
             block_number: self.block_number,
         }
     }
@@ -143,7 +143,7 @@ impl Height {
     pub(crate) fn from_proto(proto: proto::Height) -> Self {
         Self {
             block_number: proto.block_number,
-            shard_index: proto.shard_index as u8,
+            shard_index: proto.shard_index,
         }
     }
 
@@ -258,7 +258,7 @@ impl FullProposal {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SnapchainValidator {
-    pub shard_index: u8,
+    pub shard_index: u32,
     pub address: Address,
     pub public_key: PublicKey,
     pub rpc_address: Option<String>,
@@ -313,7 +313,7 @@ impl SnapchainValidatorSet {
         self.validators.iter().any(|v| v.address == *address)
     }
 
-    pub fn shard_id(&self) -> u8 {
+    pub fn shard_id(&self) -> u32 {
         if self.validators.is_empty() {
             0
         } else {

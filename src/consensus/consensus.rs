@@ -29,10 +29,12 @@ pub use malachite_consensus::State as ConsensusState;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
+use tokio::{select, time};
 
 pub type ConsensusRef<Ctx> = ActorRef<ConsensusMsg<Ctx>>;
 pub type Decision = FullProposal;
 pub type TxDecision = mpsc::Sender<Decision>;
+pub type RxDecision = mpsc::Receiver<Decision>;
 
 pub enum SystemMessage {
     Consensus(ConsensusMsg<SnapchainValidatorContext>),
@@ -49,6 +51,7 @@ impl<Ctx: Context + SnapchainContext> From<TimeoutElapsed<Timeout>> for Consensu
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     pub private_key: String,
+    pub shard_ids: String,
 }
 
 impl Config {
@@ -57,12 +60,20 @@ impl Config {
         let secret_key = SecretKey::try_from_bytes(bytes);
         Keypair::from(secret_key.unwrap())
     }
+
+    pub fn shard_ids(&self) -> Vec<u32> {
+        self.shard_ids
+            .split(',')
+            .map(|s| s.parse().unwrap())
+            .collect()
+    }
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             private_key: hex::encode(SecretKey::generate()),
+            shard_ids: "1".to_string(),
         }
     }
 }
@@ -86,6 +97,22 @@ pub enum ConsensusMsg<Ctx: SnapchainContext> {
     RegisterValidator(SnapchainValidator),
 
     TimeoutElapsed(TimeoutElapsed<Timeout>),
+}
+
+impl ConsensusMsg<SnapchainValidatorContext> {
+    pub fn shard_id(&self) -> u32 {
+        match self {
+            ConsensusMsg::StartHeight(height) => height.shard_index,
+            ConsensusMsg::ProposeValue(height, _, _, _) => height.shard_index,
+            ConsensusMsg::ReceivedProposedValue(proposed) => proposed.height.shard_index,
+            ConsensusMsg::ReceivedSignedVote(vote) => vote.height.shard_index,
+            ConsensusMsg::ReceivedSignedProposal(proposal) => proposal.height.shard_index,
+            ConsensusMsg::ReceivedFullProposal(full_proposal) => full_proposal.height().shard_index,
+            ConsensusMsg::RegisterValidator(validator) => validator.shard_index,
+
+            _ => panic!("Requested shard ID for unsupported message type"),
+        }
+    }
 }
 
 struct Timeouts {
@@ -123,7 +150,12 @@ impl Timeouts {
 
 pub trait Proposer {
     // Create a new block/shard chunk for the given height that will be proposed for confirmation to the other validators
-    fn propose_value(&mut self, height: Height, round: Round) -> FullProposal;
+    async fn propose_value(
+        &mut self,
+        height: Height,
+        round: Round,
+        timeout: Duration,
+    ) -> FullProposal;
     // Receive a block/shard chunk proposed by another validator and return whether it is valid
     fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity;
     // Consensus has confirmed the block/shard_chunk, apply it to the local state
@@ -138,10 +170,32 @@ pub struct ShardProposer {
     tx_decision: Option<TxDecision>,
 }
 
-impl ShardProposer {}
+impl ShardProposer {
+    pub fn new(
+        address: Address,
+        shard_id: SnapchainShard,
+        tx_decision: Option<TxDecision>,
+    ) -> ShardProposer {
+        ShardProposer {
+            shard_id,
+            address,
+            chunks: vec![],
+            proposed_chunks: BTreeMap::new(),
+            tx_decision,
+        }
+    }
+}
 
 impl Proposer for ShardProposer {
-    fn propose_value(&mut self, height: Height, round: Round) -> FullProposal {
+    async fn propose_value(
+        &mut self,
+        height: Height,
+        round: Round,
+        timeout: Duration,
+    ) -> FullProposal {
+        // Sleep before proposing the value so we don't produce blocks too fast
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
         let previous_chunk = self.chunks.last();
         let parent_hash = match previous_chunk {
             Some(chunk) => chunk.hash.clone(),
@@ -207,6 +261,8 @@ pub struct BlockProposer {
     address: Address,
     blocks: Vec<Block>,
     proposed_blocks: BTreeMap<ShardHash, FullProposal>,
+    shard_decision_rx: RxDecision,
+    num_shards: u32,
     tx_decision: Option<TxDecision>,
 }
 
@@ -214,6 +270,8 @@ impl BlockProposer {
     pub fn new(
         address: Address,
         shard_id: SnapchainShard,
+        shard_decision_rx: RxDecision,
+        num_shards: u32,
         tx_decision: Option<TxDecision>,
     ) -> BlockProposer {
         BlockProposer {
@@ -221,13 +279,70 @@ impl BlockProposer {
             address,
             blocks: vec![],
             proposed_blocks: BTreeMap::new(),
+            shard_decision_rx,
+            num_shards,
             tx_decision,
         }
+    }
+
+    async fn collect_confirmed_shard_chunks(
+        &mut self,
+        height: Height,
+        timeout: Duration,
+    ) -> Vec<ShardChunk> {
+        let mut confirmed_shard_chunks = vec![];
+
+        let mut poll_interval = time::interval(Duration::from_millis(10));
+
+        // convert to deadline
+        let deadline = Instant::now() + timeout;
+
+        loop {
+            let timeout = time::sleep_until(deadline);
+            select! {
+                _ = poll_interval.tick() => {
+                    if let Ok(decision) = self.shard_decision_rx.try_recv() {
+                       if let Some(proto::full_proposal::ProposedValue::Shard(chunk)) = decision.proposed_value {
+                            let chunk_block_number = chunk.header.clone().unwrap().height.unwrap().block_number;
+                            if chunk_block_number == height.block_number {
+                                confirmed_shard_chunks.push(chunk);
+                            }
+                        }
+                    }
+                    if confirmed_shard_chunks.len() == self.num_shards as usize {
+                        break;
+                    }
+                }
+                _ = timeout => {
+                    warn!("Block validator did not receive all shard chunks in time for height: {:?}", height);
+                    break;
+                }
+            }
+        }
+
+        // loop to wait for the shard decision until we reach the timeout
+        while let Ok(decision) = self.shard_decision_rx.try_recv() {
+            if let Some(proto::full_proposal::ProposedValue::Shard(chunk)) = decision.proposed_value
+            {
+                let chunk_block_number = chunk.header.clone().unwrap().height.unwrap().block_number;
+                if chunk_block_number == height.block_number {
+                    confirmed_shard_chunks.push(chunk);
+                }
+            }
+        }
+        confirmed_shard_chunks
     }
 }
 
 impl Proposer for BlockProposer {
-    fn propose_value(&mut self, height: Height, round: Round) -> FullProposal {
+    async fn propose_value(
+        &mut self,
+        height: Height,
+        round: Round,
+        timeout: Duration,
+    ) -> FullProposal {
+        let shard_chunks = self.collect_confirmed_shard_chunks(height, timeout).await;
+
         let previous_block = self.blocks.last();
         let parent_hash = match previous_block {
             Some(block) => block.hash.clone(),
@@ -254,7 +369,7 @@ impl Proposer for BlockProposer {
             hash: hash.clone(),
             validators: None,
             votes: None,
-            shard_chunks: vec![],
+            shard_chunks,
         };
 
         let shard_hash = ShardHash {
@@ -381,11 +496,16 @@ impl ShardValidator {
         }
     }
 
-    pub fn propose_value(&mut self, height: Height, round: Round) -> FullProposal {
+    pub async fn propose_value(
+        &mut self,
+        height: Height,
+        round: Round,
+        timeout: Duration,
+    ) -> FullProposal {
         if let Some(block_proposer) = &mut self.block_proposer {
-            block_proposer.propose_value(height, round)
+            block_proposer.propose_value(height, round, timeout).await
         } else if let Some(shard_proposer) = &mut self.shard_proposer {
-            shard_proposer.propose_value(height, round)
+            shard_proposer.propose_value(height, round, timeout).await
         } else {
             panic!("No proposer set");
         }
@@ -728,12 +848,10 @@ impl Consensus {
             }
 
             Effect::GetValue(height, round, timeout) => {
-                let timeout_duration = timeouts.duration_for(timeout.step);
-                let full_proposal = shard_validator.propose_value(height, round);
+                let timeout = timeouts.duration_for(timeout.step);
+                let full_proposal = shard_validator.propose_value(height, round, timeout).await;
 
                 let value = full_proposal.shard_hash();
-                // Sleep before proposing the value so we don't produce blocks too fast
-                tokio::time::sleep(Duration::from_millis(500)).await;
 
                 debug!("Proposing value: {value} for height: {height}, round: {round}");
                 let result = myself.cast(ConsensusMsg::ProposeValue(height, round, value, None));
