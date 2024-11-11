@@ -8,6 +8,7 @@ message Validator {
   bytes signer = 2;
   string rpc_address = 3;
   uint32 shard_index = 4;
+  uint64 max_known_block_number = 5;
 }
 
 message ValidatorSet {

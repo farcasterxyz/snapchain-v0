@@ -27,8 +27,9 @@ impl SnapchainNode {
         keypair: Keypair,
         config: Config,
         rpc_address: Option<String>,
+        max_known_block_number: u64,
         gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
-        block_tx: mpsc::Sender<Block>,
+        block_tx: Vec<mpsc::Sender<Block>>,
     ) -> Self {
         let validator_address = Address(keypair.public().to_bytes());
 
@@ -48,6 +49,7 @@ impl SnapchainNode {
                 shard.clone(),
                 keypair.public().clone(),
                 rpc_address.clone(),
+                max_known_block_number,
             );
             let shard_validator_set = SnapchainValidatorSet::new(vec![shard_validator]);
             let shard_consensus_params = ConsensusParams {
@@ -91,6 +93,7 @@ impl SnapchainNode {
             block_shard.clone(),
             keypair.public().clone(),
             rpc_address.clone(),
+            max_known_block_number,
         );
         let block_validator_set = SnapchainValidatorSet::new(vec![block_validator]);
 
@@ -106,7 +109,7 @@ impl SnapchainNode {
             block_shard.clone(),
             shard_decision_rx,
             config.num_shards(),
-            Some(block_tx),
+            block_tx,
         );
         let block_validator = ShardValidator::new(
             validator_address.clone(),

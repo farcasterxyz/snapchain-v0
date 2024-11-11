@@ -110,19 +110,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Use the new non-global metrics registry when we upgrade to newer version of malachite
     let _ = Metrics::register(registry);
 
-    let (block_tx, mut block_rx) = mpsc::channel::<Block>(100);
-    let mut node = SnapchainNode::create(
+    let (rpc_block_tx, mut rpc_block_rx) = mpsc::channel::<Block>(100);
+    let (main_block_tx, mut main_block_rx) = mpsc::channel::<Block>(100);
+
+    let mut block_store = BlockStore::new();
+    while let Some(block) = main_block_rx.recv().await {
+        block_store.put_block(block)
+    }
+
+    let node = SnapchainNode::create(
         keypair.clone(),
         app_config.consensus.clone(),
         Some(app_config.rpc_address.clone()),
+        block_store.max_block_number(),
         gossip_tx.clone(),
-        block_tx.clone(),
+        vec![rpc_block_tx, main_block_tx],
     )
     .await;
 
     tokio::spawn(async move {
         let mut block_store = BlockStore::new();
-        while let Some(block) = block_rx.recv().await {
+        while let Some(block) = rpc_block_rx.recv().await {
             block_store.put_block(block)
         }
 
@@ -172,6 +180,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 fid: 0,
                                 rpc_address: app_config.rpc_address.clone(),
                                 shard_index: i,
+                                max_known_block_number: block_store.max_block_number()
                             }),
                             nonce,   // Need the nonce to avoid the gossip duplicate message check
                         };

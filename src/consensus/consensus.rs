@@ -297,6 +297,19 @@ impl BlockStore {
         self.blocks.push(block)
     }
 
+    pub fn max_block_number(&self) -> u64 {
+        match self.blocks.last() {
+            None => 0,
+            Some(block) => match &block.header {
+                None => 0,
+                Some(header) => match &header.height {
+                    None => 0,
+                    Some(height) => height.block_number,
+                },
+            },
+        }
+    }
+
     pub fn get_blocks(
         &self,
         start_block_number: u64,
@@ -329,7 +342,7 @@ pub struct BlockProposer {
     proposed_blocks: BTreeMap<ShardHash, FullProposal>,
     shard_decision_rx: RxDecision,
     num_shards: u32,
-    block_tx: Option<mpsc::Sender<Block>>,
+    block_tx: Vec<mpsc::Sender<Block>>,
     block_store: BlockStore,
 }
 
@@ -339,7 +352,7 @@ impl BlockProposer {
         shard_id: SnapchainShard,
         shard_decision_rx: RxDecision,
         num_shards: u32,
-        block_tx: Option<mpsc::Sender<Block>>,
+        block_tx: Vec<mpsc::Sender<Block>>,
     ) -> BlockProposer {
         BlockProposer {
             shard_id,
@@ -402,8 +415,8 @@ impl BlockProposer {
     }
 
     async fn publish_new_block(&self, block: Block) {
-        if let Some(block_tx) = &self.block_tx {
-            let _ = block_tx.send(block.clone()).await;
+        for tx in &self.block_tx {
+            let _ = tx.send(block.clone()).await;
         }
     }
 
@@ -427,19 +440,22 @@ impl BlockProposer {
             }
         };
 
-        match &validator.rpc_address {
-            None => return Err(BlockProposerError::NoPeers),
-            Some(rpc_address) => {
-                let mut rpc_client = SnapchainServiceClient::connect(rpc_address.clone()).await?;
-                let request = Request::new(BlocksRequest {
-                    shard_id: self.shard_id.shard_id(),
-                    start_block_number: prev_block_number + 1,
-                    stop_block_number: None,
-                });
-                let missing_blocks = rpc_client.get_blocks(request).await?;
-                for block in missing_blocks.get_ref().blocks.clone() {
-                    self.blocks.push(block.clone());
-                    self.publish_new_block(block).await;
+        if validator.max_known_block_number > prev_block_number {
+            match &validator.rpc_address {
+                None => return Err(BlockProposerError::NoPeers),
+                Some(rpc_address) => {
+                    let mut rpc_client =
+                        SnapchainServiceClient::connect(rpc_address.clone()).await?;
+                    let request = Request::new(BlocksRequest {
+                        shard_id: self.shard_id.shard_id(),
+                        start_block_number: prev_block_number + 1,
+                        stop_block_number: None,
+                    });
+                    let missing_blocks = rpc_client.get_blocks(request).await?;
+                    for block in missing_blocks.get_ref().blocks.clone() {
+                        self.blocks.push(block.clone());
+                        self.publish_new_block(block).await;
+                    }
                 }
             }
         }
@@ -1052,10 +1068,15 @@ impl Actor for Consensus {
     ) -> Result<(), ActorProcessingErr> {
         state.timers.cancel_all();
         // Add ourselves to the validator set
+        let max_known_block_number = match &state.shard_validator.block_proposer {
+            None => 0,
+            Some(block_proposer) => block_proposer.block_store.max_block_number(),
+        };
         state.shard_validator.add_validator(SnapchainValidator::new(
             self.shard_id.clone(),
             self.ctx.public_key(),
             None,
+            max_known_block_number,
         ));
         Ok(())
     }

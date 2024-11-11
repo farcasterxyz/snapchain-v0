@@ -266,6 +266,7 @@ pub struct SnapchainValidator {
     pub address: Address,
     pub public_key: PublicKey,
     pub rpc_address: Option<String>,
+    pub max_known_block_number: u64,
 }
 
 impl SnapchainValidator {
@@ -273,12 +274,14 @@ impl SnapchainValidator {
         shard_index: SnapchainShard,
         public_key: PublicKey,
         rpc_address: Option<String>,
+        max_known_block_number: u64,
     ) -> Self {
         Self {
             shard_index: shard_index.shard_id(),
             address: Address(public_key.to_bytes()),
             public_key,
             rpc_address,
+            max_known_block_number,
         }
     }
 }
