@@ -530,7 +530,7 @@ impl Proposer for BlockProposer {
 
     async fn decide(&mut self, _height: Height, _round: Round, value: ShardHash) {
         if let Some(proposal) = self.proposed_blocks.get(&value) {
-            self.publish_new_block(proposal.block().unwrap());
+            self.publish_new_block(proposal.block().unwrap()).await;
             self.blocks.push(proposal.block().unwrap());
             self.proposed_blocks.remove(&value);
         }
@@ -587,7 +587,9 @@ impl ShardValidator {
 
     pub async fn decide(&mut self, height: Height, _: Round, value: ShardHash) {
         if let Some(block_proposer) = &mut self.block_proposer {
-            block_proposer.decide(height, self.current_round, value);
+            block_proposer
+                .decide(height, self.current_round, value)
+                .await;
         } else if let Some(shard_proposer) = &mut self.shard_proposer {
             shard_proposer
                 .decide(height, self.current_round, value)

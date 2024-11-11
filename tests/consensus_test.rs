@@ -4,6 +4,7 @@ use ractor::ActorRef;
 use snapchain::consensus::consensus::{Decision, ShardProposer, ShardValidator, TxDecision};
 use snapchain::core::types::proto;
 use snapchain::node::snapchain_node::SnapchainNode;
+use snapchain::proto::snapchain::Block;
 use snapchain::{
     consensus::consensus::ConsensusMsg,
     core::types::{
@@ -14,7 +15,7 @@ use snapchain::{
 };
 use tokio::sync::mpsc;
 use tokio::{select, time};
-use tracing::debug;
+use tracing::{debug, info};
 use tracing_subscriber::EnvFilter;
 
 struct NodeForTest {
@@ -22,6 +23,7 @@ struct NodeForTest {
     num_shards: u32,
     node: SnapchainNode,
     gossip_rx: mpsc::Receiver<GossipEvent<SnapchainValidatorContext>>,
+    block_rx: mpsc::Receiver<Block>,
 }
 
 impl NodeForTest {
@@ -29,18 +31,22 @@ impl NodeForTest {
         let config = snapchain::consensus::consensus::Config::default();
 
         let (gossip_tx, gossip_rx) = mpsc::channel::<GossipEvent<SnapchainValidatorContext>>(100);
-        let node = SnapchainNode::create(keypair.clone(), config, None, gossip_tx).await;
+        let (block_tx, block_rx) = mpsc::channel::<Block>(100);
+        let node =
+            SnapchainNode::create(keypair.clone(), config, None, 0, gossip_tx, vec![block_tx])
+                .await;
 
         Self {
             keypair,
             num_shards,
             node,
             gossip_rx,
+            block_rx,
         }
     }
 
-    pub async fn recv_block_decision(&mut self) -> Option<Decision> {
-        self.node.block_decision_rx.recv().await
+    pub async fn recv_block_decision(&mut self) -> Option<Block> {
+        self.block_rx.recv().await
     }
 
     pub async fn recv_gossip_event(&mut self) -> Option<GossipEvent<SnapchainValidatorContext>> {
@@ -61,6 +67,7 @@ impl NodeForTest {
                 SnapchainShard::new(i),
                 keypair.public().clone(),
                 None,
+                0,
             )));
         }
     }
@@ -83,9 +90,9 @@ async fn test_basic_consensus() {
 
     // Set up shard and validators
     let shard = SnapchainShard::new(0);
-    let validator1 = SnapchainValidator::new(shard.clone(), keypair1.public().clone(), None);
-    let validator2 = SnapchainValidator::new(shard.clone(), keypair2.public().clone(), None);
-    let validator3 = SnapchainValidator::new(shard.clone(), keypair3.public().clone(), None);
+    let validator1 = SnapchainValidator::new(shard.clone(), keypair1.public().clone(), None, 0);
+    let validator2 = SnapchainValidator::new(shard.clone(), keypair2.public().clone(), None, 0);
+    let validator3 = SnapchainValidator::new(shard.clone(), keypair3.public().clone(), None, 0);
 
     // Create validator set with all validators
     let validator_set = SnapchainValidatorSet::new(vec![
@@ -124,34 +131,27 @@ async fn test_basic_consensus() {
     let mut timer = time::interval(tokio::time::Duration::from_millis(10));
 
     // create a lambda function to assert on the proposal
-    let assert_valid_block = |decision: &Decision| match decision {
-        proposal => {
-            debug!(
-                "Decided block at height {}, round {}, value: {}",
-                proposal.height(),
-                proposal.round(),
-                proposal.shard_hash()
-            );
-            if let Some(proto::full_proposal::ProposedValue::Block(block)) =
-                proposal.clone().proposed_value
-            {
-                assert_eq!(block.shard_chunks.len(), 1);
-            }
-        }
+    let assert_valid_block = |block: &Block| {
+        let header = block.header.as_ref().unwrap();
+        debug!(
+            "Decided block at height {:#?}, value: {:#?}",
+            header.height, block.hash
+        );
+        assert_eq!(block.shard_chunks.len(), 1);
     };
 
     loop {
         select! {
-            Some(decision) = node1.recv_block_decision() => {
-                assert_valid_block(&decision);
+            Some(block) = node1.recv_block_decision() => {
+                assert_valid_block(&block);
                 node1_blocks_count += 1;
             }
-            Some(decision) = node2.recv_block_decision() => {
-                assert_valid_block(&decision);
+            Some(block) = node2.recv_block_decision() => {
+                assert_valid_block(&block);
                 node2_blocks_count += 1;
             }
-            Some(decision) = node3.recv_block_decision() => {
-                assert_valid_block(&decision);
+            Some(block) = node3.recv_block_decision() => {
+                assert_valid_block(&block);
                 node3_blocks_count += 1;
             }
 
@@ -180,8 +180,8 @@ async fn test_basic_consensus() {
                         node3.cast(ConsensusMsg::ReceivedSignedVote(vote.clone()));
                     }
                     GossipEvent::BroadcastFullProposal(full_proposal) => {
-                        node2.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));;
-                        node3.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));;
+                        node2.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));
+                        node3.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));
                     }
                     _ => {}}
             }
@@ -196,8 +196,8 @@ async fn test_basic_consensus() {
                         node3.cast(ConsensusMsg::ReceivedSignedVote(vote.clone()));
                     }
                     GossipEvent::BroadcastFullProposal(full_proposal) => {
-                        node1.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));;
-                        node3.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));;
+                        node1.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));
+                        node3.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));
                     }
                     _ => {}}
             }
@@ -212,8 +212,8 @@ async fn test_basic_consensus() {
                         node2.cast(ConsensusMsg::ReceivedSignedVote(vote.clone()));
                     }
                     GossipEvent::BroadcastFullProposal(full_proposal) => {
-                        node1.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));;
-                        node2.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));;
+                        node1.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));
+                        node2.cast(ConsensusMsg::ReceivedFullProposal(full_proposal.clone()));
                     }
                     _ => {}}
             }
