@@ -1,4 +1,5 @@
 use malachite_metrics::{Metrics, SharedRegistry};
+use snapchain::proto::snapchain::Block;
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
@@ -11,7 +12,7 @@ use tonic::transport::Server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use snapchain::consensus::consensus::SystemMessage;
+use snapchain::consensus::consensus::{BlockStore, SystemMessage};
 use snapchain::core::types::proto;
 use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
@@ -109,17 +110,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Use the new non-global metrics registry when we upgrade to newer version of malachite
     let _ = Metrics::register(registry);
 
+    let (new_block_tx, mut new_block_rx) = mpsc::channel::<Block>(100);
+
     let node = SnapchainNode::create(
         keypair.clone(),
         app_config.consensus.clone(),
         Some(app_config.rpc_address.clone()),
-        gossip_tx,
-    );
+        gossip_tx.clone(),
+        new_block_tx.clone(),
+    )
+    .await;
 
     tokio::spawn(async move {
-        let mut block_proposers = HashMap::new();
-        block_proposers.insert(shard, block_proposer.clone());
-        let service = MySnapchainService::new(block_proposers);
+        let mut block_store = BlockStore::new();
+        while let Some(block) = new_block_rx.recv().await {
+            block_store.put_block(block)
+        }
+
+        let service = MySnapchainService::new(block_store);
 
         let resp = Server::builder()
             .add_service(SnapchainServiceServer::new(service))

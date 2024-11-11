@@ -7,6 +7,7 @@ use crate::core::types::{
     SnapchainValidatorSet,
 };
 use crate::network::gossip::GossipEvent;
+use crate::proto::snapchain::Block;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
 use malachite_metrics::Metrics;
@@ -28,6 +29,7 @@ impl SnapchainNode {
         config: Config,
         rpc_address: Option<String>,
         gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
+        new_block_tx: mpsc::Sender<Block>,
     ) -> Self {
         let validator_address = Address(keypair.public().to_bytes());
 
@@ -35,7 +37,6 @@ impl SnapchainNode {
 
         let (shard_decision_tx, shard_decision_rx) = mpsc::channel::<Decision>(100);
         let (block_decision_tx, block_decision_rx) = mpsc::channel::<Decision>(100);
-
         // Create the shard validators
         for shard_id in config.shard_ids() {
             if shard_id == 0 {
@@ -108,6 +109,7 @@ impl SnapchainNode {
             shard_decision_rx,
             config.num_shards(),
             Some(block_decision_tx),
+            new_block_tx,
         );
         let block_validator = ShardValidator::new(
             validator_address.clone(),

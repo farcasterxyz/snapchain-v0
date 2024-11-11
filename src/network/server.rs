@@ -1,4 +1,4 @@
-use crate::consensus::consensus::BlockProposer;
+use crate::consensus::consensus::{BlockProposer, BlockStore};
 use crate::core::types::{ShardId, SnapchainShard};
 use crate::proto::message::Message;
 use crate::proto::rpc::snapchain_service_server::{SnapchainService, SnapchainServiceServer};
@@ -12,14 +12,12 @@ use tracing::info;
 
 #[derive(Default)]
 pub struct MySnapchainService {
-    block_proposers: HashMap<SnapchainShard, Arc<Mutex<BlockProposer>>>,
+    block_store: BlockStore,
 }
 
 impl MySnapchainService {
-    pub fn new(
-        block_proposers: HashMap<SnapchainShard, Arc<Mutex<BlockProposer>>>,
-    ) -> MySnapchainService {
-        MySnapchainService { block_proposers }
+    pub fn new(block_store: BlockStore) -> MySnapchainService {
+        MySnapchainService { block_store }
     }
 }
 
@@ -37,34 +35,12 @@ impl SnapchainService for MySnapchainService {
         &self,
         request: Request<BlocksRequest>,
     ) -> Result<Response<BlocksResponse>, Status> {
-        let shard_id = request.get_ref().shard_id;
-        let shard = SnapchainShard::new(shard_id as u8);
-        let block_proposer = self.block_proposers.get(&shard);
-        let blocks = match block_proposer {
-            None => vec![],
-            Some(block_proposer) => {
-                let block_proposer = block_proposer.lock().await;
-                block_proposer.get_blocks().clone()
-            }
-        };
         let start_block_number = request.get_ref().start_block_number;
         let stop_block_number = request.get_ref().stop_block_number;
-        let blocks_in_range = blocks.into_iter().filter(|block| match &block.header {
-            None => false,
-            Some(header) => match &header.height {
-                None => false,
-                Some(height) => match stop_block_number {
-                    None => height.block_number >= start_block_number,
-                    Some(stop_block_number) => {
-                        height.block_number >= start_block_number
-                            && height.block_number <= stop_block_number
-                    }
-                },
-            },
-        });
-        let response = Response::new(BlocksResponse {
-            blocks: blocks_in_range.collect(),
-        });
+        let blocks = self
+            .block_store
+            .get_blocks(start_block_number, stop_block_number);
+        let response = Response::new(BlocksResponse { blocks });
         Ok(response)
     }
 }

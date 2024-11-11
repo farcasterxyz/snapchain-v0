@@ -1,3 +1,4 @@
+use alloy::rpc::types::serde_helpers::quantity::vec;
 use malachite_common::{ValidatorSet, Validity};
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -167,11 +168,7 @@ pub trait Proposer {
         timeout: Duration,
     ) -> FullProposal;
     // Receive a block/shard chunk proposed by another validator and return whether it is valid
-    async fn add_proposed_value(
-        &mut self,
-        full_proposal: &FullProposal,
-        validator_set: &SnapchainValidatorSet,
-    ) -> Validity;
+    fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity;
     // Consensus has confirmed the block/shard_chunk, apply it to the local state
     async fn decide(&mut self, height: Height, round: Round, value: ShardHash);
 }
@@ -249,11 +246,7 @@ impl Proposer for ShardProposer {
         proposal
     }
 
-    fn add_proposed_value(
-        &mut self,
-        full_proposal: &FullProposal,
-        _validator_set: &SnapchainValidatorSet,
-    ) -> Validity {
+    fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity {
         if let Some(proto::full_proposal::ProposedValue::Shard(_)) =
             full_proposal.proposed_value.clone()
         {
@@ -291,6 +284,43 @@ pub enum BlockProposerError {
     #[error(transparent)]
     RpcResponseError(#[from] tonic::Status),
 }
+#[derive(Default)]
+pub struct BlockStore {
+    blocks: Vec<Block>,
+}
+
+impl BlockStore {
+    pub fn new() -> BlockStore {
+        BlockStore { blocks: vec![] }
+    }
+    pub fn put_block(&mut self, block: Block) {
+        self.blocks.push(block)
+    }
+
+    pub fn get_blocks(
+        &self,
+        start_block_number: u64,
+        stop_block_number: Option<u64>,
+    ) -> Vec<Block> {
+        self.blocks
+            .clone()
+            .into_iter()
+            .filter(|block| match &block.header {
+                None => false,
+                Some(header) => match &header.height {
+                    None => false,
+                    Some(height) => match stop_block_number {
+                        None => height.block_number >= start_block_number,
+                        Some(stop_block_number) => {
+                            height.block_number >= start_block_number
+                                && height.block_number <= stop_block_number
+                        }
+                    },
+                },
+            })
+            .collect()
+    }
+}
 
 pub struct BlockProposer {
     shard_id: SnapchainShard,
@@ -300,6 +330,8 @@ pub struct BlockProposer {
     shard_decision_rx: RxDecision,
     num_shards: u32,
     tx_decision: Option<TxDecision>,
+    block_store: BlockStore,
+    new_block_tx: mpsc::Sender<Block>,
 }
 
 impl BlockProposer {
@@ -309,6 +341,7 @@ impl BlockProposer {
         shard_decision_rx: RxDecision,
         num_shards: u32,
         tx_decision: Option<TxDecision>,
+        new_block_tx: mpsc::Sender<Block>,
     ) -> BlockProposer {
         BlockProposer {
             shard_id,
@@ -318,6 +351,8 @@ impl BlockProposer {
             shard_decision_rx,
             num_shards,
             tx_decision,
+            new_block_tx,
+            block_store: BlockStore::new(),
         }
     }
 
@@ -369,27 +404,19 @@ impl BlockProposer {
         confirmed_shard_chunks
     }
 
-    pub fn get_blocks(&self) -> &Vec<Block> {
-        &self.blocks
+    async fn publish_new_block(&self, block: Block) {
+        match self.new_block_tx.send(block.clone()).await {
+            Err(err) => {
+                error!("Unable to send block {:#?}", block);
+            }
+            Ok(()) => {}
+        };
     }
 
-    pub fn get_proposed_value(&self, shard_hash: &ShardHash) -> Option<&Block> {
-        self.proposed_blocks.get(shard_hash)
-    }
-
-    async fn sync_missing_blocks(
+    pub async fn register_validator(
         &mut self,
-        validator_set: &SnapchainValidatorSet,
-        new_block: &Block,
+        validator: &SnapchainValidator,
     ) -> Result<(), BlockProposerError> {
-        let header = new_block
-            .header
-            .as_ref()
-            .ok_or(BlockProposerError::BlockMissingHeader)?;
-        let height = header
-            .height
-            .as_ref()
-            .ok_or(BlockProposerError::BlockMissingHeight)?;
         let prev_block = self.blocks.last();
         let prev_block_number = match prev_block {
             None => 0,
@@ -406,24 +433,19 @@ impl BlockProposer {
             }
         };
 
-        if height.block_number > prev_block_number + 1 {
-            // TODO(aditi): Select peer in a smarter way
-            let peer = validator_set
-                .validators
-                .iter()
-                .find(|validator| validator.rpc_address.is_some());
-            match peer {
-                None => return Err(BlockProposerError::NoPeers),
-                Some(peer) => {
-                    let mut rpc_client =
-                        SnapchainServiceClient::connect(peer.rpc_address.clone().unwrap()).await?;
-                    let request = Request::new(BlocksRequest {
-                        shard_id: height.shard_index,
-                        start_block_number: prev_block_number + 1,
-                        stop_block_number: Some(height.block_number),
-                    });
-                    let missing_blocks = rpc_client.get_blocks(request).await?;
-                    self.blocks.extend(missing_blocks.get_ref().blocks.clone());
+        match &validator.rpc_address {
+            None => return Err(BlockProposerError::NoPeers),
+            Some(rpc_address) => {
+                let mut rpc_client = SnapchainServiceClient::connect(rpc_address.clone()).await?;
+                let request = Request::new(BlocksRequest {
+                    shard_id: self.shard_id.shard_id(),
+                    start_block_number: prev_block_number + 1,
+                    stop_block_number: None,
+                });
+                let missing_blocks = rpc_client.get_blocks(request).await?;
+                for block in missing_blocks.get_ref().blocks.clone() {
+                    self.blocks.push(block.clone());
+                    self.publish_new_block(block).await;
                 }
             }
         }
@@ -486,16 +508,10 @@ impl Proposer for BlockProposer {
         proposal
     }
 
-    async fn add_proposed_value(
-        &mut self,
-        full_proposal: &FullProposal,
-        validator_set: &SnapchainValidatorSet,
-    ) -> Validity {
+    fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity {
         if let Some(proto::full_proposal::ProposedValue::Block(_block)) =
             full_proposal.proposed_value.clone()
         {
-            // TODO(aditi): Handle error
-            self.sync_missing_blocks(validator_set, &block).await;
             self.proposed_blocks
                 .insert(full_proposal.shard_hash(), full_proposal.clone());
         }
@@ -507,6 +523,7 @@ impl Proposer for BlockProposer {
             if let Some(tx_decision) = &self.tx_decision {
                 let _ = tx_decision.send(proposal.clone()).await;
             }
+            self.publish_new_block(proposal.block().unwrap());
             self.blocks.push(proposal.block().unwrap());
             self.proposed_blocks.remove(&value);
         }
@@ -523,14 +540,15 @@ pub struct ShardValidator {
     current_proposer: Option<Address>,
     // This should be proposer: Box<dyn Proposer> but that doesn't implement Send which is required for the actor system.
     // TODO: Fix once we remove the actor system
-    block_proposer: Option<Arc<Mutex<BlockProposer>>>,
+    block_proposer: Option<BlockProposer>,
     shard_proposer: Option<ShardProposer>,
 }
 
 impl ShardValidator {
     pub fn new(
         address: Address,
-        block_proposer: Option<Arc<Mutex<BlockProposer>>>,
+        shard: SnapchainShard,
+        block_proposer: Option<BlockProposer>,
         shard_proposer: Option<ShardProposer>,
     ) -> ShardValidator {
         ShardValidator {
@@ -562,7 +580,6 @@ impl ShardValidator {
 
     pub async fn decide(&mut self, height: Height, _: Round, value: ShardHash) {
         if let Some(block_proposer) = &mut self.block_proposer {
-            let mut block_proposer = block_proposer.lock().await;
             block_proposer.decide(height, self.current_round, value);
         } else if let Some(shard_proposer) = &mut self.shard_proposer {
             shard_proposer
@@ -575,20 +592,15 @@ impl ShardValidator {
         self.current_round = Round::Nil;
     }
 
-    pub async fn add_proposed_value(
+    pub fn add_proposed_value(
         &mut self,
         full_proposal: FullProposal,
     ) -> ProposedValue<SnapchainValidatorContext> {
         let value = full_proposal.shard_hash();
         let validity = if let Some(block_proposer) = &mut self.block_proposer {
-            let mut block_proposer = block_proposer.lock().await;
-            block_proposer
-                .add_proposed_value(&full_proposal, &self.validator_set)
-                .await
+            block_proposer.add_proposed_value(&full_proposal)
         } else if let Some(shard_proposer) = &mut self.shard_proposer {
-            shard_proposer
-                .add_proposed_value(&full_proposal, &self.validator_set)
-                .await
+            shard_proposer.add_proposed_value(&full_proposal)
         } else {
             panic!("No proposer set");
         };
@@ -610,13 +622,13 @@ impl ShardValidator {
         timeout: Duration,
     ) -> FullProposal {
         let proposed_value = if let Some(block_proposer) = &mut self.block_proposer {
-            let mut block_proposer = block_proposer.lock().await;
-            block_proposer.propose_value(height, round, timeout).await;
+            block_proposer.propose_value(height, round, timeout).await
         } else if let Some(shard_proposer) = &mut self.shard_proposer {
             shard_proposer.propose_value(height, round, timeout).await
         } else {
             panic!("No proposer set");
         };
+        proposed_value
     }
 }
 
@@ -784,6 +796,15 @@ impl Consensus {
                 // let total_peers = state.consensus.driver.validator_set().count() - 1;
 
                 // println!("Connected to {connected_peers}/{total_peers} peers");
+                match &mut state.shard_validator.block_proposer {
+                    None => {}
+                    Some(block_proposer) => {
+                        match block_proposer.register_validator(&validator).await {
+                            Ok(()) => {}
+                            Err(err) => error!("Error registering validator {:#?}", err),
+                        }
+                    }
+                }
 
                 self.metrics.connected_peers.inc();
 
@@ -819,10 +840,7 @@ impl Consensus {
                     "Received proposed value: {:?} at {:?}",
                     height, self.params.address
                 );
-                let proposed_value = state
-                    .shard_validator
-                    .add_proposed_value(full_proposal)
-                    .await;
+                let proposed_value = state.shard_validator.add_proposed_value(full_proposal);
 
                 let result = self
                     .process_input(
