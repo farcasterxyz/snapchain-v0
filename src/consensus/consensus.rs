@@ -442,7 +442,7 @@ impl BlockProposer {
 
         if validator.max_known_block_number > prev_block_number {
             match &validator.rpc_address {
-                None => return Err(BlockProposerError::NoPeers),
+                None => return Ok(()),
                 Some(rpc_address) => {
                     let mut rpc_client =
                         SnapchainServiceClient::connect(rpc_address.clone()).await?;
