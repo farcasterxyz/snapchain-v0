@@ -20,7 +20,6 @@ const MAX_SHARDS: u32 = 3;
 
 pub struct SnapchainNode {
     pub consensus_actors: BTreeMap<u32, ActorRef<ConsensusMsg<SnapchainValidatorContext>>>,
-    pub block_decision_rx: mpsc::Receiver<Decision>,
 }
 
 impl SnapchainNode {
@@ -29,14 +28,13 @@ impl SnapchainNode {
         config: Config,
         rpc_address: Option<String>,
         gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
-        new_block_tx: mpsc::Sender<Block>,
+        block_tx: mpsc::Sender<Block>,
     ) -> Self {
         let validator_address = Address(keypair.public().to_bytes());
 
         let mut consensus_actors = BTreeMap::new();
 
         let (shard_decision_tx, shard_decision_rx) = mpsc::channel::<Decision>(100);
-        let (block_decision_tx, block_decision_rx) = mpsc::channel::<Decision>(100);
         // Create the shard validators
         for shard_id in config.shard_ids() {
             if shard_id == 0 {
@@ -108,8 +106,7 @@ impl SnapchainNode {
             block_shard.clone(),
             shard_decision_rx,
             config.num_shards(),
-            Some(block_decision_tx),
-            new_block_tx,
+            Some(block_tx),
         );
         let block_validator = ShardValidator::new(
             validator_address.clone(),
@@ -131,10 +128,7 @@ impl SnapchainNode {
         .unwrap();
         consensus_actors.insert(0, block_consensus_actor);
 
-        Self {
-            consensus_actors,
-            block_decision_rx,
-        }
+        Self { consensus_actors }
     }
 
     pub fn stop(&self) {

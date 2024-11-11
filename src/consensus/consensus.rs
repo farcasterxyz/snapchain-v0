@@ -329,9 +329,8 @@ pub struct BlockProposer {
     proposed_blocks: BTreeMap<ShardHash, FullProposal>,
     shard_decision_rx: RxDecision,
     num_shards: u32,
-    tx_decision: Option<TxDecision>,
+    block_tx: Option<mpsc::Sender<Block>>,
     block_store: BlockStore,
-    new_block_tx: mpsc::Sender<Block>,
 }
 
 impl BlockProposer {
@@ -340,8 +339,7 @@ impl BlockProposer {
         shard_id: SnapchainShard,
         shard_decision_rx: RxDecision,
         num_shards: u32,
-        tx_decision: Option<TxDecision>,
-        new_block_tx: mpsc::Sender<Block>,
+        block_tx: Option<mpsc::Sender<Block>>,
     ) -> BlockProposer {
         BlockProposer {
             shard_id,
@@ -350,8 +348,7 @@ impl BlockProposer {
             proposed_blocks: BTreeMap::new(),
             shard_decision_rx,
             num_shards,
-            tx_decision,
-            new_block_tx,
+            block_tx,
             block_store: BlockStore::new(),
         }
     }
@@ -405,12 +402,9 @@ impl BlockProposer {
     }
 
     async fn publish_new_block(&self, block: Block) {
-        match self.new_block_tx.send(block.clone()).await {
-            Err(err) => {
-                error!("Unable to send block {:#?}", block);
-            }
-            Ok(()) => {}
-        };
+        if let Some(block_tx) = &self.block_tx {
+            let _ = block_tx.send(block.clone()).await;
+        }
     }
 
     pub async fn register_validator(
@@ -520,9 +514,6 @@ impl Proposer for BlockProposer {
 
     async fn decide(&mut self, _height: Height, _round: Round, value: ShardHash) {
         if let Some(proposal) = self.proposed_blocks.get(&value) {
-            if let Some(tx_decision) = &self.tx_decision {
-                let _ = tx_decision.send(proposal.clone()).await;
-            }
             self.publish_new_block(proposal.block().unwrap());
             self.blocks.push(proposal.block().unwrap());
             self.proposed_blocks.remove(&value);

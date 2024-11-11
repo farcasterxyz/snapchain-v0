@@ -110,20 +110,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Use the new non-global metrics registry when we upgrade to newer version of malachite
     let _ = Metrics::register(registry);
 
-    let (new_block_tx, mut new_block_rx) = mpsc::channel::<Block>(100);
-
-    let node = SnapchainNode::create(
+    let (block_tx, mut block_rx) = mpsc::channel::<Block>(100);
+    let mut node = SnapchainNode::create(
         keypair.clone(),
         app_config.consensus.clone(),
         Some(app_config.rpc_address.clone()),
         gossip_tx.clone(),
-        new_block_tx.clone(),
+        block_tx.clone(),
     )
     .await;
 
     tokio::spawn(async move {
         let mut block_store = BlockStore::new();
-        while let Some(block) = new_block_rx.recv().await {
+        while let Some(block) = block_rx.recv().await {
             block_store.put_block(block)
         }
 
