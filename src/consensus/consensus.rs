@@ -1,4 +1,3 @@
-use alloy::rpc::types::serde_helpers::quantity::vec;
 use malachite_common::{ValidatorSet, Validity};
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -7,7 +6,7 @@ use tonic::Request;
 use async_trait::async_trait;
 use libp2p::identity::ed25519::{Keypair, SecretKey};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use malachite_common::{
@@ -32,9 +31,7 @@ pub use malachite_consensus::Params as ConsensusParams;
 pub use malachite_consensus::State as ConsensusState;
 use prost::Message;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tokio::{select, time};
 

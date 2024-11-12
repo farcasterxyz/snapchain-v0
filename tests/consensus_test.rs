@@ -1,32 +1,21 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use futures::FutureExt;
 use libp2p::identity::ed25519::Keypair;
-use malachite_metrics::{Metrics, SharedRegistry};
-use ractor::concurrency::JoinHandle;
-use ractor::ActorRef;
-use snapchain::consensus::consensus::{
-    BlockStore, Decision, ShardProposer, ShardValidator, TxDecision,
-};
-use snapchain::core::types::proto;
+use snapchain::consensus::consensus::BlockStore;
 use snapchain::network::server::MySnapchainService;
 use snapchain::node::snapchain_node::SnapchainNode;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::proto::snapchain::Block;
 use snapchain::{
     consensus::consensus::ConsensusMsg,
-    core::types::{
-        Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
-        SnapchainValidatorSet,
-    },
+    core::types::{ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext},
     network::gossip::GossipEvent,
 };
-use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, Mutex};
 use tokio::{select, time};
 use tonic::transport::Server;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 use tracing_subscriber::EnvFilter;
 
 struct NodeForTest {

@@ -1,6 +1,4 @@
 use malachite_metrics::{Metrics, SharedRegistry};
-use snapchain::proto::snapchain::Block;
-use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
