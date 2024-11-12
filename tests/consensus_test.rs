@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use hex;
 use libp2p::identity::ed25519::Keypair;
 use snapchain::consensus::consensus::BlockStore;
 use snapchain::network::server::MySnapchainService;
@@ -41,10 +42,14 @@ impl NodeForTest {
         let write_block_store = block_store.clone();
         let assert_valid_block = |block: &Block| {
             let header = block.header.as_ref().unwrap();
-            debug!(
-                "Decided block at height {:#?}, value: {:#?}",
-                header.height, block.hash
+            let message_count = block.shard_chunks[0].transactions[0].user_messages.len();
+            info!(
+                hash = hex::encode(&block.hash),
+                height = header.height.as_ref().map(|h| h.block_number),
+                message_count,
+                "decided block",
             );
+
             assert_eq!(block.shard_chunks.len(), 1);
         };
         tokio::spawn(async move {
@@ -55,9 +60,13 @@ impl NodeForTest {
             }
         });
 
+        //TODO: don't assume shard
+        //TODO: remove/redo unwrap
+        let messages_tx = node.shard_messages.get(&1u32).unwrap().clone();
+
         let rpc_server_block_store = block_store.clone();
         tokio::spawn(async move {
-            let service = MySnapchainService::new(rpc_server_block_store);
+            let service = MySnapchainService::new(rpc_server_block_store, messages_tx);
 
             let grpc_addr = format!("0.0.0.0:{}", grpc_port);
             let grpc_socket_addr: SocketAddr = grpc_addr.parse().unwrap();
@@ -152,7 +161,7 @@ async fn test_basic_consensus() {
     tokio::spawn(async move {
         let mut i: i32 = 0;
         loop {
-            debug!(i, "sending message");
+            info!(i, "sending message");
             messages_tx1
                 .send(message::Message {
                     hash: i.to_be_bytes().to_vec(), // just for now

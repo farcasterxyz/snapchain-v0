@@ -246,9 +246,9 @@ impl Proposer for ShardProposer {
             header: Some(shard_header),
             hash: hash.clone(),
             transactions: vec![snapchain::Transaction {
-                fid: 1234,
-                account_root: vec![5, 5, 6, 6],
-                system_messages: vec![],
+                fid: 1234,                      //TODO
+                account_root: vec![5, 5, 6, 6], //TODO
+                system_messages: vec![],        //TODO
                 user_messages,
             }],
             votes: None,
