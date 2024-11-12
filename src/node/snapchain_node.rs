@@ -13,7 +13,7 @@ use malachite_config::TimeoutConfig;
 use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::BTreeMap;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use tracing::warn;
 
 const MAX_SHARDS: u32 = 3;
@@ -27,7 +27,7 @@ impl SnapchainNode {
         keypair: Keypair,
         config: Config,
         rpc_address: Option<String>,
-        max_known_block_number: u64,
+        current_height: u64,
         gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
         block_tx: mpsc::Sender<Block>,
     ) -> Self {
@@ -49,7 +49,7 @@ impl SnapchainNode {
                 shard.clone(),
                 keypair.public().clone(),
                 rpc_address.clone(),
-                max_known_block_number,
+                current_height,
             );
             let shard_validator_set = SnapchainValidatorSet::new(vec![shard_validator]);
             let shard_consensus_params = ConsensusParams {
@@ -93,7 +93,7 @@ impl SnapchainNode {
             block_shard.clone(),
             keypair.public().clone(),
             rpc_address.clone(),
-            max_known_block_number,
+            current_height,
         );
         let block_validator_set = SnapchainValidatorSet::new(vec![block_validator]);
 
