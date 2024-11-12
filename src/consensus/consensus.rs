@@ -7,7 +7,7 @@ use tonic::Request;
 use async_trait::async_trait;
 use libp2p::identity::ed25519::{Keypair, SecretKey};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info, warn};
 
 use malachite_common::{
@@ -293,6 +293,7 @@ impl BlockStore {
     pub fn new() -> BlockStore {
         BlockStore { blocks: vec![] }
     }
+
     pub fn put_block(&mut self, block: Block) {
         self.blocks.push(block)
     }
@@ -342,7 +343,7 @@ pub struct BlockProposer {
     proposed_blocks: BTreeMap<ShardHash, FullProposal>,
     shard_decision_rx: RxDecision,
     num_shards: u32,
-    block_tx: Vec<mpsc::Sender<Block>>,
+    block_tx: mpsc::Sender<Block>,
     block_store: BlockStore,
 }
 
@@ -352,7 +353,7 @@ impl BlockProposer {
         shard_id: SnapchainShard,
         shard_decision_rx: RxDecision,
         num_shards: u32,
-        block_tx: Vec<mpsc::Sender<Block>>,
+        block_tx: mpsc::Sender<Block>,
     ) -> BlockProposer {
         BlockProposer {
             shard_id,
@@ -415,8 +416,11 @@ impl BlockProposer {
     }
 
     async fn publish_new_block(&self, block: Block) {
-        for tx in &self.block_tx {
-            let _ = tx.send(block.clone()).await;
+        match self.block_tx.send(block.clone()).await {
+            Err(err) => {
+                error!("Erorr publishing new block {:#?}", err)
+            }
+            Ok(_) => {}
         }
     }
 
@@ -440,12 +444,12 @@ impl BlockProposer {
             }
         };
 
-        if validator.max_known_block_number > prev_block_number {
+        if validator.current_height > prev_block_number {
             match &validator.rpc_address {
                 None => return Ok(()),
                 Some(rpc_address) => {
-                    let mut rpc_client =
-                        SnapchainServiceClient::connect(rpc_address.clone()).await?;
+                    let destination_addr = format!("http://{}", rpc_address.clone());
+                    let mut rpc_client = SnapchainServiceClient::connect(destination_addr).await?;
                     let request = Request::new(BlocksRequest {
                         shard_id: self.shard_id.shard_id(),
                         start_block_number: prev_block_number + 1,
@@ -575,8 +579,25 @@ impl ShardValidator {
         self.validator_set.clone()
     }
 
+    pub fn get_current_height(&self) -> u64 {
+        match &self.block_proposer {
+            None => 0,
+            Some(block_proposer) => block_proposer.block_store.max_block_number(),
+        }
+    }
+
     pub fn add_validator(&mut self, validator: SnapchainValidator) -> bool {
         self.validator_set.add(validator)
+    }
+
+    pub async fn sync_with_new_validator(&mut self, validator: &SnapchainValidator) {
+        match &mut self.block_proposer {
+            None => {}
+            Some(block_proposer) => match block_proposer.register_validator(&validator).await {
+                Ok(()) => {}
+                Err(err) => error!("Error registering validator {:#?}", err),
+            },
+        }
     }
 
     pub fn start_round(&mut self, height: Height, round: Round, proposer: Address) {
@@ -805,15 +826,10 @@ impl Consensus {
                 // let total_peers = state.consensus.driver.validator_set().count() - 1;
 
                 // println!("Connected to {connected_peers}/{total_peers} peers");
-                match &mut state.shard_validator.block_proposer {
-                    None => {}
-                    Some(block_proposer) => {
-                        match block_proposer.register_validator(&validator).await {
-                            Ok(()) => {}
-                            Err(err) => error!("Error registering validator {:#?}", err),
-                        }
-                    }
-                }
+                state
+                    .shard_validator
+                    .sync_with_new_validator(&validator)
+                    .await;
 
                 self.metrics.connected_peers.inc();
 
@@ -1070,15 +1086,11 @@ impl Actor for Consensus {
     ) -> Result<(), ActorProcessingErr> {
         state.timers.cancel_all();
         // Add ourselves to the validator set
-        let max_known_block_number = match &state.shard_validator.block_proposer {
-            None => 0,
-            Some(block_proposer) => block_proposer.block_store.max_block_number(),
-        };
         state.shard_validator.add_validator(SnapchainValidator::new(
             self.shard_id.clone(),
             self.ctx.public_key(),
             None,
-            max_known_block_number,
+            state.shard_validator.get_current_height(),
         ));
         Ok(())
     }

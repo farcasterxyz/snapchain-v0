@@ -12,11 +12,11 @@ use tracing::info;
 
 #[derive(Default)]
 pub struct MySnapchainService {
-    block_store: BlockStore,
+    block_store: Arc<Mutex<BlockStore>>,
 }
 
 impl MySnapchainService {
-    pub fn new(block_store: BlockStore) -> MySnapchainService {
+    pub fn new(block_store: Arc<Mutex<BlockStore>>) -> MySnapchainService {
         MySnapchainService { block_store }
     }
 }
@@ -37,9 +37,8 @@ impl SnapchainService for MySnapchainService {
     ) -> Result<Response<BlocksResponse>, Status> {
         let start_block_number = request.get_ref().start_block_number;
         let stop_block_number = request.get_ref().stop_block_number;
-        let blocks = self
-            .block_store
-            .get_blocks(start_block_number, stop_block_number);
+        let block_store = self.block_store.lock().await;
+        let blocks = block_store.get_blocks(start_block_number, stop_block_number);
         let response = Response::new(BlocksResponse { blocks });
         Ok(response)
     }

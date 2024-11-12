@@ -13,7 +13,7 @@ use malachite_config::TimeoutConfig;
 use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::BTreeMap;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tracing::warn;
 
 const MAX_SHARDS: u32 = 3;
@@ -29,7 +29,7 @@ impl SnapchainNode {
         rpc_address: Option<String>,
         max_known_block_number: u64,
         gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
-        block_tx: Vec<mpsc::Sender<Block>>,
+        block_tx: mpsc::Sender<Block>,
     ) -> Self {
         let validator_address = Address(keypair.public().to_bytes());
 

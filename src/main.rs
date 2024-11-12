@@ -110,31 +110,33 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Use the new non-global metrics registry when we upgrade to newer version of malachite
     let _ = Metrics::register(registry);
 
-    let (rpc_block_tx, mut rpc_block_rx) = mpsc::channel::<Block>(100);
-    let (main_block_tx, mut main_block_rx) = mpsc::channel::<Block>(100);
+    let (block_tx, mut block_rx) = mpsc::channel(100);
 
-    let mut block_store = BlockStore::new();
-    while let Some(block) = main_block_rx.recv().await {
-        block_store.put_block(block)
-    }
+    // TODO(aditi): Eliminate this lock when we use the db for block store
+    let block_store = Arc::new(Mutex::new(BlockStore::new()));
 
+    let write_block_store = block_store.clone();
+    tokio::spawn(async move {
+        while let Some(block) = block_rx.recv().await {
+            let mut block_store = write_block_store.lock().await;
+            block_store.put_block(block)
+        }
+    });
+
+    let current_height = block_store.lock().await.max_block_number();
     let node = SnapchainNode::create(
         keypair.clone(),
         app_config.consensus.clone(),
         Some(app_config.rpc_address.clone()),
-        block_store.max_block_number(),
+        current_height,
         gossip_tx.clone(),
-        vec![rpc_block_tx, main_block_tx],
+        block_tx,
     )
     .await;
 
+    let rpc_server_block_store = block_store.clone();
     tokio::spawn(async move {
-        let mut block_store = BlockStore::new();
-        while let Some(block) = rpc_block_rx.recv().await {
-            block_store.put_block(block)
-        }
-
-        let service = MySnapchainService::new(block_store);
+        let service = MySnapchainService::new(rpc_server_block_store);
 
         let resp = Server::builder()
             .add_service(SnapchainServiceServer::new(service))
@@ -180,7 +182,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 fid: 0,
                                 rpc_address: app_config.rpc_address.clone(),
                                 shard_index: i,
-                                max_known_block_number: block_store.max_block_number()
+                                current_height: block_store.lock().await.max_block_number()
                             }),
                             nonce,   // Need the nonce to avoid the gossip duplicate message check
                         };
