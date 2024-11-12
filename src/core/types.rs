@@ -25,7 +25,7 @@ where
     fn shard_id(&self) -> u32;
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
 pub struct SnapchainShard(u32);
 
 impl ShardId for SnapchainShard {
@@ -266,6 +266,7 @@ pub struct SnapchainValidator {
     pub address: Address,
     pub public_key: PublicKey,
     pub rpc_address: Option<String>,
+    pub current_height: u64,
 }
 
 impl SnapchainValidator {
@@ -273,12 +274,14 @@ impl SnapchainValidator {
         shard_index: SnapchainShard,
         public_key: PublicKey,
         rpc_address: Option<String>,
+        current_height: u64,
     ) -> Self {
         Self {
             shard_index: shard_index.shard_id(),
             address: Address(public_key.to_bytes()),
             public_key,
             rpc_address,
+            current_height,
         }
     }
 }

@@ -1,6 +1,7 @@
 use malachite_common::{ValidatorSet, Validity};
 use std::collections::BTreeMap;
 use std::time::Duration;
+use tonic::Request;
 
 use async_trait::async_trait;
 use libp2p::identity::ed25519::{Keypair, SecretKey};
@@ -23,11 +24,14 @@ use crate::core::types::{
     SnapchainValidatorContext, SnapchainValidatorSet,
 };
 use crate::network::gossip::GossipEvent;
+use crate::proto::rpc::snapchain_service_client::SnapchainServiceClient;
+use crate::proto::rpc::BlocksRequest;
 use crate::proto::snapchain::{FullProposal, ShardChunk, ShardHeader};
 pub use malachite_consensus::Params as ConsensusParams;
 pub use malachite_consensus::State as ConsensusState;
 use prost::Message;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tokio::time::Instant;
 use tokio::{select, time};
 
@@ -260,6 +264,75 @@ impl Proposer for ShardProposer {
     }
 }
 
+#[derive(Error, Debug)]
+pub enum BlockProposerError {
+    #[error("Block missing header")]
+    BlockMissingHeader,
+
+    #[error("Block missing height")]
+    BlockMissingHeight,
+
+    #[error("No peers")]
+    NoPeers,
+
+    #[error(transparent)]
+    RpcTransportError(#[from] tonic::transport::Error),
+
+    #[error(transparent)]
+    RpcResponseError(#[from] tonic::Status),
+}
+#[derive(Default)]
+pub struct BlockStore {
+    blocks: Vec<Block>,
+}
+
+impl BlockStore {
+    pub fn new() -> BlockStore {
+        BlockStore { blocks: vec![] }
+    }
+
+    pub fn put_block(&mut self, block: Block) {
+        self.blocks.push(block)
+    }
+
+    pub fn max_block_number(&self) -> u64 {
+        match self.blocks.last() {
+            None => 0,
+            Some(block) => match &block.header {
+                None => 0,
+                Some(header) => match &header.height {
+                    None => 0,
+                    Some(height) => height.block_number,
+                },
+            },
+        }
+    }
+
+    pub fn get_blocks(
+        &self,
+        start_block_number: u64,
+        stop_block_number: Option<u64>,
+    ) -> Vec<Block> {
+        self.blocks
+            .clone()
+            .into_iter()
+            .filter(|block| match &block.header {
+                None => false,
+                Some(header) => match &header.height {
+                    None => false,
+                    Some(height) => match stop_block_number {
+                        None => height.block_number >= start_block_number,
+                        Some(stop_block_number) => {
+                            height.block_number >= start_block_number
+                                && height.block_number <= stop_block_number
+                        }
+                    },
+                },
+            })
+            .collect()
+    }
+}
+
 pub struct BlockProposer {
     shard_id: SnapchainShard,
     address: Address,
@@ -267,7 +340,8 @@ pub struct BlockProposer {
     proposed_blocks: BTreeMap<ShardHash, FullProposal>,
     shard_decision_rx: RxDecision,
     num_shards: u32,
-    tx_decision: Option<TxDecision>,
+    block_tx: mpsc::Sender<Block>,
+    block_store: BlockStore,
 }
 
 impl BlockProposer {
@@ -276,7 +350,7 @@ impl BlockProposer {
         shard_id: SnapchainShard,
         shard_decision_rx: RxDecision,
         num_shards: u32,
-        tx_decision: Option<TxDecision>,
+        block_tx: mpsc::Sender<Block>,
     ) -> BlockProposer {
         BlockProposer {
             shard_id,
@@ -285,7 +359,8 @@ impl BlockProposer {
             proposed_blocks: BTreeMap::new(),
             shard_decision_rx,
             num_shards,
-            tx_decision,
+            block_tx,
+            block_store: BlockStore::new(),
         }
     }
 
@@ -335,6 +410,58 @@ impl BlockProposer {
             }
         }
         confirmed_shard_chunks
+    }
+
+    async fn publish_new_block(&self, block: Block) {
+        match self.block_tx.send(block.clone()).await {
+            Err(err) => {
+                error!("Erorr publishing new block {:#?}", err)
+            }
+            Ok(_) => {}
+        }
+    }
+
+    pub async fn register_validator(
+        &mut self,
+        validator: &SnapchainValidator,
+    ) -> Result<(), BlockProposerError> {
+        let prev_block = self.blocks.last();
+        let prev_block_number = match prev_block {
+            None => 0,
+            Some(prev_block) => {
+                let header = prev_block
+                    .header
+                    .as_ref()
+                    .ok_or(BlockProposerError::BlockMissingHeader)?;
+                let height = header
+                    .height
+                    .as_ref()
+                    .ok_or(BlockProposerError::BlockMissingHeight)?;
+                height.block_number
+            }
+        };
+
+        if validator.current_height > prev_block_number {
+            match &validator.rpc_address {
+                None => return Ok(()),
+                Some(rpc_address) => {
+                    let destination_addr = format!("http://{}", rpc_address.clone());
+                    let mut rpc_client = SnapchainServiceClient::connect(destination_addr).await?;
+                    let request = Request::new(BlocksRequest {
+                        shard_id: self.shard_id.shard_id(),
+                        start_block_number: prev_block_number + 1,
+                        stop_block_number: None,
+                    });
+                    let missing_blocks = rpc_client.get_blocks(request).await?;
+                    for block in missing_blocks.get_ref().blocks.clone() {
+                        self.blocks.push(block.clone());
+                        self.publish_new_block(block).await;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -404,9 +531,7 @@ impl Proposer for BlockProposer {
 
     async fn decide(&mut self, _height: Height, _round: Round, value: ShardHash) {
         if let Some(proposal) = self.proposed_blocks.get(&value) {
-            if let Some(tx_decision) = &self.tx_decision {
-                let _ = tx_decision.send(proposal.clone()).await;
-            }
+            self.publish_new_block(proposal.block().unwrap()).await;
             self.blocks.push(proposal.block().unwrap());
             self.proposed_blocks.remove(&value);
         }
@@ -451,8 +576,25 @@ impl ShardValidator {
         self.validator_set.clone()
     }
 
+    pub fn get_current_height(&self) -> u64 {
+        match &self.block_proposer {
+            None => 0,
+            Some(block_proposer) => block_proposer.block_store.max_block_number(),
+        }
+    }
+
     pub fn add_validator(&mut self, validator: SnapchainValidator) -> bool {
         self.validator_set.add(validator)
+    }
+
+    pub async fn sync_with_new_validator(&mut self, validator: &SnapchainValidator) {
+        match &mut self.block_proposer {
+            None => {}
+            Some(block_proposer) => match block_proposer.register_validator(&validator).await {
+                Ok(()) => {}
+                Err(err) => error!("Error registering validator {:#?}", err),
+            },
+        }
     }
 
     pub fn start_round(&mut self, height: Height, round: Round, proposer: Address) {
@@ -680,6 +822,10 @@ impl Consensus {
                 // let total_peers = state.consensus.driver.validator_set().count() - 1;
 
                 // println!("Connected to {connected_peers}/{total_peers} peers");
+                state
+                    .shard_validator
+                    .sync_with_new_validator(&validator)
+                    .await;
 
                 self.metrics.connected_peers.inc();
 
@@ -940,6 +1086,7 @@ impl Actor for Consensus {
             self.shard_id.clone(),
             self.ctx.public_key(),
             None,
+            state.shard_validator.get_current_height(),
         ));
         Ok(())
     }

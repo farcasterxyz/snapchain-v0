@@ -156,7 +156,7 @@ impl SnapchainGossip {
                                                 }
                                                 let rpc_address = validator.rpc_address;
                                                 let shard_index = validator.shard_index;
-                                                let validator = SnapchainValidator::new(SnapchainShard::new(shard_index), public_key.unwrap(), Some(rpc_address));
+                                                let validator = SnapchainValidator::new(SnapchainShard::new(shard_index), public_key.unwrap(), Some(rpc_address), validator.current_height);
                                                 let consensus_message = ConsensusMsg::RegisterValidator(validator);
                                                 let res = self.system_tx.send(SystemMessage::Consensus(consensus_message)).await;
                                                 if let Err(e) = res {

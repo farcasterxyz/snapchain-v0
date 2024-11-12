@@ -7,6 +7,7 @@ use crate::core::types::{
     SnapchainValidatorSet,
 };
 use crate::network::gossip::GossipEvent;
+use crate::proto::snapchain::Block;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
 use malachite_metrics::Metrics;
@@ -19,7 +20,6 @@ const MAX_SHARDS: u32 = 3;
 
 pub struct SnapchainNode {
     pub consensus_actors: BTreeMap<u32, ActorRef<ConsensusMsg<SnapchainValidatorContext>>>,
-    pub block_decision_rx: mpsc::Receiver<Decision>,
 }
 
 impl SnapchainNode {
@@ -27,15 +27,15 @@ impl SnapchainNode {
         keypair: Keypair,
         config: Config,
         rpc_address: Option<String>,
+        current_height: u64,
         gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
+        block_tx: mpsc::Sender<Block>,
     ) -> Self {
         let validator_address = Address(keypair.public().to_bytes());
 
         let mut consensus_actors = BTreeMap::new();
 
         let (shard_decision_tx, shard_decision_rx) = mpsc::channel::<Decision>(100);
-        let (block_decision_tx, block_decision_rx) = mpsc::channel::<Decision>(100);
-
         // Create the shard validators
         for shard_id in config.shard_ids() {
             if shard_id == 0 {
@@ -49,6 +49,7 @@ impl SnapchainNode {
                 shard.clone(),
                 keypair.public().clone(),
                 rpc_address.clone(),
+                current_height,
             );
             let shard_validator_set = SnapchainValidatorSet::new(vec![shard_validator]);
             let shard_consensus_params = ConsensusParams {
@@ -92,6 +93,7 @@ impl SnapchainNode {
             block_shard.clone(),
             keypair.public().clone(),
             rpc_address.clone(),
+            current_height,
         );
         let block_validator_set = SnapchainValidatorSet::new(vec![block_validator]);
 
@@ -107,7 +109,7 @@ impl SnapchainNode {
             block_shard.clone(),
             shard_decision_rx,
             config.num_shards(),
-            Some(block_decision_tx),
+            block_tx,
         );
         let block_validator = ShardValidator::new(
             validator_address.clone(),
@@ -129,10 +131,7 @@ impl SnapchainNode {
         .unwrap();
         consensus_actors.insert(0, block_consensus_actor);
 
-        Self {
-            consensus_actors,
-            block_decision_rx,
-        }
+        Self { consensus_actors }
     }
 
     pub fn stop(&self) {

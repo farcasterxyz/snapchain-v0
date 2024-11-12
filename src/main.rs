@@ -1,15 +1,16 @@
 use malachite_metrics::{Metrics, SharedRegistry};
 use std::error::Error;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::ctrl_c;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tokio::{select, time};
 use tonic::transport::Server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use snapchain::consensus::consensus::SystemMessage;
+use snapchain::consensus::consensus::{BlockStore, SystemMessage};
 use snapchain::core::types::proto;
 use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
@@ -103,8 +104,37 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
+    let registry = SharedRegistry::global();
+    // Use the new non-global metrics registry when we upgrade to newer version of malachite
+    let _ = Metrics::register(registry);
+
+    let (block_tx, mut block_rx) = mpsc::channel(100);
+
+    // TODO(aditi): Eliminate this lock when we use the db for block store
+    let block_store = Arc::new(Mutex::new(BlockStore::new()));
+
+    let write_block_store = block_store.clone();
     tokio::spawn(async move {
-        let service = MySnapchainService::default();
+        while let Some(block) = block_rx.recv().await {
+            let mut block_store = write_block_store.lock().await;
+            block_store.put_block(block)
+        }
+    });
+
+    let current_height = block_store.lock().await.max_block_number();
+    let node = SnapchainNode::create(
+        keypair.clone(),
+        app_config.consensus.clone(),
+        Some(app_config.rpc_address.clone()),
+        current_height,
+        gossip_tx.clone(),
+        block_tx,
+    )
+    .await;
+
+    let rpc_server_block_store = block_store.clone();
+    tokio::spawn(async move {
+        let service = MySnapchainService::new(rpc_server_block_store);
 
         let resp = Server::builder()
             .add_service(SnapchainServiceServer::new(service))
@@ -119,18 +149,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         shutdown_tx.send(()).await.ok();
     });
-
-    let registry = SharedRegistry::global();
-    // Use the new non-global metrics registry when we upgrade to newer version of malachite
-    let _ = Metrics::register(registry);
-
-    let node = SnapchainNode::create(
-        keypair.clone(),
-        app_config.consensus.clone(),
-        Some(app_config.rpc_address.clone()),
-        gossip_tx.clone(),
-    )
-    .await;
 
     // Create a timer for block creation
     let mut block_interval = time::interval(Duration::from_secs(2));
@@ -162,6 +180,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 fid: 0,
                                 rpc_address: app_config.rpc_address.clone(),
                                 shard_index: i,
+                                current_height: block_store.lock().await.max_block_number()
                             }),
                             nonce,   // Need the nonce to avoid the gossip duplicate message check
                         };
