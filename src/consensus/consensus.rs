@@ -1,5 +1,6 @@
 use malachite_common::{ValidatorSet, Validity};
 use std::collections::BTreeMap;
+use std::iter;
 use std::time::Duration;
 use tonic::Request;
 
@@ -27,6 +28,7 @@ use crate::network::gossip::GossipEvent;
 use crate::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 use crate::proto::rpc::BlocksRequest;
 use crate::proto::snapchain::{FullProposal, ShardChunk, ShardHeader};
+use crate::proto::{message, snapchain};
 pub use malachite_consensus::Params as ConsensusParams;
 pub use malachite_consensus::State as ConsensusState;
 use prost::Message;
@@ -176,6 +178,8 @@ pub struct ShardProposer {
     chunks: Vec<ShardChunk>,
     proposed_chunks: BTreeMap<ShardHash, FullProposal>,
     tx_decision: Option<TxDecision>,
+    messages_tx: mpsc::Sender<message::Message>,
+    messages_rx: mpsc::Receiver<message::Message>,
 }
 
 impl ShardProposer {
@@ -184,13 +188,21 @@ impl ShardProposer {
         shard_id: SnapchainShard,
         tx_decision: Option<TxDecision>,
     ) -> ShardProposer {
+        let (messages_tx, mut messages_rx) = mpsc::channel::<message::Message>(100);
+
         ShardProposer {
             shard_id,
             address,
             chunks: vec![],
             proposed_chunks: BTreeMap::new(),
             tx_decision,
+            messages_tx,
+            messages_rx,
         }
+    }
+
+    pub fn messages_tx(&self) -> mpsc::Sender<message::Message> {
+        self.messages_tx.clone()
     }
 }
 
@@ -222,10 +234,23 @@ impl Proposer for ShardProposer {
             .as_bytes()
             .to_vec();
 
+        let it = iter::from_fn(|| self.messages_rx.try_recv().ok());
+        let user_messages: Vec<message::Message> = it.collect();
+
+        // TODO: remove
+        if user_messages.len() > 0 {
+            debug!(count = user_messages.len(), "got fc messages");
+        }
+
         let chunk = ShardChunk {
             header: Some(shard_header),
             hash: hash.clone(),
-            transactions: vec![],
+            transactions: vec![snapchain::Transaction {
+                fid: 1234,
+                account_root: vec![5, 5, 6, 6],
+                system_messages: vec![],
+                user_messages,
+            }],
             votes: None,
         };
 

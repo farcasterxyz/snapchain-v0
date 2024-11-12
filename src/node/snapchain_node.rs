@@ -7,12 +7,13 @@ use crate::core::types::{
     SnapchainValidatorSet,
 };
 use crate::network::gossip::GossipEvent;
+use crate::proto::message;
 use crate::proto::snapchain::Block;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
 use malachite_metrics::Metrics;
 use ractor::ActorRef;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -20,6 +21,7 @@ const MAX_SHARDS: u32 = 3;
 
 pub struct SnapchainNode {
     pub consensus_actors: BTreeMap<u32, ActorRef<ConsensusMsg<SnapchainValidatorContext>>>,
+    pub shard_messages: HashMap<u32, mpsc::Sender<message::Message>>,
 }
 
 impl SnapchainNode {
@@ -36,6 +38,9 @@ impl SnapchainNode {
         let mut consensus_actors = BTreeMap::new();
 
         let (shard_decision_tx, shard_decision_rx) = mpsc::channel::<Decision>(100);
+
+        let mut shard_messages: HashMap<u32, mpsc::Sender<message::Message>> = HashMap::new();
+
         // Create the shard validators
         for shard_id in config.shard_ids() {
             if shard_id == 0 {
@@ -64,6 +69,9 @@ impl SnapchainNode {
                 shard.clone(),
                 Some(shard_decision_tx.clone()),
             );
+
+            shard_messages.insert(shard_id, shard_proposer.messages_tx());
+
             let shard_validator = ShardValidator::new(
                 validator_address.clone(),
                 shard.clone(),
@@ -131,7 +139,10 @@ impl SnapchainNode {
         .unwrap();
         consensus_actors.insert(0, block_consensus_actor);
 
-        Self { consensus_actors }
+        Self {
+            consensus_actors,
+            shard_messages,
+        }
     }
 
     pub fn stop(&self) {

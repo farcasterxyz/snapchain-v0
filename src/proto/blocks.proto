@@ -1,6 +1,8 @@
 syntax = "proto3";
 package snapchain;
 
+import "message.proto";
+
 // Common types
 
 message Validator {
@@ -112,7 +114,7 @@ message ShardChunk {
 
 message Transaction {
   uint64 fid = 1;
-  repeated UserMessage user_messages = 2;
+  repeated message.Message user_messages = 2;
   repeated ValidatorMessage system_messages = 3;
   bytes account_root = 4; // State root for the account after applying the transaction for the fid
 }
@@ -124,11 +126,6 @@ message OnChainEvent {
 
 // Fname transfers
 message FnameTransfer {
-
-}
-
-// User provided messages
-message UserMessage {
 
 }
 
