@@ -1,33 +1,46 @@
 use crate::consensus::consensus::{BlockProposer, BlockStore};
 use crate::core::types::{ShardId, SnapchainShard};
-use crate::proto::message::Message;
+use crate::proto::message;
 use crate::proto::rpc::snapchain_service_server::{SnapchainService, SnapchainServiceServer};
 use crate::proto::rpc::{BlocksRequest, BlocksResponse};
 use crate::proto::snapchain::Block;
 use hex::ToHex;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tonic::{Request, Response, Status};
 use tracing::info;
 
-#[derive(Default)]
 pub struct MySnapchainService {
     block_store: Arc<Mutex<BlockStore>>,
+    message_tx: mpsc::Sender<message::Message>,
 }
 
 impl MySnapchainService {
-    pub fn new(block_store: Arc<Mutex<BlockStore>>) -> MySnapchainService {
-        MySnapchainService { block_store }
+    pub fn new(
+        block_store: Arc<Mutex<BlockStore>>,
+        message_tx: mpsc::Sender<message::Message>,
+    ) -> Self {
+        Self {
+            block_store,
+            message_tx,
+        }
     }
 }
 
 #[tonic::async_trait]
 impl SnapchainService for MySnapchainService {
-    async fn submit_message(&self, request: Request<Message>) -> Result<Response<Message>, Status> {
+    async fn submit_message(
+        &self,
+        request: Request<message::Message>,
+    ) -> Result<Response<message::Message>, Status> {
         let hash = request.get_ref().hash.encode_hex::<String>();
         info!(hash, "Received a message");
 
-        let response = Response::new(request.into_inner());
+        let message = request.into_inner();
+        self.message_tx.send(message.clone()).await.unwrap(); // Do we need clone here? I think yes?
+
+        let response = Response::new(message);
         Ok(response)
     }
 

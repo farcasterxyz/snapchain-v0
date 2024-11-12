@@ -16,6 +16,7 @@ use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
 use snapchain::network::server::MySnapchainService;
 use snapchain::node::snapchain_node::SnapchainNode;
+use snapchain::proto::message;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 
 #[tokio::main]
@@ -133,8 +134,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     .await;
 
     let rpc_server_block_store = block_store.clone();
+
+    //TODO: don't assume shard
+    //TODO: remove/redo unwrap
+    let messages_tx = node.messages_tx_by_shard.get(&1u32).unwrap().clone();
+
     tokio::spawn(async move {
-        let service = MySnapchainService::new(rpc_server_block_store);
+        let service = MySnapchainService::new(rpc_server_block_store, messages_tx);
 
         let resp = Server::builder()
             .add_service(SnapchainServiceServer::new(service))

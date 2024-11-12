@@ -1,10 +1,12 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use hex;
 use libp2p::identity::ed25519::Keypair;
 use snapchain::consensus::consensus::BlockStore;
 use snapchain::network::server::MySnapchainService;
 use snapchain::node::snapchain_node::SnapchainNode;
+use snapchain::proto::message;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::proto::snapchain::Block;
 use snapchain::{
@@ -15,7 +17,7 @@ use snapchain::{
 use tokio::sync::{mpsc, Mutex};
 use tokio::{select, time};
 use tonic::transport::Server;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
 struct NodeForTest {
@@ -31,6 +33,7 @@ impl NodeForTest {
         let config = snapchain::consensus::consensus::Config::default();
 
         let (gossip_tx, gossip_rx) = mpsc::channel::<GossipEvent<SnapchainValidatorContext>>(100);
+
         let (block_tx, mut block_rx) = mpsc::channel::<Block>(100);
         let node =
             SnapchainNode::create(keypair.clone(), config, None, 0, gossip_tx, block_tx).await;
@@ -39,10 +42,14 @@ impl NodeForTest {
         let write_block_store = block_store.clone();
         let assert_valid_block = |block: &Block| {
             let header = block.header.as_ref().unwrap();
-            debug!(
-                "Decided block at height {:#?}, value: {:#?}",
-                header.height, block.hash
+            let message_count = block.shard_chunks[0].transactions[0].user_messages.len();
+            info!(
+                hash = hex::encode(&block.hash),
+                height = header.height.as_ref().map(|h| h.block_number),
+                message_count,
+                "decided block",
             );
+
             assert_eq!(block.shard_chunks.len(), 1);
         };
         tokio::spawn(async move {
@@ -53,9 +60,13 @@ impl NodeForTest {
             }
         });
 
+        //TODO: don't assume shard
+        //TODO: remove/redo unwrap
+        let messages_tx = node.messages_tx_by_shard.get(&1u32).unwrap().clone();
+
         let rpc_server_block_store = block_store.clone();
         tokio::spawn(async move {
-            let service = MySnapchainService::new(rpc_server_block_store);
+            let service = MySnapchainService::new(rpc_server_block_store, messages_tx);
 
             let grpc_addr = format!("0.0.0.0:{}", grpc_port);
             let grpc_socket_addr: SocketAddr = grpc_addr.parse().unwrap();
@@ -114,8 +125,9 @@ impl NodeForTest {
 
 #[tokio::test]
 async fn test_basic_consensus() {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::new("info"))
+        .with_env_filter(env_filter)
         .try_init();
 
     // Create validator keys
@@ -138,6 +150,34 @@ async fn test_basic_consensus() {
 
     //sleep 2 seconds to wait for validators to register
     tokio::time::sleep(time::Duration::from_secs(2)).await;
+
+    let messages_tx1 = node1
+        .node
+        .messages_tx_by_shard
+        .get(&1u32)
+        .expect("message channel should exist")
+        .clone();
+
+    tokio::spawn(async move {
+        let mut i: i32 = 0;
+        loop {
+            info!(i, "sending message");
+            messages_tx1
+                .send(message::Message {
+                    hash: i.to_be_bytes().to_vec(), // just for now
+                    data: None,
+                    data_bytes: None,
+                    hash_scheme: message::HashScheme::Blake3 as i32,
+                    signature: vec![],
+                    signature_scheme: 0,
+                    signer: vec![],
+                })
+                .await
+                .unwrap();
+            i += 1;
+            tokio::time::sleep(time::Duration::from_millis(200)).await;
+        }
+    });
 
     // Kick off consensus
     node1.start_height(1);
@@ -202,9 +242,11 @@ async fn test_basic_consensus() {
                     _ => {}}
             }
             _ = timer.tick() => {
-                if node1.num_blocks().await == 3
-                    && node2.num_blocks().await == 3
-                    && node3.num_blocks().await == 3
+                let stop = 3 * 3;
+
+                if node1.num_blocks().await == stop
+                    && node2.num_blocks().await == stop
+                    && node3.num_blocks().await == stop
                 {
                     break;
                 }
