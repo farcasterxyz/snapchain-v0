@@ -137,7 +137,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     //TODO: don't assume shard
     //TODO: remove/redo unwrap
-    let messages_tx = node.shard_messages.get(&1u32).unwrap().clone();
+    let messages_tx = node.messages_tx_by_shard.get(&1u32).unwrap().clone();
 
     tokio::spawn(async move {
         let service = MySnapchainService::new(rpc_server_block_store, messages_tx);

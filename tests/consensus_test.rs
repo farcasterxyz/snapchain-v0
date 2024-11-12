@@ -62,7 +62,7 @@ impl NodeForTest {
 
         //TODO: don't assume shard
         //TODO: remove/redo unwrap
-        let messages_tx = node.shard_messages.get(&1u32).unwrap().clone();
+        let messages_tx = node.messages_tx_by_shard.get(&1u32).unwrap().clone();
 
         let rpc_server_block_store = block_store.clone();
         tokio::spawn(async move {
@@ -125,7 +125,7 @@ impl NodeForTest {
 
 #[tokio::test]
 async fn test_basic_consensus() {
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(env_filter)
         .try_init();
@@ -153,7 +153,7 @@ async fn test_basic_consensus() {
 
     let messages_tx1 = node1
         .node
-        .shard_messages
+        .messages_tx_by_shard
         .get(&1u32)
         .expect("message channel should exist")
         .clone();
@@ -175,7 +175,7 @@ async fn test_basic_consensus() {
                 .await
                 .unwrap();
             i += 1;
-            tokio::time::sleep(time::Duration::from_millis(5)).await;
+            tokio::time::sleep(time::Duration::from_millis(200)).await;
         }
     });
 
@@ -242,9 +242,11 @@ async fn test_basic_consensus() {
                     _ => {}}
             }
             _ = timer.tick() => {
-                if node1.num_blocks().await == 3
-                    && node2.num_blocks().await == 3
-                    && node3.num_blocks().await == 3
+                let stop = 3 * 3;
+
+                if node1.num_blocks().await == stop
+                    && node2.num_blocks().await == stop
+                    && node3.num_blocks().await == stop
                 {
                     break;
                 }

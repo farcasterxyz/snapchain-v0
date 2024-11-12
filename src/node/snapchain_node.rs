@@ -21,7 +21,7 @@ const MAX_SHARDS: u32 = 3;
 
 pub struct SnapchainNode {
     pub consensus_actors: BTreeMap<u32, ActorRef<ConsensusMsg<SnapchainValidatorContext>>>,
-    pub shard_messages: HashMap<u32, mpsc::Sender<message::Message>>,
+    pub messages_tx_by_shard: HashMap<u32, mpsc::Sender<message::Message>>,
 }
 
 impl SnapchainNode {
@@ -141,7 +141,7 @@ impl SnapchainNode {
 
         Self {
             consensus_actors,
-            shard_messages,
+            messages_tx_by_shard: shard_messages,
         }
     }
 
