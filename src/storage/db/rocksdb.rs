@@ -13,6 +13,9 @@ pub enum RocksdbError {
     #[error(transparent)]
     InternalError(#[from] rocksdb::Error),
 
+    #[error(transparent)]
+    DecodeError(#[from] prost::DecodeError),
+
     #[error("DB is not open")]
     DbNotOpen,
 }
@@ -53,6 +56,7 @@ pub struct IteratorOptions {
     pub reverse: bool,
 }
 
+#[derive(Default)]
 pub struct RocksDB {
     pub db: RwLock<Option<rocksdb::TransactionDB>>,
     pub path: String,

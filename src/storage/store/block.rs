@@ -1,6 +1,7 @@
-use crate::proto::Block;
+use crate::proto::snapchain::Block;
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch, RocksdbError};
 use prost::Message;
+use serde::Deserialize;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -13,12 +14,15 @@ pub enum BlockStorageError {
 
     #[error("Block missing height")]
     BlockMissingHeight,
+
+    #[error("Too many blocks in result")]
+    TooManyBlocksInResult,
 }
 
 pub const PAGE_SIZE_MAX: usize = 10_000;
 /** A page of messages returned from various APIs */
 pub struct BlockPage {
-    pub block_bytes: Vec<Vec<u8>>,
+    pub blocks: Vec<Block>,
     pub next_page_token: Option<Vec<u8>>,
 }
 
@@ -38,13 +42,14 @@ fn get_block_page_by_prefix(
     start_prefix: Option<Vec<u8>>,
     stop_prefix: Option<Vec<u8>>,
 ) -> Result<BlockPage, BlockStorageError> {
-    let mut block_bytes = Vec::new();
+    let mut blocks = Vec::new();
     let mut last_key = vec![];
 
     db.for_each_iterator_by_prefix(start_prefix, stop_prefix, page_options, |key, value| {
-        block_bytes.push(value.to_vec());
+        let block = Block::decode(value)?;
+        blocks.push(block);
 
-        if block_bytes.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
+        if blocks.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
             last_key = key.to_vec();
             return Ok(true); // Stop iterating
         }
@@ -59,9 +64,41 @@ fn get_block_page_by_prefix(
     };
 
     Ok(BlockPage {
-        block_bytes,
+        blocks,
         next_page_token,
     })
+}
+
+pub fn get_current_height(
+    db: &RocksDB,
+    shard_index: u32,
+) -> Result<Option<u64>, BlockStorageError> {
+    let start_primary_key = make_primary_key(shard_index, 0);
+    let block_page = get_block_page_by_prefix(
+        db,
+        &PageOptions {
+            reverse: true,
+            page_size: Some(1),
+            page_token: None,
+        },
+        Some(start_primary_key),
+        None,
+    )?;
+
+    if block_page.blocks.len() > 1 {
+        return Err(BlockStorageError::TooManyBlocksInResult);
+    }
+
+    match block_page.blocks.get(0).cloned() {
+        None => Ok(None),
+        Some(block) => match block.header {
+            None => Ok(None),
+            Some(header) => match header.height {
+                None => Ok(None),
+                Some(height) => Ok(Some(height.block_number)),
+            },
+        },
+    }
 }
 
 pub fn get_blocks_in_range(
@@ -78,7 +115,7 @@ pub fn get_blocks_in_range(
     get_block_page_by_prefix(db, page_options, Some(start_primary_key), stop_prefix)
 }
 
-pub fn put_block(db: &RocksDB, block: &Block) -> Result<(), BlockStorageError> {
+pub fn put_block(db: &RocksDB, block: Block) -> Result<(), BlockStorageError> {
     let mut txn = db.txn();
     let header = block
         .header

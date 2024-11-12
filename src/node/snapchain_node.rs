@@ -9,6 +9,8 @@ use crate::core::types::{
 use crate::network::gossip::GossipEvent;
 use crate::proto::message;
 use crate::proto::snapchain::Block;
+use crate::storage::db::RocksDB;
+use crate::storage::store::get_current_height;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
 use malachite_metrics::Metrics;
@@ -30,9 +32,9 @@ impl SnapchainNode {
         keypair: Keypair,
         config: Config,
         rpc_address: Option<String>,
-        current_height: u64,
         gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
         block_tx: mpsc::Sender<Block>,
+        db: &RocksDB,
     ) -> Self {
         let validator_address = Address(keypair.public().to_bytes());
 
@@ -50,6 +52,11 @@ impl SnapchainNode {
                 panic!("Shard ID must be between 1 and 3");
             }
 
+            let current_height = match get_current_height(&db, shard_id) {
+                Err(_) => 0,
+                Ok(None) => 0,
+                Ok(Some(height)) => height,
+            };
             let shard = SnapchainShard::new(shard_id);
             let shard_validator = SnapchainValidator::new(
                 shard.clone(),
@@ -97,6 +104,11 @@ impl SnapchainNode {
         // Now create the block validator
         let block_shard = SnapchainShard::new(0);
 
+        let current_height = match get_current_height(&db, 0) {
+            Err(_) => 0,
+            Ok(None) => 0,
+            Ok(Some(height)) => height,
+        };
         // We might want to use different keys for the block shard so signatures are different and cannot be accidentally used in the wrong shard
         let block_validator = SnapchainValidator::new(
             block_shard.clone(),

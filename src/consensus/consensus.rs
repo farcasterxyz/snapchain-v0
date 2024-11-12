@@ -582,7 +582,7 @@ pub struct ShardValidator {
     current_proposer: Option<Address>,
     // This should be proposer: Box<dyn Proposer> but that doesn't implement Send which is required for the actor system.
     // TODO: Fix once we remove the actor system
-    block_proposer: Option<Arc<Mutex<BlockProposer>>>,
+    block_proposer: Option<BlockProposer>,
     shard_proposer: Option<ShardProposer>,
     started: bool,
 }
@@ -665,7 +665,6 @@ impl ShardValidator {
     ) -> ProposedValue<SnapchainValidatorContext> {
         let value = full_proposal.shard_hash();
         let validity = if let Some(block_proposer) = &mut self.block_proposer {
-            let mut block_proposer = block_proposer.lock().await;
             block_proposer.add_proposed_value(&full_proposal)
         } else if let Some(shard_proposer) = &mut self.shard_proposer {
             shard_proposer.add_proposed_value(&full_proposal)

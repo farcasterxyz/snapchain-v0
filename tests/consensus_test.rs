@@ -10,6 +10,7 @@ use snapchain::node::snapchain_node::SnapchainNode;
 use snapchain::proto::message;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::proto::snapchain::Block;
+use snapchain::storage::db::RocksDB;
 use snapchain::{
     consensus::consensus::ConsensusMsg,
     core::types::{ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext},
@@ -38,8 +39,9 @@ impl NodeForTest {
         let (gossip_tx, gossip_rx) = mpsc::channel::<GossipEvent<SnapchainValidatorContext>>(100);
 
         let (block_tx, mut block_rx) = mpsc::channel::<Block>(100);
+        let db = RocksDB::new("./.rocksdb-test");
         let node =
-            SnapchainNode::create(keypair.clone(), config, None, 0, gossip_tx, block_tx).await;
+            SnapchainNode::create(keypair.clone(), config, None, gossip_tx, block_tx, &db).await;
 
         let block_store = Arc::new(Mutex::new(BlockStore::new()));
         let write_block_store = block_store.clone();
@@ -71,8 +73,9 @@ impl NodeForTest {
         let rpc_server_block_store = block_store.clone();
         let grpc_addr = format!("0.0.0.0:{}", grpc_port);
         let addr = grpc_addr.clone();
+        let db = RocksDB::new("./.rocksdb-test");
         tokio::spawn(async move {
-            let service = MySnapchainService::new(rpc_server_block_store, messages_tx);
+            let service = MySnapchainService::new(db, messages_tx);
 
             let grpc_socket_addr: SocketAddr = addr.parse().unwrap();
             let resp = Server::builder()
