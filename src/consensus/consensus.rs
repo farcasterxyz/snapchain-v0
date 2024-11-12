@@ -648,14 +648,13 @@ impl ShardValidator {
         round: Round,
         timeout: Duration,
     ) -> FullProposal {
-        let proposed_value = if let Some(block_proposer) = &mut self.block_proposer {
+        if let Some(block_proposer) = &mut self.block_proposer {
             block_proposer.propose_value(height, round, timeout).await
         } else if let Some(shard_proposer) = &mut self.shard_proposer {
             shard_proposer.propose_value(height, round, timeout).await
         } else {
             panic!("No proposer set");
-        };
-        proposed_value
+        }
     }
 }
 
