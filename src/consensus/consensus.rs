@@ -19,7 +19,7 @@ use malachite_metrics::Metrics;
 
 use crate::consensus::timers::{TimeoutElapsed, TimerScheduler};
 use crate::core::types::proto::ShardHash;
-use crate::core::types::proto::{Block, BlockHeader, Height as ProtoHeight};
+use crate::core::types::proto::{Block, BlockHeader};
 use crate::core::types::{
     proto, Address, Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator,
     SnapchainValidatorContext, SnapchainValidatorSet,
@@ -75,7 +75,18 @@ impl Config {
     }
 
     pub fn num_shards(&self) -> u32 {
-        self.shard_ids.len() as u32
+        self.shard_ids().len() as u32
+    }
+
+    pub fn with_shard_ids(&self, shard_ids: Vec<u32>) -> Self {
+        Self {
+            private_key: self.private_key.clone(),
+            shard_ids: shard_ids
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<String>>()
+                .join(","),
+        }
     }
 }
 
@@ -88,7 +99,7 @@ impl Default for Config {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ConsensusMsg<Ctx: SnapchainContext> {
     // Inputs
     /// Start consensus for the given height
@@ -225,10 +236,7 @@ impl Proposer for ShardProposer {
         let shard_header = ShardHeader {
             parent_hash,
             timestamp: 0,
-            height: Some(ProtoHeight {
-                block_number: height.block_number,
-                shard_index: height.shard_index,
-            }),
+            height: Some(height.clone()),
             shard_root: vec![],
         };
         let hash = blake3::hash(&shard_header.encode_to_vec())
@@ -260,7 +268,7 @@ impl Proposer for ShardProposer {
             shard_index: height.shard_index as u32,
         };
         let proposal = FullProposal {
-            height: Some(height.to_proto()),
+            height: Some(height.clone()),
             round: round.as_i64(),
             proposed_value: Some(proto::full_proposal::ProposedValue::Shard(chunk)),
             proposer: self.address.to_vec(),
@@ -364,6 +372,7 @@ pub struct BlockProposer {
     address: Address,
     blocks: Vec<Block>,
     proposed_blocks: BTreeMap<ShardHash, FullProposal>,
+    pending_chunks: BTreeMap<u64, Vec<ShardChunk>>,
     shard_decision_rx: RxDecision,
     num_shards: u32,
     block_tx: mpsc::Sender<Block>,
@@ -383,6 +392,7 @@ impl BlockProposer {
             address,
             blocks: vec![],
             proposed_blocks: BTreeMap::new(),
+            pending_chunks: BTreeMap::new(),
             shard_decision_rx,
             num_shards,
             block_tx,
@@ -395,47 +405,45 @@ impl BlockProposer {
         height: Height,
         timeout: Duration,
     ) -> Vec<ShardChunk> {
-        let mut confirmed_shard_chunks = vec![];
+        let requested_height = height.block_number;
 
         let mut poll_interval = time::interval(Duration::from_millis(10));
 
         // convert to deadline
         let deadline = Instant::now() + timeout;
-
         loop {
             let timeout = time::sleep_until(deadline);
             select! {
                 _ = poll_interval.tick() => {
                     if let Ok(decision) = self.shard_decision_rx.try_recv() {
                        if let Some(proto::full_proposal::ProposedValue::Shard(chunk)) = decision.proposed_value {
-                            let chunk_block_number = chunk.header.clone().unwrap().height.unwrap().block_number;
-                            if chunk_block_number == height.block_number {
-                                confirmed_shard_chunks.push(chunk);
+                            let chunk_height = chunk.header.clone().unwrap().height.unwrap();
+                            let chunk_block_number = chunk_height.block_number;
+                            if self.pending_chunks.contains_key(&chunk_block_number) {
+                                self.pending_chunks.get_mut(&chunk_block_number).unwrap().push(chunk);
+                            } else {
+                                self.pending_chunks.insert(chunk_block_number, vec![chunk]);
                             }
                         }
                     }
-                    if confirmed_shard_chunks.len() == self.num_shards as usize {
-                        break;
+                    if let Some(chunks) = self.pending_chunks.get(&requested_height) {
+                        if chunks.len() == self.num_shards as usize {
+                            break;
+                        }
                     }
                 }
                 _ = timeout => {
-                    warn!("Block validator did not receive all shard chunks in time for height: {:?}", height);
+                    warn!("Block validator did not receive all shard chunks in time for height: {:?}", requested_height);
                     break;
                 }
             }
         }
 
-        // loop to wait for the shard decision until we reach the timeout
-        while let Ok(decision) = self.shard_decision_rx.try_recv() {
-            if let Some(proto::full_proposal::ProposedValue::Shard(chunk)) = decision.proposed_value
-            {
-                let chunk_block_number = chunk.header.clone().unwrap().height.unwrap().block_number;
-                if chunk_block_number == height.block_number {
-                    confirmed_shard_chunks.push(chunk);
-                }
-            }
+        if let Some(chunks) = self.pending_chunks.get(&requested_height) {
+            chunks.clone()
+        } else {
+            vec![]
         }
-        confirmed_shard_chunks
     }
 
     async fn publish_new_block(&self, block: Block) {
@@ -512,10 +520,7 @@ impl Proposer for BlockProposer {
             shard_headers_hash: vec![],
             validators_hash: vec![],
             timestamp: 0,
-            height: Some(ProtoHeight {
-                block_number: height.block_number,
-                shard_index: height.shard_index as u32,
-            }),
+            height: Some(height.clone()),
         };
         let hash = blake3::hash(&block_header.encode_to_vec())
             .as_bytes()
@@ -535,7 +540,7 @@ impl Proposer for BlockProposer {
         };
 
         let proposal = FullProposal {
-            height: Some(height.to_proto()),
+            height: Some(height.clone()),
             round: round.as_i64(),
             proposed_value: Some(proto::full_proposal::ProposedValue::Block(block)),
             proposer: self.address.to_vec(),
@@ -555,11 +560,12 @@ impl Proposer for BlockProposer {
         Validity::Valid // TODO: Validate proposer signature?
     }
 
-    async fn decide(&mut self, _height: Height, _round: Round, value: ShardHash) {
+    async fn decide(&mut self, height: Height, _round: Round, value: ShardHash) {
         if let Some(proposal) = self.proposed_blocks.get(&value) {
             self.publish_new_block(proposal.block().unwrap()).await;
             self.blocks.push(proposal.block().unwrap());
             self.proposed_blocks.remove(&value);
+            self.pending_chunks.remove(&height.block_number);
         }
     }
 }
@@ -882,7 +888,7 @@ impl Consensus {
             }
 
             ConsensusMsg::ReceivedFullProposal(full_proposal) => {
-                let height = Height::from_proto(full_proposal.height.clone().unwrap());
+                let height = full_proposal.height.clone().unwrap();
                 debug!(
                     "Received proposed value: {:?} at {:?}",
                     height, self.params.address

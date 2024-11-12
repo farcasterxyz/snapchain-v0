@@ -24,7 +24,7 @@ struct Timer<Key, Msg> {
     generation: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TimeoutElapsed<Key> {
     key: Key,
     generation: u64,

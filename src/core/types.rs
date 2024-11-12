@@ -15,7 +15,8 @@ pub use crate::proto::snapchain as proto; // TODO: reconsider how this is import
 
 use crate::proto::snapchain::full_proposal::ProposedValue;
 use crate::proto::snapchain::{Block, FullProposal, ShardChunk};
-use proto::ShardHash;
+pub use proto::Height;
+pub use proto::ShardHash;
 
 pub trait ShardId
 where
@@ -123,31 +124,11 @@ impl Display for Hash {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Height {
-    pub shard_index: u32,
-    pub block_number: u64,
-}
-
 impl Height {
     pub const fn new(shard_index: u32, block_number: u64) -> Self {
         Self {
             shard_index,
             block_number,
-        }
-    }
-
-    pub fn to_proto(&self) -> proto::Height {
-        proto::Height {
-            shard_index: self.shard_index,
-            block_number: self.block_number,
-        }
-    }
-
-    pub(crate) fn from_proto(proto: proto::Height) -> Self {
-        Self {
-            block_number: proto.block_number,
-            shard_index: proto.shard_index,
         }
     }
 
@@ -252,7 +233,7 @@ impl FullProposal {
     }
 
     pub fn height(&self) -> Height {
-        Height::from_proto(self.height.clone().unwrap())
+        self.height.clone().unwrap()
     }
 
     pub fn round(&self) -> Round {
@@ -399,7 +380,7 @@ impl Vote {
             NilOrVal::Val(shard_hash) => Some(shard_hash.clone()),
         };
         proto::Vote {
-            height: Some(self.height.to_proto()),
+            height: Some(self.height.clone()),
             round: self.round.as_i64(),
             voter: self.voter.to_vec(),
             r#type: vote_type as i32,
@@ -419,7 +400,7 @@ impl Vote {
         };
         Self {
             vote_type,
-            height: Height::from_proto(proto.height.unwrap()),
+            height: proto.height.unwrap(),
             round: Round::new(proto.round),
             voter: Address::from_vec(proto.voter),
             shard_hash,
@@ -444,7 +425,7 @@ pub struct Proposal {
 impl Proposal {
     pub fn to_proto(&self) -> proto::Proposal {
         proto::Proposal {
-            height: Some(self.height.to_proto()),
+            height: Some(self.height),
             round: self.round.as_i64(),
             proposer: self.proposer.to_vec(),
             value: Some(self.shard_hash.clone()),
@@ -454,7 +435,7 @@ impl Proposal {
 
     pub fn from_proto(proto: proto::Proposal) -> Self {
         Self {
-            height: Height::from_proto(proto.height.unwrap()),
+            height: proto.height.unwrap(),
             round: Round::new(proto.round),
             shard_hash: proto.value.unwrap(),
             pol_round: Round::new(proto.pol_round),
