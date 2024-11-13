@@ -22,6 +22,7 @@ const MAX_SHARDS: u32 = 3;
 pub struct SnapchainNode {
     pub consensus_actors: BTreeMap<u32, ActorRef<ConsensusMsg<SnapchainValidatorContext>>>,
     pub messages_tx_by_shard: HashMap<u32, mpsc::Sender<message::Message>>,
+    pub address: Address,
 }
 
 impl SnapchainNode {
@@ -142,7 +143,12 @@ impl SnapchainNode {
         Self {
             consensus_actors,
             messages_tx_by_shard: shard_messages,
+            address: validator_address,
         }
+    }
+
+    pub fn id(&self) -> String {
+        self.address.prefix()
     }
 
     pub fn stop(&self) {
