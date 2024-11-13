@@ -15,11 +15,11 @@ use tracing::info;
 
 pub struct MySnapchainService {
     message_tx: mpsc::Sender<message::Message>,
-    db: RocksDB,
+    db: Arc<RocksDB>,
 }
 
 impl MySnapchainService {
-    pub fn new(db: RocksDB, message_tx: mpsc::Sender<message::Message>) -> Self {
+    pub fn new(db: Arc<RocksDB>, message_tx: mpsc::Sender<message::Message>) -> Self {
         Self { db, message_tx }
     }
 }

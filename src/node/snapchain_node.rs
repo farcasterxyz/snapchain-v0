@@ -16,6 +16,7 @@ use malachite_config::TimeoutConfig;
 use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -34,7 +35,7 @@ impl SnapchainNode {
         rpc_address: Option<String>,
         gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
         block_tx: mpsc::Sender<Block>,
-        db: &RocksDB,
+        db: Arc<RocksDB>,
     ) -> Self {
         let validator_address = Address(keypair.public().to_bytes());
 

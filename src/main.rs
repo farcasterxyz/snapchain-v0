@@ -4,6 +4,7 @@ use snapchain::proto::snapchain::Block;
 use snapchain::storage::store::{get_current_height, put_block};
 use std::error::Error;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::ctrl_c;
 use tokio::sync::mpsc;
@@ -124,14 +125,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    let db = RocksDB::new(db_path.clone().as_str());
+    let db = Arc::new(RocksDB::new(db_path.clone().as_str()));
     let node = SnapchainNode::create(
         keypair.clone(),
         app_config.consensus.clone(),
         Some(app_config.rpc_address.clone()),
         gossip_tx.clone(),
         block_tx,
-        &db,
+        db.clone(),
     )
     .await;
 
@@ -139,7 +140,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //TODO: remove/redo unwrap
     let messages_tx = node.messages_tx_by_shard.get(&1u32).unwrap().clone();
 
-    let rpc_db = RocksDB::new(db_path.clone().as_str());
+    let rpc_db = db.clone();
     tokio::spawn(async move {
         let service = MySnapchainService::new(rpc_db, messages_tx);
 

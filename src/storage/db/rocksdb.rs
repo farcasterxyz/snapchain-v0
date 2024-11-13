@@ -1,4 +1,5 @@
 use crate::storage::store::increment_vec_u8;
+use prost::DecodeError;
 use rocksdb::{Options, TransactionDB};
 use std::collections::HashMap;
 use std::fs::{self};
@@ -14,7 +15,7 @@ pub enum RocksdbError {
     InternalError(#[from] rocksdb::Error),
 
     #[error(transparent)]
-    DecodeError(#[from] prost::DecodeError),
+    DecodeError(#[from] DecodeError),
 
     #[error("DB is not open")]
     DbNotOpen,

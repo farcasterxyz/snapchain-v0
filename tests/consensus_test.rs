@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use hex;
 use libp2p::identity::ed25519::Keypair;
-use snapchain::consensus::consensus::BlockStore;
 use snapchain::network::server::MySnapchainService;
 use snapchain::node::snapchain_node::SnapchainNode;
 use snapchain::proto::message;
@@ -17,10 +16,10 @@ use snapchain::{
     core::types::{ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext},
     network::gossip::GossipEvent,
 };
-use tokio::sync::{mpsc, Mutex};
-use tokio::{select, time};
+use tokio::sync::mpsc;
+use tokio::time;
 use tonic::transport::Server;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 struct NodeForTest {
@@ -28,8 +27,8 @@ struct NodeForTest {
     num_shards: u32,
     node: SnapchainNode,
     gossip_rx: mpsc::Receiver<GossipEvent<SnapchainValidatorContext>>,
-    db: RocksDB,
     grpc_addr: String,
+    db: Arc<RocksDB>,
 }
 
 impl NodeForTest {
@@ -40,9 +39,23 @@ impl NodeForTest {
         let (gossip_tx, gossip_rx) = mpsc::channel::<GossipEvent<SnapchainValidatorContext>>(100);
 
         let (block_tx, mut block_rx) = mpsc::channel::<Block>(100);
-        let db = RocksDB::new("./.rocksdb-test");
-        let node =
-            SnapchainNode::create(keypair.clone(), config, None, gossip_tx, block_tx, &db).await;
+        let tmp_path = tempfile::tempdir()
+            .unwrap()
+            .path()
+            .as_os_str()
+            .to_string_lossy()
+            .to_string();
+        let db = Arc::new(RocksDB::new(&tmp_path));
+        db.open().unwrap();
+        let node = SnapchainNode::create(
+            keypair.clone(),
+            config,
+            None,
+            gossip_tx,
+            block_tx,
+            db.clone(),
+        )
+        .await;
 
         let node_id = node.id();
         let assert_valid_block = move |block: &Block| {
@@ -58,7 +71,7 @@ impl NodeForTest {
             assert_eq!(block.shard_chunks.len(), num_shards as usize);
         };
 
-        let put_db = RocksDB::new("./.rocksdb-test");
+        let put_db = db.clone();
         tokio::spawn(async move {
             while let Some(block) = block_rx.recv().await {
                 assert_valid_block(&block);
@@ -72,9 +85,9 @@ impl NodeForTest {
 
         let grpc_addr = format!("0.0.0.0:{}", grpc_port);
         let addr = grpc_addr.clone();
-        let rpc_db = RocksDB::new("./.rocksdb-test");
+        let grpc_db = db.clone();
         tokio::spawn(async move {
-            let service = MySnapchainService::new(rpc_db, messages_tx);
+            let service = MySnapchainService::new(grpc_db, messages_tx);
 
             let grpc_socket_addr: SocketAddr = addr.parse().unwrap();
             let resp = Server::builder()
@@ -94,8 +107,8 @@ impl NodeForTest {
             num_shards,
             node,
             gossip_rx,
-            db,
             grpc_addr: grpc_addr.clone(),
+            db,
         }
     }
 
@@ -251,6 +264,7 @@ impl TestNetwork {
     pub fn stop(&self) {
         for node in self.nodes.iter() {
             node.stop();
+            node.db.destroy().unwrap();
         }
     }
 }
