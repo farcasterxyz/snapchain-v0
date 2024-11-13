@@ -48,6 +48,7 @@ pub type Decision = FullProposal;
 pub type TxDecision = mpsc::Sender<Decision>;
 pub type RxDecision = mpsc::Receiver<Decision>;
 
+static PAGE_SIZE: usize = 100;
 pub enum SystemMessage {
     Consensus(ConsensusMsg<SnapchainValidatorContext>),
 }
@@ -353,31 +354,29 @@ impl BlockStore {
         stop_block_number: Option<u64>,
         shard_index: u32,
     ) -> Result<Vec<Block>, BlockProposerError> {
-        let blocks = get_blocks_in_range(
-            &self.db,
-            &PageOptions::default(),
-            shard_index,
-            start_block_number,
-            stop_block_number,
-        )?;
-        let blocks_in_range = blocks
-            .blocks
-            .into_iter()
-            .filter(|block| match &block.header {
-                None => false,
-                Some(header) => match &header.height {
-                    None => false,
-                    Some(height) => match stop_block_number {
-                        None => height.block_number >= start_block_number,
-                        Some(stop_block_number) => {
-                            height.block_number >= start_block_number
-                                && height.block_number <= stop_block_number
-                        }
-                    },
+        let mut blocks = vec![];
+        let mut next_page_token = None;
+        loop {
+            let block_page = get_blocks_in_range(
+                &self.db,
+                &PageOptions {
+                    page_size: Some(PAGE_SIZE),
+                    page_token: next_page_token,
+                    reverse: false,
                 },
-            })
-            .collect();
-        Ok(blocks_in_range)
+                shard_index,
+                start_block_number,
+                stop_block_number,
+            )?;
+            blocks.extend(block_page.blocks);
+            if block_page.next_page_token.is_none() {
+                break;
+            } else {
+                next_page_token = block_page.next_page_token
+            }
+        }
+
+        Ok(blocks)
     }
 }
 
