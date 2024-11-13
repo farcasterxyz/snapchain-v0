@@ -1,0 +1,6 @@
+ # e.g. goreman -f config/Procfile start
+
+ node1: RUSTFLAGS='-Awarnings' cargo run -- --id 1
+ node2: RUSTFLAGS='-Awarnings' cargo run -- --id 2
+ node3: RUSTFLAGS='-Awarnings' cargo run -- --id 3
+ node4: RUSTFLAGS='-Awarnings' cargo run -- --id 4
