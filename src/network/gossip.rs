@@ -5,11 +5,13 @@ use crate::core::types::{
 };
 use futures::StreamExt;
 use libp2p::identity::ed25519::Keypair;
+use libp2p::swarm::dial_opts::DialOpts;
 use libp2p::{
     gossipsub, mdns, noise, swarm::NetworkBehaviour, swarm::SwarmEvent, tcp, yamux, Swarm,
 };
 use malachite_common::{SignedProposal, SignedVote};
 use prost::Message;
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
@@ -17,6 +19,43 @@ use tokio::io;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, info, warn};
+
+const DEFAULT_GOSSIP_PORT: u16 = 3382;
+const DEFAULT_GOSSIP_HOST: &str = "127.0.0.1";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    pub address: String,
+    pub bootstrap_peers: String,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            address: format!(
+                "/ip4/{}/udp/{}/quic-v1",
+                DEFAULT_GOSSIP_HOST, DEFAULT_GOSSIP_PORT
+            ),
+            bootstrap_peers: "".to_string(),
+        }
+    }
+}
+
+impl Config {
+    pub fn new(address: String, bootstrap_peers: String) -> Self {
+        Config {
+            address,
+            bootstrap_peers,
+        }
+    }
+
+    pub fn bootstrap_addrs(&self) -> Vec<String> {
+        self.bootstrap_peers
+            .split(',')
+            .map(|s| s.to_string())
+            .collect()
+    }
+}
 
 pub enum GossipEvent<Ctx: SnapchainContext> {
     BroadcastSignedVote(SignedVote<Ctx>),
@@ -28,7 +67,6 @@ pub enum GossipEvent<Ctx: SnapchainContext> {
 #[derive(NetworkBehaviour)]
 pub struct SnapchainBehavior {
     pub gossipsub: gossipsub::Behaviour,
-    mdns: mdns::tokio::Behaviour,
 }
 
 pub struct SnapchainGossip {
@@ -41,7 +79,7 @@ pub struct SnapchainGossip {
 impl SnapchainGossip {
     pub fn create(
         keypair: Keypair,
-        addr: String,
+        config: Config,
         system_tx: Sender<SystemMessage>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair.clone().into())
@@ -74,14 +112,26 @@ impl SnapchainGossip {
                     gossipsub_config,
                 )?;
 
-                let mdns = mdns::tokio::Behaviour::new(
-                    mdns::Config::default(),
-                    key.public().to_peer_id(),
-                )?;
-                Ok(SnapchainBehavior { gossipsub, mdns })
+                Ok(SnapchainBehavior { gossipsub })
             })?
             .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
             .build();
+
+        for addr in config.bootstrap_addrs() {
+            let parsed_addr: libp2p::Multiaddr = addr.parse()?;
+            let opts = DialOpts::unknown_peer_id()
+                .address(parsed_addr.clone())
+                .build();
+            info!("Dialing bootstrap peer: {:?} ({:?})", parsed_addr, addr);
+            let res = swarm.dial(opts);
+            if let Err(e) = res {
+                warn!(
+                    "Failed to dial bootstrap peer {:?}: {:?}",
+                    parsed_addr.clone(),
+                    e
+                );
+            }
+        }
 
         // Create a Gossipsub topic
         let topic = gossipsub::IdentTopic::new("test-net");
@@ -93,7 +143,7 @@ impl SnapchainGossip {
         }
 
         // Listen on all assigned port for this id
-        swarm.listen_on(addr.parse()?)?;
+        swarm.listen_on(config.address.parse()?)?;
 
         let (tx, rx) = mpsc::channel(100);
         Ok(SnapchainGossip {
@@ -109,18 +159,12 @@ impl SnapchainGossip {
             tokio::select! {
                 gossip_event = self.swarm.select_next_some() => {
                     match gossip_event {
-                        SwarmEvent::Behaviour(SnapchainBehaviorEvent::Mdns(mdns::Event::Discovered(list))) => {
-                            for (peer_id, _multiaddr) in list {
-                                info!("mDNS discovered a new peer: {peer_id}");
-                                self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
-                            }
+                        SwarmEvent::ConnectionEstablished {peer_id, ..} => {
+                            info!("Connection established with peer: {peer_id}");
                         },
-                        SwarmEvent::Behaviour(SnapchainBehaviorEvent::Mdns(mdns::Event::Expired(list))) => {
-                            for (peer_id, _multiaddr) in list {
-                                info!("mDNS discover peer has expired: {peer_id}");
-                                self.swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer_id);
-                                // TODO: Remove validator
-                            }
+                        SwarmEvent::ConnectionClosed {peer_id, cause, ..} => {
+                            info!("Connection closed with peer: {:?} due to: {:?}", peer_id, cause);
+                            // TODO: Remove validator
                         },
                         SwarmEvent::Behaviour(SnapchainBehaviorEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) =>
                             info!("Peer: {peer_id} subscribed to topic: {topic}"),

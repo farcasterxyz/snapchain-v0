@@ -10,6 +10,8 @@ async fn main() {
         std::fs::create_dir("nodes").expect("Failed to create nodes directory");
     }
 
+    let base_rpc_port = 3382;
+    let base_gossip_port = 50050;
     for i in 1..=nodes {
         let id = i;
 
@@ -17,12 +19,25 @@ async fn main() {
             std::fs::create_dir(format!("nodes/{id}")).expect("Failed to create node directory");
         }
         let secret_key = hex::encode(SecretKey::generate());
-        let rpc_port = 3383 + i;
+        let rpc_port = base_rpc_port + i;
+        let gossip_port = base_gossip_port + i;
+        let host = "127.0.0.1";
+        let rpc_address = format!("{host}:{rpc_port}");
+        let gossip_multi_addr = format!("/ip4/127.0.0.1/udp/{gossip_port}/quic-v1");
+        let other_nodes_addresses = (1..=nodes)
+            .filter(|&x| x != id)
+            .map(|x| format!("/ip4/127.0.0.1/udp/{:?}/quic-v1", base_gossip_port + x))
+            .collect::<Vec<String>>()
+            .join(",");
 
         let config_file_content = format!(
             r#"
 id = {id}
-rpc_address=0.0.0.0:{rpc_port}
+rpc_address="{rpc_address}"
+
+[gossip]
+address="{gossip_multi_addr}"
+bootstrap_peers = "{other_nodes_addresses}"
 
 [consensus]
 private_key = "{secret_key}"
