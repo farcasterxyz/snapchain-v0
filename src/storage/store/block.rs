@@ -46,7 +46,7 @@ fn get_block_page_by_prefix(
     let mut blocks = Vec::new();
     let mut last_key = vec![];
 
-    db.for_each_iterator_by_prefix(start_prefix, stop_prefix, page_options, |key, value| {
+    db.for_each_iterator_by_prefix_paged(start_prefix, stop_prefix, page_options, |key, value| {
         let block = Block::decode(value)?;
         blocks.push(block);
 
