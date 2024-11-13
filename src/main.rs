@@ -29,13 +29,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Err("node id must be specified greater than 0".into());
     }
 
-    let base_port = 50050;
-    let port = base_port + app_config.id;
-    let addr = format!("/ip4/0.0.0.0/udp/{}/quic-v1", port);
-
-    let base_grpc_port = 50060;
-    let grpc_port = base_grpc_port + app_config.id;
-    let grpc_addr = format!("0.0.0.0:{}", grpc_port);
+    let addr = app_config.gossip.address.clone();
+    let grpc_addr = app_config.rpc_address.clone();
     let grpc_socket_addr: SocketAddr = grpc_addr.parse()?;
 
     info!(
@@ -66,7 +61,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let (system_tx, mut system_rx) = mpsc::channel::<SystemMessage>(100);
 
-    let gossip_result = SnapchainGossip::create(keypair.clone(), addr, system_tx.clone());
+    let gossip_result =
+        SnapchainGossip::create(keypair.clone(), app_config.gossip, system_tx.clone());
     if let Err(e) = gossip_result {
         error!(error = ?e, "Failed to create SnapchainGossip");
         return Ok(());

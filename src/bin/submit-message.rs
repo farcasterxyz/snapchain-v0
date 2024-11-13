@@ -78,7 +78,7 @@ async fn main() {
     compose_message(
         private_key,
         6833,
-        "http://127.0.0.1:50061".to_string(),
+        "http://127.0.0.1:3383".to_string(),
         "Welcome from Rust!",
     )
     .await

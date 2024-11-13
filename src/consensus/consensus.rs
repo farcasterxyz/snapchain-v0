@@ -32,6 +32,7 @@ use crate::proto::{message, snapchain};
 pub use malachite_consensus::Params as ConsensusParams;
 pub use malachite_consensus::State as ConsensusState;
 use prost::Message;
+use ractor::time::send_after;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::time::Instant;
@@ -582,6 +583,7 @@ pub struct ShardValidator {
     // TODO: Fix once we remove the actor system
     block_proposer: Option<BlockProposer>,
     shard_proposer: Option<ShardProposer>,
+    started: bool,
 }
 
 impl ShardValidator {
@@ -601,6 +603,7 @@ impl ShardValidator {
             current_proposer: None,
             block_proposer,
             shard_proposer,
+            started: false,
         }
     }
 
@@ -617,6 +620,10 @@ impl ShardValidator {
 
     pub fn add_validator(&mut self, validator: SnapchainValidator) -> bool {
         self.validator_set.add(validator)
+    }
+
+    pub fn start(&mut self) {
+        self.started = true;
     }
 
     pub async fn sync_with_new_validator(&mut self, validator: &SnapchainValidator) {
@@ -775,23 +782,7 @@ impl Consensus {
     ) -> Result<(), ActorProcessingErr> {
         match msg {
             ConsensusMsg::StartHeight(height) => {
-                let validator_set = state.shard_validator.get_validator_set();
-                debug!(
-                    "Starting height: {height} with {:?} validators",
-                    validator_set.count()
-                );
-                let result = self
-                    .process_input(
-                        &myself,
-                        state,
-                        ConsensusInput::StartHeight(height, validator_set),
-                    )
-                    .await;
-
-                if let Err(e) = result {
-                    error!("Error when starting height {height}: {e:?}");
-                }
-
+                self.start_height(&myself, state, height).await?;
                 Ok(())
             }
 
@@ -816,6 +807,12 @@ impl Consensus {
                     "Received vote: {:?} for height: {:?}, round: {:?} at {:?}",
                     vote.shard_hash, vote.height, vote.round, self.params.address
                 );
+                if !state.shard_validator.started {
+                    warn!("Consensus not started yet when receiving vote, starting");
+                    self.start_height(&myself, state, vote.height.clone())
+                        .await?;
+                }
+
                 if let Err(e) = self
                     .process_input(&myself, state, ConsensusInput::Vote(vote))
                     .await
@@ -830,6 +827,13 @@ impl Consensus {
                     "Received proposal: {:?} for height: {:?}, round: {:?} at {:?}",
                     proposal.shard_hash, proposal.height, proposal.round, self.params.address
                 );
+
+                if !state.shard_validator.started {
+                    warn!("Consensus not started yet when receiving proposal, starting");
+                    self.start_height(&myself, state, proposal.height.clone())
+                        .await?;
+                }
+
                 if let Err(e) = self
                     .process_input(&myself, state, ConsensusInput::Proposal(proposal))
                     .await
@@ -861,23 +865,14 @@ impl Consensus {
 
                 self.metrics.connected_peers.inc();
 
-                if connected_peers == 4 {
+                if connected_peers == 3 {
                     info!("Enough peers ({connected_peers}) connected to start consensus");
 
                     let height = state.consensus.driver.height();
-                    let validator_set = state.shard_validator.get_validator_set();
-
-                    let result = self
-                        .process_input(
-                            &myself,
-                            state,
-                            ConsensusInput::StartHeight(height, validator_set),
-                        )
-                        .await;
-
-                    if let Err(e) = result {
-                        error!("Error when starting height {height}: {e:?}");
-                    }
+                    send_after(Duration::from_secs(10), myself.get_cell(), move || {
+                        info!("Starting consensus");
+                        ConsensusMsg::<SnapchainValidatorContext>::StartHeight(height)
+                    });
                 }
                 Ok(())
             }
@@ -948,6 +943,40 @@ impl Consensus {
                 Ok(())
             }
         }
+    }
+
+    async fn start_height(
+        &self,
+        myself: &ActorRef<ConsensusMsg<SnapchainValidatorContext>>,
+        state: &mut State<SnapchainValidatorContext>,
+        height: Height,
+    ) -> Result<(), ActorProcessingErr> {
+        if state.shard_validator.started && state.consensus.driver.height() >= height {
+            warn!(
+                "Requested start height is lower than current height, ignoring: {:?}",
+                height
+            );
+            return Ok(());
+        }
+        let validator_set = state.shard_validator.get_validator_set();
+        debug!(
+            "Starting height: {height} with {:?} validators",
+            validator_set.count()
+        );
+        let result = self
+            .process_input(
+                &myself,
+                state,
+                ConsensusInput::StartHeight(height, validator_set),
+            )
+            .await;
+        state.shard_validator.start();
+
+        if let Err(e) = result {
+            error!("Error when starting height {height}: {e:?}");
+        }
+
+        Ok(())
     }
 
     #[tracing::instrument(skip_all)]
