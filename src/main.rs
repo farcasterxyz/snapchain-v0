@@ -1,5 +1,5 @@
 use malachite_metrics::{Metrics, SharedRegistry};
-use snapchain::consensus::consensus::Decision;
+use snapchain::consensus::consensus::{BlockStore, Decision};
 use snapchain::proto::snapchain::Block;
 use snapchain::storage::store::{get_current_height, put_block};
 use std::error::Error;
@@ -36,6 +36,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let grpc_addr = app_config.rpc_address.clone();
     let grpc_socket_addr: SocketAddr = grpc_addr.parse()?;
     let db_path = format!("{}/farcaster", app_config.rocksdb_dir);
+    let db = Arc::new(RocksDB::new(db_path.clone().as_str()));
+    db.open().unwrap();
+    let block_store = BlockStore::new(db);
 
     info!(
         id = app_config.id,
@@ -112,10 +115,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let (block_tx, mut block_rx) = mpsc::channel::<Block>(100);
 
-    let put_db = RocksDB::new(db_path.clone().as_str());
+    let write_block_store = block_store.clone();
     tokio::spawn(async move {
         while let Some(block) = block_rx.recv().await {
-            match put_block(&put_db, block) {
+            match write_block_store.put_block(block) {
                 Err(err) => {
                     error!("Unable to put block in db {:#?}", err)
                 }
@@ -124,14 +127,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    let db = Arc::new(RocksDB::new(db_path.clone().as_str()));
     let node = SnapchainNode::create(
         keypair.clone(),
         app_config.consensus.clone(),
         Some(app_config.rpc_address.clone()),
         gossip_tx.clone(),
         block_tx,
-        db.clone(),
+        block_store.clone(),
     )
     .await;
 
@@ -139,9 +141,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //TODO: remove/redo unwrap
     let messages_tx = node.messages_tx_by_shard.get(&1u32).unwrap().clone();
 
-    let rpc_db = db.clone();
+    let rpc_block_store = block_store.clone();
     tokio::spawn(async move {
-        let service = MySnapchainService::new(rpc_db, messages_tx);
+        let service = MySnapchainService::new(rpc_block_store, messages_tx);
 
         let resp = Server::builder()
             .add_service(SnapchainServiceServer::new(service))
@@ -181,10 +183,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if tick_count % 5 == 0 {
                     let nonce = tick_count as u64;
                     for i in 0..=app_config.consensus.num_shards() {
-            let current_height = match get_current_height(&db, i) {
+            let current_height = match block_store.max_block_number(i) {
                 Err(_) => 0,
-                Ok(None) => 0,
-                Ok(Some(height)) => height,
+                Ok(height) => height,
             };
 
                         let register_validator = proto::RegisterValidator {

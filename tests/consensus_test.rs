@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use hex;
 use libp2p::identity::ed25519::Keypair;
+use snapchain::consensus::consensus::BlockStore;
 use snapchain::network::server::MySnapchainService;
 use snapchain::node::snapchain_node::SnapchainNode;
 use snapchain::proto::message;
@@ -29,6 +30,7 @@ struct NodeForTest {
     gossip_rx: mpsc::Receiver<GossipEvent<SnapchainValidatorContext>>,
     grpc_addr: String,
     db: Arc<RocksDB>,
+    block_store: BlockStore,
 }
 
 impl NodeForTest {
@@ -47,13 +49,14 @@ impl NodeForTest {
             .to_string();
         let db = Arc::new(RocksDB::new(&tmp_path));
         db.open().unwrap();
+        let block_store = BlockStore::new(db.clone());
         let node = SnapchainNode::create(
             keypair.clone(),
             config,
             None,
             gossip_tx,
             block_tx,
-            db.clone(),
+            block_store.clone(),
         )
         .await;
 
@@ -71,11 +74,11 @@ impl NodeForTest {
             assert_eq!(block.shard_chunks.len(), num_shards as usize);
         };
 
-        let put_db = db.clone();
+        let put_block_store = block_store.clone();
         tokio::spawn(async move {
             while let Some(block) = block_rx.recv().await {
                 assert_valid_block(&block);
-                put_block(&put_db, block).unwrap();
+                put_block_store.put_block(block).unwrap();
             }
         });
 
@@ -85,9 +88,9 @@ impl NodeForTest {
 
         let grpc_addr = format!("0.0.0.0:{}", grpc_port);
         let addr = grpc_addr.clone();
-        let grpc_db = db.clone();
+        let grpc_block_store = block_store.clone();
         tokio::spawn(async move {
-            let service = MySnapchainService::new(grpc_db, messages_tx);
+            let service = MySnapchainService::new(grpc_block_store, messages_tx);
 
             let grpc_socket_addr: SocketAddr = addr.parse().unwrap();
             let resp = Server::builder()
@@ -108,7 +111,8 @@ impl NodeForTest {
             node,
             gossip_rx,
             grpc_addr: grpc_addr.clone(),
-            db,
+            db: db.clone(),
+            block_store,
         }
     }
 
@@ -142,9 +146,8 @@ impl NodeForTest {
     pub async fn num_blocks(&self) -> usize {
         let mut count = 0;
         for i in 0..self.num_shards {
-            let blocks =
-                get_blocks_in_range(&self.db, &PageOptions::default(), i, 0, None).unwrap();
-            count += blocks.blocks.len()
+            let blocks = self.block_store.get_blocks(0, None, i).unwrap();
+            count += blocks.len()
         }
         count
     }
@@ -152,9 +155,10 @@ impl NodeForTest {
     pub async fn total_messages(&self) -> usize {
         let mut count = 0;
         for i in 0..self.num_shards {
-            let messages = get_blocks_in_range(&self.db, &PageOptions::default(), i, 0, None)
+            let messages = self
+                .block_store
+                .get_blocks(0, None, i)
                 .unwrap()
-                .blocks
                 .into_iter()
                 .map(|b| b.shard_chunks[0].transactions[0].user_messages.len());
             count += messages.len()

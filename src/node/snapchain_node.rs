@@ -1,6 +1,6 @@
 use crate::consensus::consensus::{
-    BlockProposer, Config, Consensus, ConsensusMsg, ConsensusParams, Decision, ShardProposer,
-    ShardValidator,
+    BlockProposer, BlockStore, Config, Consensus, ConsensusMsg, ConsensusParams, Decision,
+    ShardProposer, ShardValidator,
 };
 use crate::core::types::{
     Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
@@ -35,7 +35,7 @@ impl SnapchainNode {
         rpc_address: Option<String>,
         gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
         block_tx: mpsc::Sender<Block>,
-        db: Arc<RocksDB>,
+        block_store: BlockStore,
     ) -> Self {
         let validator_address = Address(keypair.public().to_bytes());
 
@@ -53,10 +53,9 @@ impl SnapchainNode {
                 panic!("Shard ID must be between 1 and 3");
             }
 
-            let current_height = match get_current_height(&db, shard_id) {
+            let current_height = match block_store.max_block_number(shard_id) {
                 Err(_) => 0,
-                Ok(None) => 0,
-                Ok(Some(height)) => height,
+                Ok(height) => height,
             };
             let shard = SnapchainShard::new(shard_id);
             let shard_validator = SnapchainValidator::new(
@@ -105,10 +104,9 @@ impl SnapchainNode {
         // Now create the block validator
         let block_shard = SnapchainShard::new(0);
 
-        let current_height = match get_current_height(&db, 0) {
+        let current_height = match block_store.max_block_number(0) {
             Err(_) => 0,
-            Ok(None) => 0,
-            Ok(Some(height)) => height,
+            Ok(height) => height,
         };
         // We might want to use different keys for the block shard so signatures are different and cannot be accidentally used in the wrong shard
         let block_validator = SnapchainValidator::new(
@@ -132,7 +130,7 @@ impl SnapchainNode {
             shard_decision_rx,
             config.num_shards(),
             block_tx,
-            db.clone(),
+            block_store.clone(),
         );
         let block_validator = ShardValidator::new(
             validator_address.clone(),

@@ -325,7 +325,7 @@ pub enum BlockProposerError {
     #[error(transparent)]
     BlockStorageError(#[from] BlockStorageError),
 }
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct BlockStore {
     db: Arc<RocksDB>,
 }
@@ -400,7 +400,7 @@ impl BlockProposer {
         shard_decision_rx: RxDecision,
         num_shards: u32,
         block_tx: mpsc::Sender<Block>,
-        db: Arc<RocksDB>,
+        block_store: BlockStore,
     ) -> BlockProposer {
         BlockProposer {
             shard_id,
@@ -411,7 +411,7 @@ impl BlockProposer {
             shard_decision_rx,
             num_shards,
             block_tx,
-            block_store: BlockStore::new(db),
+            block_store,
         }
     }
 
