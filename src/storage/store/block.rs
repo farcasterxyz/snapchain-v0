@@ -4,6 +4,7 @@ use prost::Message;
 use serde::Deserialize;
 use thiserror::Error;
 
+// TODO(aditi): This code definitely needs unit tests
 #[derive(Error, Debug)]
 pub enum BlockStorageError {
     #[error(transparent)]
