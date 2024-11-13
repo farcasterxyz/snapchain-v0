@@ -34,7 +34,7 @@ async fn main() {
             r#"
 id = {id}
 rpc_address="{rpc_address}"
-rocksdb_dir=.rocks{i}
+rocksdb_dir=".rocks{i}"
 
 [gossip]
 address="{gossip_multi_addr}"
