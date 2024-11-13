@@ -1,6 +1,7 @@
 use malachite_common::{ValidatorSet, Validity};
 use std::collections::BTreeMap;
 use std::iter;
+use std::sync::Arc;
 use std::time::Duration;
 use tonic::Request;
 
@@ -29,6 +30,10 @@ use crate::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 use crate::proto::rpc::BlocksRequest;
 use crate::proto::snapchain::{FullProposal, ShardChunk, ShardHeader};
 use crate::proto::{message, snapchain};
+use crate::storage::db::{PageOptions, RocksDB};
+use crate::storage::store::{
+    get_blocks_in_range, get_current_height, put_block, BlockStorageError,
+};
 pub use malachite_consensus::Params as ConsensusParams;
 pub use malachite_consensus::State as ConsensusState;
 use prost::Message;
@@ -316,31 +321,29 @@ pub enum BlockProposerError {
 
     #[error(transparent)]
     RpcResponseError(#[from] tonic::Status),
+
+    #[error(transparent)]
+    BlockStorageError(#[from] BlockStorageError),
 }
 #[derive(Default)]
 pub struct BlockStore {
-    blocks: Vec<Block>,
+    db: Arc<RocksDB>,
 }
 
 impl BlockStore {
-    pub fn new() -> BlockStore {
-        BlockStore { blocks: vec![] }
+    pub fn new(db: Arc<RocksDB>) -> BlockStore {
+        BlockStore { db }
     }
 
-    pub fn put_block(&mut self, block: Block) {
-        self.blocks.push(block)
+    pub fn put_block(&self, block: Block) -> Result<(), BlockProposerError> {
+        put_block(&self.db, block).map_err(|err| BlockProposerError::BlockStorageError(err))
     }
 
-    pub fn max_block_number(&self) -> u64 {
-        match self.blocks.last() {
-            None => 0,
-            Some(block) => match &block.header {
-                None => 0,
-                Some(header) => match &header.height {
-                    None => 0,
-                    Some(height) => height.block_number,
-                },
-            },
+    pub fn max_block_number(&self, shard_index: u32) -> Result<u64, BlockProposerError> {
+        let current_height = get_current_height(&self.db, shard_index)?;
+        match current_height {
+            None => Ok(0),
+            Some(height) => Ok(height),
         }
     }
 
@@ -348,9 +351,17 @@ impl BlockStore {
         &self,
         start_block_number: u64,
         stop_block_number: Option<u64>,
-    ) -> Vec<Block> {
-        self.blocks
-            .clone()
+        shard_index: u32,
+    ) -> Result<Vec<Block>, BlockProposerError> {
+        let blocks = get_blocks_in_range(
+            &self.db,
+            &PageOptions::default(),
+            shard_index,
+            start_block_number,
+            stop_block_number,
+        )?;
+        let blocks_in_range = blocks
+            .blocks
             .into_iter()
             .filter(|block| match &block.header {
                 None => false,
@@ -365,7 +376,8 @@ impl BlockStore {
                     },
                 },
             })
-            .collect()
+            .collect();
+        Ok(blocks_in_range)
     }
 }
 
@@ -388,6 +400,7 @@ impl BlockProposer {
         shard_decision_rx: RxDecision,
         num_shards: u32,
         block_tx: mpsc::Sender<Block>,
+        db: Arc<RocksDB>,
     ) -> BlockProposer {
         BlockProposer {
             shard_id,
@@ -398,7 +411,7 @@ impl BlockProposer {
             shard_decision_rx,
             num_shards,
             block_tx,
-            block_store: BlockStore::new(),
+            block_store: BlockStore::new(db),
         }
     }
 
@@ -612,10 +625,12 @@ impl ShardValidator {
         self.validator_set.clone()
     }
 
-    pub fn get_current_height(&self) -> u64 {
+    pub fn get_current_height(&self) -> Result<u64, BlockProposerError> {
         match &self.block_proposer {
-            None => 0,
-            Some(block_proposer) => block_proposer.block_store.max_block_number(),
+            None => Ok(0),
+            Some(block_proposer) => block_proposer
+                .block_store
+                .max_block_number(self.shard_id.shard_id()),
         }
     }
 
@@ -1148,7 +1163,7 @@ impl Actor for Consensus {
             self.shard_id.clone(),
             self.ctx.public_key(),
             None,
-            state.shard_validator.get_current_height(),
+            state.shard_validator.get_current_height()?,
         ));
         Ok(())
     }

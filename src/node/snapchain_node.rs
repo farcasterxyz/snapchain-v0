@@ -132,6 +132,7 @@ impl SnapchainNode {
             shard_decision_rx,
             config.num_shards(),
             block_tx,
+            db.clone(),
         );
         let block_validator = ShardValidator::new(
             validator_address.clone(),
