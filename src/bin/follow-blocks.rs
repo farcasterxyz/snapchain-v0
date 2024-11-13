@@ -56,6 +56,6 @@ async fn follow_blocks(addr: String) -> Result<(), Box<dyn Error>> {
 
 #[tokio::main]
 async fn main() {
-    let addr = "http://127.0.0.1:50061".to_string();
+    let addr = "http://127.0.0.1:3383".to_string();
     follow_blocks(addr).await.unwrap();
 }
