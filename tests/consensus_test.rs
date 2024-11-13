@@ -10,7 +10,8 @@ use snapchain::node::snapchain_node::SnapchainNode;
 use snapchain::proto::message;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::proto::snapchain::Block;
-use snapchain::storage::db::RocksDB;
+use snapchain::storage::db::{PageOptions, RocksDB};
+use snapchain::storage::store::{get_blocks_in_range, put_block};
 use snapchain::{
     consensus::consensus::ConsensusMsg,
     core::types::{ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext},
@@ -27,7 +28,7 @@ struct NodeForTest {
     num_shards: u32,
     node: SnapchainNode,
     gossip_rx: mpsc::Receiver<GossipEvent<SnapchainValidatorContext>>,
-    block_store: Arc<Mutex<BlockStore>>,
+    db: RocksDB,
     grpc_addr: String,
 }
 
@@ -43,8 +44,6 @@ impl NodeForTest {
         let node =
             SnapchainNode::create(keypair.clone(), config, None, gossip_tx, block_tx, &db).await;
 
-        let block_store = Arc::new(Mutex::new(BlockStore::new()));
-        let write_block_store = block_store.clone();
         let node_id = node.id();
         let assert_valid_block = move |block: &Block| {
             let header = block.header.as_ref().unwrap();
@@ -58,11 +57,12 @@ impl NodeForTest {
             );
             assert_eq!(block.shard_chunks.len(), num_shards as usize);
         };
+
+        let put_db = RocksDB::new("./.rocksdb-test");
         tokio::spawn(async move {
             while let Some(block) = block_rx.recv().await {
                 assert_valid_block(&block);
-                let mut block_store = write_block_store.lock().await;
-                block_store.put_block(block);
+                put_block(&put_db, block).unwrap();
             }
         });
 
@@ -70,12 +70,11 @@ impl NodeForTest {
         //TODO: remove/redo unwrap
         let messages_tx = node.messages_tx_by_shard.get(&1u32).unwrap().clone();
 
-        let rpc_server_block_store = block_store.clone();
         let grpc_addr = format!("0.0.0.0:{}", grpc_port);
         let addr = grpc_addr.clone();
-        let db = RocksDB::new("./.rocksdb-test");
+        let rpc_db = RocksDB::new("./.rocksdb-test");
         tokio::spawn(async move {
-            let service = MySnapchainService::new(db, messages_tx);
+            let service = MySnapchainService::new(rpc_db, messages_tx);
 
             let grpc_socket_addr: SocketAddr = addr.parse().unwrap();
             let resp = Server::builder()
@@ -95,7 +94,7 @@ impl NodeForTest {
             num_shards,
             node,
             gossip_rx,
-            block_store,
+            db,
             grpc_addr: grpc_addr.clone(),
         }
     }
@@ -128,17 +127,27 @@ impl NodeForTest {
     }
 
     pub async fn num_blocks(&self) -> usize {
-        self.block_store.lock().await.get_blocks(0, None).len()
+        let mut count = 0;
+        for i in 0..self.num_shards {
+            let blocks =
+                get_blocks_in_range(&self.db, &PageOptions::default(), i, 0, None).unwrap();
+            count += blocks.blocks.len()
+        }
+        count
     }
 
     pub async fn total_messages(&self) -> usize {
-        self.block_store
-            .lock()
-            .await
-            .get_blocks(0, None)
-            .iter()
-            .map(|b| b.shard_chunks[0].transactions[0].user_messages.len())
-            .sum()
+        let mut count = 0;
+        for i in 0..self.num_shards {
+            let messages = get_blocks_in_range(&self.db, &PageOptions::default(), i, 0, None)
+                .unwrap()
+                .blocks
+                .into_iter()
+                .map(|b| b.shard_chunks[0].transactions[0].user_messages.len());
+            count += messages.len()
+        }
+
+        count
     }
 
     pub fn stop(&self) {

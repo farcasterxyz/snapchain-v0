@@ -135,8 +135,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )
     .await;
 
-    let rpc_server_block_store = block_store.clone();
-
     //TODO: don't assume shard
     //TODO: remove/redo unwrap
     let messages_tx = node.messages_tx_by_shard.get(&1u32).unwrap().clone();
