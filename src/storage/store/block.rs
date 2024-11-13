@@ -28,9 +28,9 @@ pub struct BlockPage {
 
 fn make_primary_key(shard_index: u32, block_number: u64) -> Vec<u8> {
     let mut key = [0u8; 12];
-    // Store the timestamp as big-endian in the first 4 bytes
+    // Store the shard index as big-endian in the first 4 bytes
     key[0..4].copy_from_slice(&shard_index.to_be_bytes());
-    // Store the hash in the remaining 20 bytes
+    // Store the block number in the remaining 8 bytes
     key[4..12].copy_from_slice(&block_number.to_be_bytes());
 
     key.to_vec()
