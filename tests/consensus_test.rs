@@ -128,6 +128,16 @@ impl NodeForTest {
         self.block_store.lock().await.get_blocks(0, None).len()
     }
 
+    pub async fn total_messages(&self) -> usize {
+        self.block_store
+            .lock()
+            .await
+            .get_blocks(0, None)
+            .iter()
+            .map(|b| b.shard_chunks[0].transactions[0].user_messages.len())
+            .sum()
+    }
+
     pub fn stop(&self) {
         self.node.stop();
     }
@@ -243,6 +253,34 @@ async fn test_basic_consensus() {
     let num_shards = 2;
     let mut network = TestNetwork::create(3, num_shards, 3380).await;
 
+    let messages_tx1 = network.nodes[0]
+        .node
+        .messages_tx_by_shard
+        .get(&1u32)
+        .expect("message channel should exist")
+        .clone();
+
+    tokio::spawn(async move {
+        let mut i: i32 = 0;
+        loop {
+            info!(i, "sending message");
+            messages_tx1
+                .send(message::Message {
+                    hash: i.to_be_bytes().to_vec(), // just for now
+                    data: None,
+                    data_bytes: None,
+                    hash_scheme: message::HashScheme::Blake3 as i32,
+                    signature: vec![],
+                    signature_scheme: 0,
+                    signer: vec![],
+                })
+                .await
+                .unwrap();
+            i += 1;
+            tokio::time::sleep(time::Duration::from_millis(200)).await;
+        }
+    });
+
     network.produce_blocks(3).await;
 
     assert!(
@@ -250,12 +288,24 @@ async fn test_basic_consensus() {
         "Node 1 should have confirmed blocks"
     );
     assert!(
+        network.nodes[0].total_messages().await > 0,
+        "Node 1 should have messages"
+    );
+    assert!(
         network.nodes[1].num_blocks().await >= 3,
         "Node 2 should have confirmed blocks"
     );
     assert!(
+        network.nodes[1].total_messages().await > 0,
+        "Node 2 should have messages"
+    );
+    assert!(
         network.nodes[2].num_blocks().await >= 3,
         "Node 3 should have confirmed blocks"
+    );
+    assert!(
+        network.nodes[2].total_messages().await > 0,
+        "Node 3 should have messages"
     );
 
     // Clean up
