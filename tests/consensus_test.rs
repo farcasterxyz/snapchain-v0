@@ -33,6 +33,13 @@ struct NodeForTest {
     block_store: BlockStore,
 }
 
+impl Drop for NodeForTest {
+    fn drop(&mut self) {
+        self.db.destroy().unwrap();
+        self.node.stop();
+    }
+}
+
 impl NodeForTest {
     pub async fn create(keypair: Keypair, num_shards: u32, grpc_port: u32) -> Self {
         let mut config = snapchain::consensus::consensus::Config::default();
@@ -166,10 +173,6 @@ impl NodeForTest {
 
         count
     }
-
-    pub fn stop(&self) {
-        self.node.stop();
-    }
 }
 
 pub struct TestNetwork {
@@ -264,13 +267,6 @@ impl TestNetwork {
             }
         }
     }
-
-    pub fn stop(&self) {
-        for node in self.nodes.iter() {
-            node.stop();
-            node.db.destroy().unwrap();
-        }
-    }
 }
 
 #[tokio::test]
@@ -337,9 +333,6 @@ async fn test_basic_consensus() {
         network.nodes[2].total_messages().await > 0,
         "Node 3 should have messages"
     );
-
-    // Clean up
-    network.stop();
 }
 
 #[tokio::test]
@@ -397,8 +390,4 @@ async fn test_basic_block_sync() {
         node4.num_blocks().await >= network.nodes[0].num_blocks().await,
         "Node 4 should have confirmed blocks"
     );
-
-    // Clean up
-    network.stop();
-    node4.stop();
 }
