@@ -1,13 +1,12 @@
 use ed25519_dalek::{SecretKey, SigningKey};
 use hex;
 use snapchain::proto::snapchain::Block;
+use snapchain::utils::cli::{compose_message, follow_blocks};
 use std::time::Duration;
-use submit_message::compose_message;
 use tokio::sync::mpsc;
 use tokio::{select, time};
 mod submit_message;
 use hex::FromHex;
-mod follow_blocks;
 use message::MessageData;
 use prost::Message;
 use snapchain::proto::message;
@@ -19,7 +18,6 @@ const RPC_ADDR: &str = "http://127.0.0.1:3383";
 
 #[tokio::main]
 async fn main() {
-    // feel free to specify your own key
     let (blocks_tx, mut blocks_rx) = mpsc::channel::<Block>(1000);
     let (messages_tx, mut messages_rx) = mpsc::channel::<message::Message>(1000);
     tokio::spawn(async move {
@@ -50,7 +48,7 @@ async fn main() {
 
     tokio::spawn(async move {
         let addr = RPC_ADDR.to_string();
-        follow_blocks::follow_blocks(addr, blocks_tx).await.unwrap()
+        follow_blocks(addr, blocks_tx).await.unwrap()
     });
 
     let mut stats_calculation_timer = time::interval(STATS_CALCULATION_INTERVAL);

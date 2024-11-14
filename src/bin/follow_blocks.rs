@@ -1,41 +1,9 @@
 use hex;
 use snapchain::proto::{rpc, snapchain::Block};
+use snapchain::utils::cli::follow_blocks;
 use std::error::Error;
 use tokio::sync::mpsc;
 use tokio::time;
-
-const FETCH_SIZE: u64 = 100;
-
-pub async fn follow_blocks(
-    addr: String,
-    block_tx: mpsc::Sender<Block>,
-) -> Result<(), Box<dyn Error>> {
-    let mut client = rpc::snapchain_service_client::SnapchainServiceClient::connect(addr).await?;
-
-    let mut i = 1;
-
-    loop {
-        let msg = rpc::BlocksRequest {
-            shard_id: 0,
-            start_block_number: i,
-            stop_block_number: Some(i + FETCH_SIZE),
-        };
-
-        let request = tonic::Request::new(msg);
-        let response = client.get_blocks(request).await?;
-
-        let inner = response.into_inner();
-        if inner.blocks.is_empty() {
-            time::sleep(time::Duration::from_millis(10)).await;
-            continue;
-        }
-
-        for block in &inner.blocks {
-            block_tx.send(block.clone()).await.unwrap();
-            i += 1;
-        }
-    }
-}
 
 #[tokio::main]
 async fn main() {
