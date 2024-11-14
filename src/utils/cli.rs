@@ -1,23 +1,27 @@
+use crate::proto::message;
+use crate::proto::rpc::snapchain_service_client::SnapchainServiceClient;
+use crate::proto::{rpc, snapchain::Block};
 use ed25519_dalek::{SecretKey, Signer, SigningKey};
 use hex::FromHex;
 use message::CastType::Cast;
 use message::MessageType::CastAdd;
 use message::{CastAddBody, FarcasterNetwork, MessageData};
 use prost::Message;
-use snapchain::proto::message;
-use snapchain::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 use std::error::Error;
+use tokio::sync::mpsc;
+use tokio::time;
 
 const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
+const FETCH_SIZE: u64 = 100;
 
 // compose_message is a proof-of-concept script, is not guaranteed to be correct,
 // and clearly needs a lot of work. Use at your own risk.
-async fn compose_message(
+pub async fn compose_message(
     private_key: SigningKey,
     fid: u64,
     addr: String,
     text: &str,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<message::Message, Box<dyn Error>> {
     let network = FarcasterNetwork::Mainnet;
 
     let timestamp = (std::time::SystemTime::now()
@@ -59,28 +63,41 @@ async fn compose_message(
     msg.data_bytes = Some(msg_data_bytes);
 
     let mut client = SnapchainServiceClient::connect(addr).await?;
-    let request = tonic::Request::new(msg);
+    let request = tonic::Request::new(msg.clone());
     let response = client.submit_message(request).await?;
 
-    println!("{}", serde_json::to_string(&response.get_ref()).unwrap());
+    // println!("{}", serde_json::to_string(&response.get_ref()).unwrap());
 
-    Ok(())
+    Ok(msg.clone())
 }
 
-#[tokio::main]
-async fn main() {
-    // feel free to specify your own key
-    let private_key = SigningKey::from_bytes(
-        &SecretKey::from_hex("1000000000000000000000000000000000000000000000000000000000000000")
-            .unwrap(),
-    );
+pub async fn follow_blocks(
+    addr: String,
+    block_tx: mpsc::Sender<Block>,
+) -> Result<(), Box<dyn Error>> {
+    let mut client = rpc::snapchain_service_client::SnapchainServiceClient::connect(addr).await?;
 
-    compose_message(
-        private_key,
-        6833,
-        "http://127.0.0.1:3383".to_string(),
-        "Welcome from Rust!",
-    )
-    .await
-    .unwrap();
+    let mut i = 1;
+
+    loop {
+        let msg = rpc::BlocksRequest {
+            shard_id: 0,
+            start_block_number: i,
+            stop_block_number: Some(i + FETCH_SIZE),
+        };
+
+        let request = tonic::Request::new(msg);
+        let response = client.get_blocks(request).await?;
+
+        let inner = response.into_inner();
+        if inner.blocks.is_empty() {
+            time::sleep(time::Duration::from_millis(10)).await;
+            continue;
+        }
+
+        for block in &inner.blocks {
+            block_tx.send(block.clone()).await.unwrap();
+            i += 1;
+        }
+    }
 }

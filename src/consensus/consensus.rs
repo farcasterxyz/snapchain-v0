@@ -2,7 +2,7 @@ use malachite_common::{ValidatorSet, Validity};
 use std::collections::BTreeMap;
 use std::iter;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tonic::Request;
 
 use async_trait::async_trait;
@@ -49,6 +49,15 @@ pub type TxDecision = mpsc::Sender<Decision>;
 pub type RxDecision = mpsc::Receiver<Decision>;
 
 static PAGE_SIZE: usize = 100;
+const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
+
+fn current_time() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        - FARCASTER_EPOCH
+}
 pub enum SystemMessage {
     Consensus(ConsensusMsg<SnapchainValidatorContext>),
 }
@@ -243,7 +252,7 @@ impl Proposer for ShardProposer {
         };
         let shard_header = ShardHeader {
             parent_hash,
-            timestamp: 0,
+            timestamp: current_time(),
             height: Some(height.clone()),
             shard_root: vec![],
         };
@@ -533,7 +542,7 @@ impl Proposer for BlockProposer {
             version: 0,
             shard_headers_hash: vec![],
             validators_hash: vec![],
-            timestamp: 0,
+            timestamp: current_time(),
             height: Some(height.clone()),
         };
         let hash = blake3::hash(&block_header.encode_to_vec())
