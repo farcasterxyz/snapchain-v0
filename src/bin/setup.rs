@@ -19,7 +19,9 @@ async fn main() {
         if !std::path::Path::new(format!("nodes/{id}").as_str()).exists() {
             std::fs::create_dir(format!("nodes/{id}")).expect("Failed to create node directory");
         } else {
-            std::fs::remove_dir(db_dir.clone()).expect("Failed to remove .rocks directory");
+            if std::path::Path::new(db_dir.clone().as_str()).exists() {
+                std::fs::remove_dir(db_dir.clone()).expect("Failed to remove .rocks directory");
+            }
         }
         let secret_key = hex::encode(SecretKey::generate());
         let rpc_port = base_rpc_port + i;

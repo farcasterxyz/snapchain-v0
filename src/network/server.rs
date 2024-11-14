@@ -1,11 +1,11 @@
-use crate::consensus::consensus::{BlockProposer, BlockStore};
+use crate::consensus::proposer::BlockProposer;
 use crate::core::types::{ShardId, SnapchainShard};
 use crate::proto::message;
 use crate::proto::rpc::snapchain_service_server::{SnapchainService, SnapchainServiceServer};
 use crate::proto::rpc::{BlocksRequest, BlocksResponse};
 use crate::proto::snapchain::Block;
 use crate::storage::db::{PageOptions, RocksDB};
-use crate::storage::store::get_blocks_in_range;
+use crate::storage::store::{get_blocks_in_range, BlockStore};
 use hex::ToHex;
 use std::sync::Arc;
 use tokio::sync::mpsc;

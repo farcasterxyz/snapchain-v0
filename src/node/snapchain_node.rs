@@ -1,7 +1,6 @@
-use crate::consensus::consensus::{
-    BlockProposer, BlockStore, Config, Consensus, ConsensusMsg, ConsensusParams, Decision,
-    ShardProposer, ShardValidator,
-};
+use crate::consensus::consensus::{Config, Consensus, ConsensusMsg, ConsensusParams, Decision};
+use crate::consensus::proposer::{BlockProposer, ShardProposer};
+use crate::consensus::validator::ShardValidator;
 use crate::core::types::{
     Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
     SnapchainValidatorSet,
@@ -10,7 +9,7 @@ use crate::network::gossip::GossipEvent;
 use crate::proto::message;
 use crate::proto::snapchain::Block;
 use crate::storage::db::RocksDB;
-use crate::storage::store::get_current_height;
+use crate::storage::store::{get_current_height, BlockStore};
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
 use malachite_metrics::Metrics;
