@@ -12,12 +12,12 @@ const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
 
 // compose_message is a proof-of-concept script, is not guaranteed to be correct,
 // and clearly needs a lot of work. Use at your own risk.
-async fn compose_message(
+pub async fn compose_message(
     private_key: SigningKey,
     fid: u64,
     addr: String,
     text: &str,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<message::Message, Box<dyn Error>> {
     let network = FarcasterNetwork::Mainnet;
 
     let timestamp = (std::time::SystemTime::now()
@@ -59,12 +59,12 @@ async fn compose_message(
     msg.data_bytes = Some(msg_data_bytes);
 
     let mut client = SnapchainServiceClient::connect(addr).await?;
-    let request = tonic::Request::new(msg);
+    let request = tonic::Request::new(msg.clone());
     let response = client.submit_message(request).await?;
 
     println!("{}", serde_json::to_string(&response.get_ref()).unwrap());
 
-    Ok(())
+    Ok(msg.clone())
 }
 
 #[tokio::main]
