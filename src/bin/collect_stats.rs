@@ -32,17 +32,19 @@ async fn main() {
         // Create a timer for block creation
         let mut submit_message_timer = time::interval(SUBMIT_MESSAGE_INTERVAL);
 
+        let mut i = 1;
         loop {
             let _ = submit_message_timer.tick().await;
             let message = compose_message(
                 private_key.clone(),
                 6833,
                 RPC_ADDR.to_string(),
-                "For benchmarking",
+                format!("For benchmarking {}", i).as_str(),
             )
             .await
             .unwrap();
-            messages_tx.send(message).await.unwrap()
+            messages_tx.send(message).await.unwrap();
+            i += 1;
         }
     });
 
