@@ -4,6 +4,11 @@ use prost::Message;
 use serde::Deserialize;
 use thiserror::Error;
 
+// All keys should be prefixed with an element in [RootPrefix] so there's no chance of duplicate keys across different stores
+enum RootPrefix {
+    Block = 1,
+}
+
 // TODO(aditi): This code definitely needs unit tests
 #[derive(Error, Debug)]
 pub enum BlockStorageError {
@@ -28,13 +33,14 @@ pub struct BlockPage {
 }
 
 fn make_block_key(shard_index: u32, block_number: u64) -> Vec<u8> {
-    let mut key = [0u8; 12];
-    // Store the shard index as big-endian in the first 4 bytes
-    key[0..4].copy_from_slice(&shard_index.to_be_bytes());
-    // Store the block number in the remaining 8 bytes
-    key[4..12].copy_from_slice(&block_number.to_be_bytes());
+    // Store the prefix in the first byte so there's no overlap across different stores
+    let mut key = vec![RootPrefix::Block as u8];
+    // Store the shard index in the next 4 bytes
+    key.extend_from_slice(&shard_index.to_be_bytes());
+    // Store the block number in the next 8 bytes
+    key.extend_from_slice(&block_number.to_be_bytes());
 
-    key.to_vec()
+    key
 }
 
 fn get_block_page_by_prefix(
