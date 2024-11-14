@@ -40,7 +40,7 @@ alloy-transport = "0.5.4"
 alloy-sol-types = "0.8.11"
 ed25519-dalek = "2.1.1"
 pre-commit = "0.5.2"
-rocksdb = {git = "https://github.com/rust-rocksdb/rust-rocksdb.git", features=["multi-threaded-cf"]}
+rocksdb = {git = "https://github.com/rust-rocksdb/rust-rocksdb.git", rev="1cf906dc4087f06631820f13855e6b27bd21b972", features=["multi-threaded-cf"]}
 walkdir = "2.5.0"
 
 [build-dependencies]
