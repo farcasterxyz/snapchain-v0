@@ -61,7 +61,7 @@ impl ShardProposer {
         shard_id: SnapchainShard,
         tx_decision: Option<TxDecision>,
     ) -> ShardProposer {
-        let (messages_tx, mut messages_rx) = mpsc::channel::<message::Message>(100);
+        let (messages_tx, messages_rx) = mpsc::channel::<message::Message>(100);
 
         ShardProposer {
             shard_id,

@@ -1,6 +1,6 @@
 use malachite_metrics::{Metrics, SharedRegistry};
 use snapchain::proto::snapchain::Block;
-use snapchain::storage::store::{put_block, BlockStore};
+use snapchain::storage::store::BlockStore;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -182,10 +182,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if tick_count % 5 == 0 {
                     let nonce = tick_count as u64;
                     for i in 0..=app_config.consensus.num_shards() {
-                        let current_height = match block_store.max_block_number(i) {
-                            Err(_) => 0,
-                            Ok(height) => height,
-                        };
+                        let current_height = block_store.max_block_number(i).unwrap_or_else(|_| 0);
 
                         let register_validator = proto::RegisterValidator {
                             validator: Some(proto::Validator {

@@ -8,14 +8,12 @@ use crate::core::types::{
 use crate::network::gossip::GossipEvent;
 use crate::proto::message;
 use crate::proto::snapchain::Block;
-use crate::storage::db::RocksDB;
-use crate::storage::store::{get_current_height, BlockStore};
+use crate::storage::store::BlockStore;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
 use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
 

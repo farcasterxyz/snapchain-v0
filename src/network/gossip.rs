@@ -6,9 +6,7 @@ use crate::core::types::{
 use futures::StreamExt;
 use libp2p::identity::ed25519::Keypair;
 use libp2p::swarm::dial_opts::DialOpts;
-use libp2p::{
-    gossipsub, mdns, noise, swarm::NetworkBehaviour, swarm::SwarmEvent, tcp, yamux, Swarm,
-};
+use libp2p::{gossipsub, noise, swarm::NetworkBehaviour, swarm::SwarmEvent, tcp, yamux, Swarm};
 use malachite_common::{SignedProposal, SignedVote};
 use prost::Message;
 use serde::{Deserialize, Serialize};

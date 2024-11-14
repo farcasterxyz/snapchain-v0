@@ -1,14 +1,9 @@
-use malachite_common::{ValidatorSet, Validity};
-use std::collections::BTreeMap;
-use std::iter;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
-use tonic::Request;
-
+use malachite_common::{ValidatorSet};
+use std::time::{Duration};
 use async_trait::async_trait;
 use libp2p::identity::ed25519::{Keypair, SecretKey};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use malachite_common::{
@@ -20,29 +15,17 @@ use malachite_metrics::Metrics;
 
 use crate::consensus::timers::{TimeoutElapsed, TimerScheduler};
 use crate::consensus::validator::ShardValidator;
-use crate::core::types::proto::ShardHash;
-use crate::core::types::proto::{Block, BlockHeader};
 use crate::core::types::{
-    proto, Address, Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator,
-    SnapchainValidatorContext, SnapchainValidatorSet,
+    Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator,
+    SnapchainValidatorContext,
 };
 use crate::network::gossip::GossipEvent;
-use crate::proto::rpc::snapchain_service_client::SnapchainServiceClient;
-use crate::proto::rpc::BlocksRequest;
-use crate::proto::snapchain::{FullProposal, ShardChunk, ShardHeader};
-use crate::proto::{message, snapchain};
-use crate::storage::db::{PageOptions, RocksDB};
-use crate::storage::store::{
-    get_blocks_in_range, get_current_height, put_block, BlockStorageError,
-};
+use crate::proto::snapchain::FullProposal;
 pub use malachite_consensus::Params as ConsensusParams;
 pub use malachite_consensus::State as ConsensusState;
-use prost::Message;
 use ractor::time::send_after;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use tokio::time::Instant;
-use tokio::{select, time};
 
 pub type ConsensusRef<Ctx> = ActorRef<ConsensusMsg<Ctx>>;
 pub type Decision = FullProposal;
