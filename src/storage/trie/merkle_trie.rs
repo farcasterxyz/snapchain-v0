@@ -1,8 +1,8 @@
-use super::trie_node::{TrieNode, TIMESTAMP_LENGTH};
 use super::super::{
-    hub_error::HubError,
     db::{RocksDB, RocksDbTransactionBatch},
+    hub_error::HubError,
 };
+use super::trie_node::{TrieNode, TIMESTAMP_LENGTH};
 use std::{
     collections::HashMap,
     path::Path,
@@ -10,11 +10,10 @@ use std::{
 };
 
 // Threadpool for use in the store
-use threadpool::ThreadPool;
 use once_cell::sync::Lazy;
+use threadpool::ThreadPool;
 
 pub static THREAD_POOL: Lazy<Mutex<ThreadPool>> = Lazy::new(|| Mutex::new(ThreadPool::new(4)));
-
 
 pub const TRIE_DBPATH_PREFIX: &str = "trieDb";
 const TRIE_UNLOAD_THRESHOLD: usize = 10_000;
@@ -326,4 +325,3 @@ impl MerkleTrie {
         }
     }
 }
-

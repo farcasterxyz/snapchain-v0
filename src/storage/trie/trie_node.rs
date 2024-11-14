@@ -1,8 +1,9 @@
-use crate::{
+use super::super::{
     db::{RocksDB, RocksDbTransactionBatch},
-    protos::DbTrieNode,
-    store::{blake3_20, bytes_compare, HubError, RootPrefix},
+    hub_error::HubError,
+    util::{blake3_20, bytes_compare, RootPrefix},
 };
+use crate::proto::sync_trie::DbTrieNode;
 use prost::Message as _;
 use std::collections::HashMap;
 
