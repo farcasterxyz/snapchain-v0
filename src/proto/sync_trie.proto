@@ -1,0 +1,10 @@
+syntax = "proto3";
+package sync_trie;
+
+message DbTrieNode {
+  bytes key = 1;
+  repeated uint32 childChars = 2;
+  uint32 items = 3;
+  bytes hash = 4;
+}
+

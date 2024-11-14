@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::trie::merkle_trie::MerkleTrie;
+    use crate::storage::trie::merkle_trie::MerkleTrie;
 
     #[test]
     fn test_merkle_trie_get_node() {

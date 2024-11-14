@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::{
+    use crate::storage::{
         db::{RocksDB, RocksDbTransactionBatch},
         trie::trie_node::{TrieNode, TrieNodeType, TIMESTAMP_LENGTH},
     };
@@ -31,7 +31,7 @@ mod tests {
             .as_os_str()
             .to_string_lossy()
             .to_string();
-        let db = Arc::new(RocksDB::new(&tmp_path).unwrap());
+        let db = Arc::new(RocksDB::new(&tmp_path));
         db.open().unwrap();
         let mut txn = RocksDbTransactionBatch::new();
 
@@ -180,7 +180,7 @@ mod tests {
             .as_os_str()
             .to_string_lossy()
             .to_string();
-        let db = Arc::new(RocksDB::new(&tmp_path).unwrap());
+        let db = Arc::new(RocksDB::new(&tmp_path));
         db.open().unwrap();
         let mut txn = RocksDbTransactionBatch::new();
 
@@ -228,7 +228,7 @@ mod tests {
             .as_os_str()
             .to_string_lossy()
             .to_string();
-        let db = Arc::new(RocksDB::new(&tmp_path).unwrap());
+        let db = Arc::new(RocksDB::new(&tmp_path));
         db.open().unwrap();
         let mut txn = RocksDbTransactionBatch::new();
 
@@ -380,7 +380,7 @@ mod tests {
             .as_os_str()
             .to_string_lossy()
             .to_string();
-        let db = Arc::new(RocksDB::new(&tmp_path).unwrap());
+        let db = Arc::new(RocksDB::new(&tmp_path));
         db.open().unwrap();
 
         // Create a new TrieNode
@@ -459,7 +459,7 @@ mod tests {
             .as_os_str()
             .to_string_lossy()
             .to_string();
-        let db = Arc::new(RocksDB::new(&tmp_path).unwrap());
+        let db = Arc::new(RocksDB::new(&tmp_path));
         db.open().unwrap();
 
         // Create a new TrieNode
@@ -572,7 +572,7 @@ mod tests {
             .as_os_str()
             .to_string_lossy()
             .to_string();
-        let db = Arc::new(RocksDB::new(&tmp_path).unwrap());
+        let db = Arc::new(RocksDB::new(&tmp_path));
         db.open().unwrap();
 
         // Create a new TrieNode
@@ -651,7 +651,7 @@ mod tests {
             .as_os_str()
             .to_string_lossy()
             .to_string();
-        let db = Arc::new(RocksDB::new(&tmp_path).unwrap());
+        let db = Arc::new(RocksDB::new(&tmp_path));
         db.open().unwrap();
 
         // Create a new TrieNode

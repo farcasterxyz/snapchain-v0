@@ -25,4 +25,8 @@ pub mod proto {
     pub mod username_proof {
         tonic::include_proto!("username_proof");
     }
+
+    pub mod sync_trie {
+        tonic::include_proto!("sync_trie");
+    }
 }

@@ -1,29 +1,19 @@
-use super::trie_node::{TrieNode, TIMESTAMP_LENGTH};
-use crate::{
+use super::super::{
     db::{RocksDB, RocksDbTransactionBatch},
-    logger::LOGGER,
-    statsd::statsd,
-    store::{encode_node_metadata_to_js_object, get_merkle_trie, hub_error_to_js_throw, HubError},
-    THREAD_POOL,
+    hub_error::HubError,
 };
-use neon::object::Object as _;
-use neon::{
-    context::ModuleContext,
-    result::NeonResult,
-    types::{buffer::TypedArray as _, JsArray, JsObject},
-};
-use neon::{
-    context::{Context as _, FunctionContext},
-    result::JsResult,
-    types::{Finalize, JsBox, JsBuffer, JsPromise, JsString},
-};
-use slog::{info, o};
+use super::trie_node::{TrieNode, TIMESTAMP_LENGTH};
 use std::{
-    borrow::Borrow,
     collections::HashMap,
     path::Path,
     sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
 };
+
+// Threadpool for use in the store
+use once_cell::sync::Lazy;
+use threadpool::ThreadPool;
+
+pub static THREAD_POOL: Lazy<Mutex<ThreadPool>> = Lazy::new(|| Mutex::new(ThreadPool::new(4)));
 
 pub const TRIE_DBPATH_PREFIX: &str = "trieDb";
 const TRIE_UNLOAD_THRESHOLD: usize = 10_000;
@@ -45,13 +35,9 @@ pub struct TrieSnapshot {
 pub struct MerkleTrie {
     root: RwLock<Option<TrieNode>>,
     db: Arc<RocksDB>,
-    logger: slog::Logger,
     db_owned: AtomicBool,
     txn_batch: Mutex<RocksDbTransactionBatch>,
 }
-
-// Implement Finalize so we can pass this struct between JS and Rust
-impl Finalize for MerkleTrie {}
 
 impl MerkleTrie {
     pub fn new(main_db_path: &str) -> Result<Self, HubError> {
@@ -63,24 +49,20 @@ impl MerkleTrie {
                     format!("error with Merkle Trie path {:?}", os_str).as_str(),
                 )
             })?;
-        let db = Arc::new(RocksDB::new(path.as_str())?);
+        let db = Arc::new(RocksDB::new(path.as_str()));
 
-        let logger = LOGGER.new(o!("component" => "MerkleTrie"));
         Ok(MerkleTrie {
             root: RwLock::new(None),
             db,
-            logger,
             db_owned: AtomicBool::new(true),
             txn_batch: Mutex::new(RocksDbTransactionBatch::new()),
         })
     }
 
     pub fn new_with_db(db: Arc<RocksDB>) -> Result<Self, HubError> {
-        let logger = LOGGER.new(o!("component" => "MerkleTrie"));
         Ok(MerkleTrie {
             root: RwLock::new(None),
             db,
-            logger,
             db_owned: AtomicBool::new(false),
             txn_batch: Mutex::new(RocksDbTransactionBatch::new()),
         })
@@ -107,13 +89,9 @@ impl MerkleTrie {
         if let Some(root_bytes) = self.db.get(&root_key)? {
             let root_node = TrieNode::deserialize(&root_bytes.as_slice())?;
 
-            info!(self.logger, "Merkle Trie loaded from DB"; 
-                "rootHash" => hex::encode(root_node.hash()), 
-                "items" => root_node.items());
             // Replace the root node
             self.root.write().unwrap().replace(root_node);
         } else {
-            info!(self.logger, "Merkle Trie initialized with empty root node");
             self.create_empty_root();
         }
 
@@ -143,7 +121,7 @@ impl MerkleTrie {
 
         // Close
         if self.db_owned.load(std::sync::atomic::Ordering::Relaxed) {
-            self.db.close()?;
+            self.db.close();
         }
 
         Ok(())
@@ -160,9 +138,6 @@ impl MerkleTrie {
             // Take the txn_batch out of the lock and replace it with a new one
             let pending_txn_batch =
                 std::mem::replace(&mut *txn_batch, RocksDbTransactionBatch::new());
-
-            statsd().gauge("merkle_trie.num_messages", root.items() as u64);
-            info!(self.logger, "Unloading children from memory"; "force" => force, "pendingDbKeys" => pending_txn_batch.len());
 
             // Commit the txn_batch
             self.db.commit(pending_txn_batch)?;
@@ -348,360 +323,5 @@ impl MerkleTrie {
                 message: "Node not found".to_string(),
             })
         }
-    }
-}
-
-impl MerkleTrie {
-    pub fn js_create_merkle_trie(mut cx: FunctionContext) -> JsResult<JsBox<Arc<MerkleTrie>>> {
-        let db_path = cx.argument::<JsString>(0)?.value(&mut cx);
-        let trie = match MerkleTrie::new(&db_path) {
-            Ok(trie) => trie,
-            Err(e) => return cx.throw_error::<String, _>(e.message),
-        };
-
-        Ok(cx.boxed(Arc::new(trie)))
-    }
-
-    pub fn js_create_merkle_trie_from_db(
-        mut cx: FunctionContext,
-    ) -> JsResult<JsBox<Arc<MerkleTrie>>> {
-        let db = cx.argument::<JsBox<Arc<RocksDB>>>(0)?;
-        let trie = match MerkleTrie::new_with_db((**db.borrow()).clone()) {
-            Ok(trie) => trie,
-            Err(e) => return cx.throw_error::<String, _>(e.message),
-        };
-
-        Ok(cx.boxed(Arc::new(trie)))
-    }
-
-    pub fn js_initialize(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let trie = get_merkle_trie(&mut cx)?;
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        deferred.settle_with(&channel, move |mut cx| {
-            if let Err(e) = trie.initialize() {
-                return hub_error_to_js_throw(&mut cx, e);
-            }
-
-            Ok(cx.undefined())
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_get_db(mut cx: FunctionContext) -> JsResult<JsBox<Arc<RocksDB>>> {
-        let trie = get_merkle_trie(&mut cx)?;
-        let db = trie.db();
-
-        Ok(cx.boxed(db))
-    }
-
-    pub fn js_clear(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let trie = get_merkle_trie(&mut cx)?;
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        deferred.settle_with(&channel, move |mut cx| {
-            if let Err(e) = trie.clear() {
-                return hub_error_to_js_throw(&mut cx, e);
-            }
-
-            Ok(cx.undefined())
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_stop(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let trie = get_merkle_trie(&mut cx)?;
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        deferred.settle_with(&channel, move |mut cx| {
-            if let Err(e) = trie.stop() {
-                return hub_error_to_js_throw(&mut cx, e);
-            }
-            Ok(cx.undefined())
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_batch_update(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let trie = get_merkle_trie(&mut cx)?;
-
-        let inserts = cx.argument::<JsArray>(0)?;
-        let deletes = cx.argument::<JsArray>(1)?;
-
-        let insert_keys: Vec<Vec<u8>> = inserts
-            .to_vec(&mut cx)?
-            .iter()
-            .map(|key| {
-                key.downcast_or_throw::<JsBuffer, _>(&mut cx)
-                    .unwrap()
-                    .as_slice(&cx)
-                    .to_vec()
-            })
-            .collect();
-
-        let delete_keys: Vec<Vec<u8>> = deletes
-            .to_vec(&mut cx)?
-            .iter()
-            .map(|key| {
-                key.downcast_or_throw::<JsBuffer, _>(&mut cx)
-                    .unwrap()
-                    .as_slice(&cx)
-                    .to_vec()
-            })
-            .collect();
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        THREAD_POOL.lock().unwrap().execute(move || {
-            let insert_results = trie.insert(insert_keys);
-            let delete_results = trie.delete(delete_keys);
-
-            deferred.settle_with(&channel, move |mut cx| {
-                // If either was an error, return the error
-                if insert_results.is_err() || delete_results.is_err() {
-                    return hub_error_to_js_throw(
-                        &mut cx,
-                        HubError {
-                            code: "bad_request.internal_error".to_string(),
-                            message: format!(
-                                "Error in batch update: {:?} {:?}",
-                                insert_results, delete_results
-                            ),
-                        },
-                    );
-                }
-
-                let inserts = insert_results.unwrap();
-                let deletes = delete_results.unwrap();
-
-                let js_array = JsArray::new(&mut cx, inserts.len() + deletes.len());
-                for (i, result) in inserts.into_iter().chain(deletes.into_iter()).enumerate() {
-                    let val = cx.boolean(result);
-                    js_array.set(&mut cx, i as u32, val)?;
-                }
-
-                Ok(js_array)
-            });
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_insert(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let trie = get_merkle_trie(&mut cx)?;
-        let key = cx.argument::<JsBuffer>(0)?.as_slice(&cx).to_vec();
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        let result = trie.insert(vec![key]);
-
-        deferred.settle_with(&channel, move |mut cx| match result {
-            Ok(result) => Ok(cx.boolean(result[0])),
-            Err(e) => hub_error_to_js_throw(&mut cx, e),
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_delete(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let trie = get_merkle_trie(&mut cx)?;
-        let key = cx.argument::<JsBuffer>(0)?.as_slice(&cx).to_vec();
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        deferred.settle_with(&channel, move |mut cx| match trie.delete(vec![key]) {
-            Ok(result) => Ok(cx.boolean(result[0])),
-            Err(e) => hub_error_to_js_throw(&mut cx, e),
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_exists(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let trie = get_merkle_trie(&mut cx)?;
-        let key = cx.argument::<JsBuffer>(0)?.as_slice(&cx).to_vec();
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        deferred.settle_with(&channel, move |mut cx| match trie.exists(&key) {
-            Ok(exists) => Ok(cx.boolean(exists)),
-            Err(e) => hub_error_to_js_throw(&mut cx, e),
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_get_snapshot(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let trie = get_merkle_trie(&mut cx)?;
-        let prefix = cx.argument::<JsBuffer>(0)?.as_slice(&cx).to_vec();
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        deferred.settle_with(&channel, move |mut tcx| match trie.get_snapshot(&prefix) {
-            Ok(snapshot) => {
-                let js_object = JsObject::new(&mut tcx);
-
-                let mut js_prefix = tcx.buffer(snapshot.prefix.len())?;
-                js_prefix
-                    .as_mut_slice(&mut tcx)
-                    .copy_from_slice(&snapshot.prefix);
-                js_object.set(&mut tcx, "prefix", js_prefix)?;
-
-                let js_excluded_hashes = JsArray::new(&mut tcx, snapshot.excluded_hashes.len());
-                for (i, excluded_hash) in snapshot.excluded_hashes.iter().enumerate() {
-                    let js_excluded_hash = tcx.string(excluded_hash.to_string());
-                    js_excluded_hashes.set(&mut tcx, i as u32, js_excluded_hash)?;
-                }
-                js_object.set(&mut tcx, "excludedHashes", js_excluded_hashes)?;
-
-                let js_num_messages = tcx.number(snapshot.num_messages as f64);
-                js_object.set(&mut tcx, "numMessages", js_num_messages)?;
-
-                Ok(js_object)
-            }
-            Err(e) => hub_error_to_js_throw(&mut tcx, e),
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_get_trie_node_metadata(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let trie = get_merkle_trie(&mut cx)?;
-        let prefix = cx.argument::<JsBuffer>(0)?.as_slice(&cx).to_vec();
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        THREAD_POOL.lock().unwrap().execute(move || {
-            let result = trie.get_trie_node_metadata(&prefix);
-
-            deferred.settle_with(&channel, move |mut tcx| match result {
-                Ok(node_metadata) => {
-                    let js_object = encode_node_metadata_to_js_object(&mut tcx, &node_metadata)?;
-                    Ok(js_object)
-                }
-                Err(e) => hub_error_to_js_throw(&mut tcx, e),
-            });
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_get_all_values(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let trie = get_merkle_trie(&mut cx)?;
-        let prefix = cx.argument::<JsBuffer>(0)?.as_slice(&cx).to_vec();
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        THREAD_POOL.lock().unwrap().execute(move || {
-            let result = trie.get_all_values(&prefix);
-
-            deferred.settle_with(&channel, move |mut tcx| match result {
-                Ok(values) => {
-                    let js_array = JsArray::new(&mut tcx, values.len());
-                    for (i, value) in values.iter().enumerate() {
-                        let mut js_buffer = tcx.buffer(value.len())?;
-                        js_buffer.as_mut_slice(&mut tcx).copy_from_slice(value);
-                        js_array.set(&mut tcx, i as u32, js_buffer)?;
-                    }
-
-                    Ok(js_array)
-                }
-                Err(e) => hub_error_to_js_throw(&mut tcx, e),
-            });
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_items(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let trie = get_merkle_trie(&mut cx)?;
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        deferred.settle_with(&channel, move |mut cx| match trie.items() {
-            Ok(items) => Ok(cx.number(items as f64)),
-            Err(e) => hub_error_to_js_throw(&mut cx, e),
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_root_hash(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let trie = get_merkle_trie(&mut cx)?;
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        deferred.settle_with(&channel, move |mut cx| match trie.root_hash() {
-            Ok(root_hash) => {
-                let mut js_buffer = cx.buffer(root_hash.len())?;
-                js_buffer.as_mut_slice(&mut cx).copy_from_slice(&root_hash);
-                Ok(js_buffer)
-            }
-            Err(e) => hub_error_to_js_throw(&mut cx, e),
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_unload_children(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let trie = get_merkle_trie(&mut cx)?;
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        deferred.settle_with(&channel, move |mut cx| {
-            if let Some(root) = trie.root.write().unwrap().as_mut() {
-                if let Err(e) = trie.unload_from_memory(root, true) {
-                    return hub_error_to_js_throw(&mut cx, e);
-                }
-            }
-
-            Ok(cx.undefined())
-        });
-
-        Ok(promise)
-    }
-
-    pub fn register_js_methods(cx: &mut ModuleContext) -> NeonResult<()> {
-        cx.export_function("createMerkleTrie", Self::js_create_merkle_trie)?;
-        cx.export_function(
-            "createMerkleTrieFromDb",
-            Self::js_create_merkle_trie_from_db,
-        )?;
-        cx.export_function("merkleTrieGetDb", Self::js_get_db)?;
-        cx.export_function("merkleTrieInitialize", Self::js_initialize)?;
-        cx.export_function("merkleTrieClear", Self::js_clear)?;
-        cx.export_function("merkleTrieStop", Self::js_stop)?;
-        cx.export_function("merkleTrieBatchUpdate", Self::js_batch_update)?;
-        cx.export_function("merkleTrieInsert", Self::js_insert)?;
-        cx.export_function("merkleTrieDelete", Self::js_delete)?;
-        cx.export_function("merkleTrieExists", Self::js_exists)?;
-        cx.export_function("merkleTrieGetSnapshot", Self::js_get_snapshot)?;
-        cx.export_function(
-            "merkleTrieGetTrieNodeMetadata",
-            Self::js_get_trie_node_metadata,
-        )?;
-        cx.export_function("merkleTrieGetAllValues", Self::js_get_all_values)?;
-        cx.export_function("merkleTrieItems", Self::js_items)?;
-        cx.export_function("merkleTrieRootHash", Self::js_root_hash)?;
-        cx.export_function("merkleTrieUnloadChildren", Self::js_unload_children)?;
-
-        Ok(())
     }
 }
