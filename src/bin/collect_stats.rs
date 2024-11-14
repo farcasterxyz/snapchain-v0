@@ -1,7 +1,6 @@
 use ed25519_dalek::{SecretKey, SigningKey};
 use hex;
-use snapchain::proto::{message::Message, snapchain::Block};
-use std::collections::HashSet;
+use snapchain::proto::snapchain::Block;
 use std::time::Duration;
 use submit_message::compose_message;
 use tokio::sync::mpsc;
@@ -9,7 +8,9 @@ use tokio::{select, time};
 mod submit_message;
 use hex::FromHex;
 mod follow_blocks;
-
+use message::MessageData;
+use prost::Message;
+use snapchain::proto::message;
 // Sumbit x messages per second
 // Read blocks and collect stats
 const SUBMIT_MESSAGE_INTERVAL: Duration = Duration::from_millis(100);
@@ -20,7 +21,7 @@ const RPC_ADDR: &str = "http://127.0.0.1:3383";
 async fn main() {
     // feel free to specify your own key
     let (blocks_tx, mut blocks_rx) = mpsc::channel::<Block>(1000);
-    let (messages_tx, mut messages_rx) = mpsc::channel::<Message>(1000);
+    let (messages_tx, mut messages_rx) = mpsc::channel::<message::Message>(1000);
     tokio::spawn(async move {
         let private_key = SigningKey::from_bytes(
             &SecretKey::from_hex(
@@ -58,21 +59,23 @@ async fn main() {
     loop {
         select! {
             _ = stats_calculation_timer.tick() => {
+                let avg_time_to_confirmation = if time_to_confirmation.len() > 0 {time_to_confirmation.iter().sum::<f64>() / time_to_confirmation.len() as f64 } else {0f64};
+                println!("Blocks produced : {:#?}, Messages submitted: {:#?}, Messages processed: {:#?}, Avg time to confirmation (secs): {:#?}", block_count, num_messages_submitted, num_messages_processed, avg_time_to_confirmation);
                 block_count = 0;
                 num_messages_processed= 0;
-                let avg_time_to_confirmation = time_to_confirmation.iter().sum::<u64>() / time_to_confirmation.len() as u64;
+                num_messages_submitted = 0;
                 time_to_confirmation.clear();
-                println!("Block : {}, Messages submitted: {}, Messages processed: {}, Time to confirmation: {}", block_count, num_messages_submitted, num_messages_processed, avg_time_to_confirmation);
             }
             Some(block) = blocks_rx.recv() => {
                 block_count += 1;
                 for chunk in &block.shard_chunks {
                     for tx in &chunk.transactions {
                         for msg in &tx.user_messages {
-                            num_messages_processed += 1;
-                            let msg_timestamp = msg.data.as_ref().unwrap().timestamp;
+                            let msg_data = MessageData::decode(msg.data_bytes.as_ref().unwrap().as_slice()).unwrap();
+                            let msg_timestamp = msg_data.timestamp;
                             let block_timestamp = block.header.as_ref().unwrap().timestamp;
-                            time_to_confirmation.push(block_timestamp - msg_timestamp as u64);
+                            time_to_confirmation.push(block_timestamp as f64 - (msg_timestamp as f64));
+                            num_messages_processed += 1;
                         }
                     }
         }

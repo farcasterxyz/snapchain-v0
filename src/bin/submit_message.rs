@@ -62,7 +62,7 @@ pub async fn compose_message(
     let request = tonic::Request::new(msg.clone());
     let response = client.submit_message(request).await?;
 
-    println!("{}", serde_json::to_string(&response.get_ref()).unwrap());
+    // println!("{}", serde_json::to_string(&response.get_ref()).unwrap());
 
     Ok(msg.clone())
 }
