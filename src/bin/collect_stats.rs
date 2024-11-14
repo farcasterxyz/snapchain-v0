@@ -10,8 +10,6 @@ use hex::FromHex;
 use message::MessageData;
 use prost::Message;
 use snapchain::proto::message;
-// Sumbit x messages per second
-// Read blocks and collect stats
 const SUBMIT_MESSAGE_INTERVAL: Duration = Duration::from_millis(100);
 const STATS_CALCULATION_INTERVAL: Duration = Duration::from_secs(1);
 const RPC_ADDR: &str = "http://127.0.0.1:3383";
@@ -27,7 +25,7 @@ async fn main() {
             )
             .unwrap(),
         );
-        // Create a timer for block creation
+
         let mut submit_message_timer = time::interval(SUBMIT_MESSAGE_INTERVAL);
 
         let mut i = 1;
