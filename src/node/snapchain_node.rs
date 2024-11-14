@@ -1,6 +1,6 @@
 use crate::consensus::consensus::{
-    BlockProposer, Config, Consensus, ConsensusMsg, ConsensusParams, Decision, ShardProposer,
-    ShardValidator,
+    BlockProposer, BlockStore, Config, Consensus, ConsensusMsg, ConsensusParams, Decision,
+    ShardProposer, ShardValidator,
 };
 use crate::core::types::{
     Address, Height, ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
@@ -9,11 +9,14 @@ use crate::core::types::{
 use crate::network::gossip::GossipEvent;
 use crate::proto::message;
 use crate::proto::snapchain::Block;
+use crate::storage::db::RocksDB;
+use crate::storage::store::get_current_height;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
 use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -30,9 +33,9 @@ impl SnapchainNode {
         keypair: Keypair,
         config: Config,
         rpc_address: Option<String>,
-        current_height: u64,
         gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
         block_tx: mpsc::Sender<Block>,
+        block_store: BlockStore,
     ) -> Self {
         let validator_address = Address(keypair.public().to_bytes());
 
@@ -50,6 +53,10 @@ impl SnapchainNode {
                 panic!("Shard ID must be between 1 and 3");
             }
 
+            let current_height = match block_store.max_block_number(shard_id) {
+                Err(_) => 0,
+                Ok(height) => height,
+            };
             let shard = SnapchainShard::new(shard_id);
             let shard_validator = SnapchainValidator::new(
                 shard.clone(),
@@ -97,6 +104,10 @@ impl SnapchainNode {
         // Now create the block validator
         let block_shard = SnapchainShard::new(0);
 
+        let current_height = match block_store.max_block_number(0) {
+            Err(_) => 0,
+            Ok(height) => height,
+        };
         // We might want to use different keys for the block shard so signatures are different and cannot be accidentally used in the wrong shard
         let block_validator = SnapchainValidator::new(
             block_shard.clone(),
@@ -119,6 +130,7 @@ impl SnapchainNode {
             shard_decision_rx,
             config.num_shards(),
             block_tx,
+            block_store.clone(),
         );
         let block_validator = ShardValidator::new(
             validator_address.clone(),

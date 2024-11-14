@@ -1,23 +1,26 @@
 use malachite_metrics::{Metrics, SharedRegistry};
+use snapchain::consensus::consensus::{BlockStore, Decision};
+use snapchain::proto::snapchain::Block;
+use snapchain::storage::store::{get_current_height, put_block};
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::ctrl_c;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tokio::{select, time};
 use tonic::transport::Server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use snapchain::consensus::consensus::{BlockStore, SystemMessage};
+use snapchain::consensus::consensus::SystemMessage;
 use snapchain::core::types::proto;
 use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
 use snapchain::network::server::MySnapchainService;
 use snapchain::node::snapchain_node::SnapchainNode;
-use snapchain::proto::message;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
+use snapchain::storage::db::RocksDB;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -32,6 +35,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let addr = app_config.gossip.address.clone();
     let grpc_addr = app_config.rpc_address.clone();
     let grpc_socket_addr: SocketAddr = grpc_addr.parse()?;
+    let db_path = format!("{}/farcaster", app_config.rocksdb_dir);
+    let db = Arc::new(RocksDB::new(db_path.clone().as_str()));
+    db.open().unwrap();
+    let block_store = BlockStore::new(db);
 
     info!(
         id = app_config.id,
@@ -63,6 +70,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let gossip_result =
         SnapchainGossip::create(keypair.clone(), app_config.gossip, system_tx.clone());
+
     if let Err(e) = gossip_result {
         error!(error = ?e, "Failed to create SnapchainGossip");
         return Ok(());
@@ -105,38 +113,37 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Use the new non-global metrics registry when we upgrade to newer version of malachite
     let _ = Metrics::register(registry);
 
-    let (block_tx, mut block_rx) = mpsc::channel(100);
-
-    // TODO(aditi): Eliminate this lock when we use the db for block store
-    let block_store = Arc::new(Mutex::new(BlockStore::new()));
+    let (block_tx, mut block_rx) = mpsc::channel::<Block>(100);
 
     let write_block_store = block_store.clone();
     tokio::spawn(async move {
         while let Some(block) = block_rx.recv().await {
-            let mut block_store = write_block_store.lock().await;
-            block_store.put_block(block)
+            match write_block_store.put_block(block) {
+                Err(err) => {
+                    error!("Unable to put block in db {:#?}", err)
+                }
+                Ok(()) => {}
+            }
         }
     });
 
-    let current_height = block_store.lock().await.max_block_number();
     let node = SnapchainNode::create(
         keypair.clone(),
         app_config.consensus.clone(),
         Some(app_config.rpc_address.clone()),
-        current_height,
         gossip_tx.clone(),
         block_tx,
+        block_store.clone(),
     )
     .await;
-
-    let rpc_server_block_store = block_store.clone();
 
     //TODO: don't assume shard
     //TODO: remove/redo unwrap
     let messages_tx = node.messages_tx_by_shard.get(&1u32).unwrap().clone();
 
+    let rpc_block_store = block_store.clone();
     tokio::spawn(async move {
-        let service = MySnapchainService::new(rpc_server_block_store, messages_tx);
+        let service = MySnapchainService::new(rpc_block_store, messages_tx);
 
         let resp = Server::builder()
             .add_service(SnapchainServiceServer::new(service))
@@ -176,13 +183,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if tick_count % 5 == 0 {
                     let nonce = tick_count as u64;
                     for i in 0..=app_config.consensus.num_shards() {
+            let current_height = match block_store.max_block_number(i) {
+                Err(_) => 0,
+                Ok(height) => height,
+            };
+
                         let register_validator = proto::RegisterValidator {
                             validator: Some(proto::Validator {
                                 signer: keypair.public().to_bytes().to_vec(),
                                 fid: 0,
                                 rpc_address: app_config.rpc_address.clone(),
                                 shard_index: i,
-                                current_height: block_store.lock().await.max_block_number()
+                                current_height
                             }),
                             nonce,   // Need the nonce to avoid the gossip duplicate message check
                         };

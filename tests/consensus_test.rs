@@ -10,15 +10,17 @@ use snapchain::node::snapchain_node::SnapchainNode;
 use snapchain::proto::message;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::proto::snapchain::Block;
+use snapchain::storage::db::{PageOptions, RocksDB};
+use snapchain::storage::store::{get_blocks_in_range, put_block};
 use snapchain::{
     consensus::consensus::ConsensusMsg,
     core::types::{ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext},
     network::gossip::GossipEvent,
 };
-use tokio::sync::{mpsc, Mutex};
-use tokio::{select, time};
+use tokio::sync::mpsc;
+use tokio::time;
 use tonic::transport::Server;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 struct NodeForTest {
@@ -26,8 +28,16 @@ struct NodeForTest {
     num_shards: u32,
     node: SnapchainNode,
     gossip_rx: mpsc::Receiver<GossipEvent<SnapchainValidatorContext>>,
-    block_store: Arc<Mutex<BlockStore>>,
     grpc_addr: String,
+    db: Arc<RocksDB>,
+    block_store: BlockStore,
+}
+
+impl Drop for NodeForTest {
+    fn drop(&mut self) {
+        self.db.destroy().unwrap();
+        self.node.stop();
+    }
 }
 
 impl NodeForTest {
@@ -38,11 +48,25 @@ impl NodeForTest {
         let (gossip_tx, gossip_rx) = mpsc::channel::<GossipEvent<SnapchainValidatorContext>>(100);
 
         let (block_tx, mut block_rx) = mpsc::channel::<Block>(100);
-        let node =
-            SnapchainNode::create(keypair.clone(), config, None, 0, gossip_tx, block_tx).await;
+        let tmp_path = tempfile::tempdir()
+            .unwrap()
+            .path()
+            .as_os_str()
+            .to_string_lossy()
+            .to_string();
+        let db = Arc::new(RocksDB::new(&tmp_path));
+        db.open().unwrap();
+        let block_store = BlockStore::new(db.clone());
+        let node = SnapchainNode::create(
+            keypair.clone(),
+            config,
+            None,
+            gossip_tx,
+            block_tx,
+            block_store.clone(),
+        )
+        .await;
 
-        let block_store = Arc::new(Mutex::new(BlockStore::new()));
-        let write_block_store = block_store.clone();
         let node_id = node.id();
         let assert_valid_block = move |block: &Block| {
             let header = block.header.as_ref().unwrap();
@@ -56,11 +80,12 @@ impl NodeForTest {
             );
             assert_eq!(block.shard_chunks.len(), num_shards as usize);
         };
+
+        let put_block_store = block_store.clone();
         tokio::spawn(async move {
             while let Some(block) = block_rx.recv().await {
                 assert_valid_block(&block);
-                let mut block_store = write_block_store.lock().await;
-                block_store.put_block(block);
+                put_block_store.put_block(block).unwrap();
             }
         });
 
@@ -68,11 +93,11 @@ impl NodeForTest {
         //TODO: remove/redo unwrap
         let messages_tx = node.messages_tx_by_shard.get(&1u32).unwrap().clone();
 
-        let rpc_server_block_store = block_store.clone();
         let grpc_addr = format!("0.0.0.0:{}", grpc_port);
         let addr = grpc_addr.clone();
+        let grpc_block_store = block_store.clone();
         tokio::spawn(async move {
-            let service = MySnapchainService::new(rpc_server_block_store, messages_tx);
+            let service = MySnapchainService::new(grpc_block_store, messages_tx);
 
             let grpc_socket_addr: SocketAddr = addr.parse().unwrap();
             let resp = Server::builder()
@@ -92,8 +117,9 @@ impl NodeForTest {
             num_shards,
             node,
             gossip_rx,
-            block_store,
             grpc_addr: grpc_addr.clone(),
+            db: db.clone(),
+            block_store,
         }
     }
 
@@ -125,21 +151,27 @@ impl NodeForTest {
     }
 
     pub async fn num_blocks(&self) -> usize {
-        self.block_store.lock().await.get_blocks(0, None).len()
+        let mut count = 0;
+        for i in 0..self.num_shards {
+            let blocks = self.block_store.get_blocks(0, None, i).unwrap();
+            count += blocks.len()
+        }
+        count
     }
 
     pub async fn total_messages(&self) -> usize {
-        self.block_store
-            .lock()
-            .await
-            .get_blocks(0, None)
-            .iter()
-            .map(|b| b.shard_chunks[0].transactions[0].user_messages.len())
-            .sum()
-    }
+        let mut count = 0;
+        for i in 0..self.num_shards {
+            let messages = self
+                .block_store
+                .get_blocks(0, None, i)
+                .unwrap()
+                .into_iter()
+                .map(|b| b.shard_chunks[0].transactions[0].user_messages.len());
+            count += messages.len()
+        }
 
-    pub fn stop(&self) {
-        self.node.stop();
+        count
     }
 }
 
@@ -235,12 +267,6 @@ impl TestNetwork {
             }
         }
     }
-
-    pub fn stop(&self) {
-        for node in self.nodes.iter() {
-            node.stop();
-        }
-    }
 }
 
 #[tokio::test]
@@ -307,9 +333,6 @@ async fn test_basic_consensus() {
         network.nodes[2].total_messages().await > 0,
         "Node 3 should have messages"
     );
-
-    // Clean up
-    network.stop();
 }
 
 #[tokio::test]
@@ -367,8 +390,4 @@ async fn test_basic_block_sync() {
         node4.num_blocks().await >= network.nodes[0].num_blocks().await,
         "Node 4 should have confirmed blocks"
     );
-
-    // Clean up
-    network.stop();
-    node4.stop();
 }

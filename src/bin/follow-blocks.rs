@@ -11,7 +11,7 @@ async fn follow_blocks(addr: String) -> Result<(), Box<dyn Error>> {
 
     loop {
         let msg = rpc::BlocksRequest {
-            shard_id: 1,
+            shard_id: 0,
             start_block_number: i,
             stop_block_number: Some(i + FETCH_SIZE),
         };

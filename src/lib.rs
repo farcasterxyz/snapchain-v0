@@ -4,6 +4,7 @@ pub mod consensus;
 pub mod core;
 pub mod network;
 pub mod node;
+pub mod storage;
 
 mod tests;
 

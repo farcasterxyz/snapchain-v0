@@ -14,9 +14,12 @@ async fn main() {
     let base_gossip_port = 50050;
     for i in 1..=nodes {
         let id = i;
+        let db_dir = format!("nodes/{id}/.rocks");
 
         if !std::path::Path::new(format!("nodes/{id}").as_str()).exists() {
             std::fs::create_dir(format!("nodes/{id}")).expect("Failed to create node directory");
+        } else {
+            std::fs::remove_dir(db_dir.clone()).expect("Failed to remove .rocks directory");
         }
         let secret_key = hex::encode(SecretKey::generate());
         let rpc_port = base_rpc_port + i;
@@ -34,6 +37,7 @@ async fn main() {
             r#"
 id = {id}
 rpc_address="{rpc_address}"
+rocksdb_dir="{db_dir}"
 
 [gossip]
 address="{gossip_multi_addr}"
