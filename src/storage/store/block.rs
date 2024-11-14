@@ -27,7 +27,7 @@ pub struct BlockPage {
     pub next_page_token: Option<Vec<u8>>,
 }
 
-fn make_primary_key(shard_index: u32, block_number: u64) -> Vec<u8> {
+fn make_block_key(shard_index: u32, block_number: u64) -> Vec<u8> {
     let mut key = [0u8; 12];
     // Store the shard index as big-endian in the first 4 bytes
     key[0..4].copy_from_slice(&shard_index.to_be_bytes());
@@ -74,7 +74,7 @@ pub fn get_current_height(
     db: &RocksDB,
     shard_index: u32,
 ) -> Result<Option<u64>, BlockStorageError> {
-    let start_primary_key = make_primary_key(shard_index, 0);
+    let start_block_key = make_block_key(shard_index, 0);
     let block_page = get_block_page_by_prefix(
         db,
         &PageOptions {
@@ -82,7 +82,7 @@ pub fn get_current_height(
             page_size: Some(1),
             page_token: None,
         },
-        Some(start_primary_key),
+        Some(start_block_key),
         None,
     )?;
 
@@ -109,14 +109,15 @@ pub fn get_blocks_in_range(
     start_block_number: u64,
     stop_block_number: Option<u64>,
 ) -> Result<BlockPage, BlockStorageError> {
-    let start_primary_key = make_primary_key(shard_index, start_block_number);
+    let start_primary_key = make_block_key(shard_index, start_block_number);
     let stop_prefix =
-        stop_block_number.map(|block_number| make_primary_key(shard_index, block_number));
+        stop_block_number.map(|block_number| make_block_key(shard_index, block_number));
 
     get_block_page_by_prefix(db, page_options, Some(start_primary_key), stop_prefix)
 }
 
 pub fn put_block(db: &RocksDB, block: Block) -> Result<(), BlockStorageError> {
+    // TODO: We need to introduce a transaction model
     let mut txn = db.txn();
     let header = block
         .header
@@ -126,7 +127,7 @@ pub fn put_block(db: &RocksDB, block: Block) -> Result<(), BlockStorageError> {
         .height
         .as_ref()
         .ok_or(BlockStorageError::BlockMissingHeight)?;
-    let primary_key = make_primary_key(height.shard_index, height.block_number);
+    let primary_key = make_block_key(height.shard_index, height.block_number);
     txn.put(primary_key, block.encode_to_vec());
     db.commit(txn)?;
     Ok(())
