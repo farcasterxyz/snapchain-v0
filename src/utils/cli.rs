@@ -9,6 +9,7 @@ use prost::Message;
 use std::error::Error;
 use tokio::sync::mpsc;
 use tokio::time;
+use tonic::transport::Channel;
 
 const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
 const FETCH_SIZE: u64 = 100;
@@ -16,9 +17,9 @@ const FETCH_SIZE: u64 = 100;
 // compose_message is a proof-of-concept script, is not guaranteed to be correct,
 // and clearly needs a lot of work. Use at your own risk.
 pub async fn compose_message(
+    client: &mut SnapchainServiceClient<Channel>,
     private_key: SigningKey,
     fid: u64,
-    addr: String,
     text: &str,
 ) -> Result<message::Message, Box<dyn Error>> {
     let network = FarcasterNetwork::Mainnet;
@@ -61,7 +62,6 @@ pub async fn compose_message(
     msg.signer = private_key.verifying_key().to_bytes().to_vec();
     msg.data_bytes = Some(msg_data_bytes);
 
-    let mut client = SnapchainServiceClient::connect(addr).await?;
     let request = tonic::Request::new(msg.clone());
     let response = client.submit_message(request).await?;
 

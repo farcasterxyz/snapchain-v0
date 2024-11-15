@@ -81,7 +81,7 @@ impl Proposer for ShardProposer {
     ) -> FullProposal {
         // Sleep before proposing the value so we don't produce blocks too fast
         // TODO: rethink/reconsider
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        // tokio::time::sleep(Duration::from_millis(250)).await;
 
         let previous_chunk = self.chunks.last();
         let parent_hash = match previous_chunk {
