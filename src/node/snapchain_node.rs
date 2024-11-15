@@ -10,12 +10,14 @@ use crate::proto::message;
 use crate::proto::snapchain::Block;
 use crate::storage::db::RocksDB;
 use crate::storage::store::engine::{ShardEngine, SnapchainEngine};
+use crate::storage::store::shard::ShardStore;
 use crate::storage::store::BlockStore;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
 use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -72,9 +74,10 @@ impl SnapchainNode {
             };
             let ctx = SnapchainValidatorContext::new(keypair.clone());
             // TODO(aditi): fix this
-            let db = RocksDB::new(format!(".rocks/shard{}", shard_id).as_str());
+            let db = Arc::new(RocksDB::new(format!(".rocks/shard{}", shard_id).as_str()));
             db.open().unwrap();
-            let engine = ShardEngine::new(shard_id, db);
+            let shard_store = ShardStore::new(db);
+            let engine = ShardEngine::new(shard_id, shard_store);
 
             let messages_tx = engine.messages_tx();
 

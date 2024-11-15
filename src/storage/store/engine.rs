@@ -8,6 +8,8 @@ use std::iter;
 use tokio::sync::mpsc;
 use tracing::error;
 
+use super::shard::ShardStore;
+
 // Shard state root and the transactions
 pub struct ShardStateChange {
     pub shard_id: u32,
@@ -17,13 +19,13 @@ pub struct ShardStateChange {
 
 pub struct ShardEngine {
     shard_id: u32,
-    shard_store: RocksDB,
+    shard_store: ShardStore,
     messages_rx: mpsc::Receiver<message::Message>,
     messages_tx: mpsc::Sender<message::Message>,
 }
 
 impl ShardEngine {
-    pub fn new(shard_id: u32, shard_store: RocksDB) -> ShardEngine {
+    pub fn new(shard_id: u32, shard_store: ShardStore) -> ShardEngine {
         let (messages_tx, messages_rx) = mpsc::channel::<message::Message>(100);
         ShardEngine {
             shard_id,
