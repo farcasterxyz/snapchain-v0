@@ -2,6 +2,7 @@ use ed25519_dalek::{SecretKey, SigningKey};
 use hex;
 use snapchain::proto::snapchain::Block;
 use snapchain::utils::cli::{compose_message, follow_blocks};
+use std::collections::HashSet;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::{select, time};
@@ -10,7 +11,7 @@ use hex::FromHex;
 use message::MessageData;
 use prost::Message;
 use snapchain::proto::message;
-const SUBMIT_MESSAGE_INTERVAL: Duration = Duration::from_millis(100);
+const SUBMIT_MESSAGE_INTERVAL: Duration = Duration::from_millis(10);
 const STATS_CALCULATION_INTERVAL: Duration = Duration::from_secs(1);
 const RPC_ADDR: &str = "http://127.0.0.1:3383";
 
@@ -53,12 +54,14 @@ async fn main() {
     let mut block_count = 0;
     let mut num_messages_processed = 0;
     let mut num_messages_submitted = 0;
+    let mut pending_messages = HashSet::new();
     let mut time_to_confirmation = vec![];
     loop {
         select! {
             _ = stats_calculation_timer.tick() => {
-                let avg_time_to_confirmation = if time_to_confirmation.len() > 0 {time_to_confirmation.iter().sum::<f64>() / time_to_confirmation.len() as f64 } else {0f64};
-                println!("Blocks produced : {:#?}, Messages submitted: {:#?}, Messages processed: {:#?}, Avg time to confirmation (secs): {:#?}", block_count, num_messages_submitted, num_messages_processed, avg_time_to_confirmation);
+                let avg_time_to_confirmation = if time_to_confirmation.len() > 0 {time_to_confirmation.iter().sum::<u64>() as f64 / time_to_confirmation.len() as f64} else {0f64};
+                let max_time_to_confirmation = if time_to_confirmation.len() > 0 {time_to_confirmation.clone().into_iter().max().unwrap()} else {0};
+                println!("Blocks produced: {:#?}, Messages submitted: {:#?}, Messages processed: {:#?}, Pending messages: {:#?}, Avg time to confirmation (secs): {:#?}, Max time to confirmation (secs): {:#?}", block_count, num_messages_submitted, num_messages_processed, pending_messages.len(), avg_time_to_confirmation, max_time_to_confirmation);
                 block_count = 0;
                 num_messages_processed= 0;
                 num_messages_submitted = 0;
@@ -72,14 +75,16 @@ async fn main() {
                             let msg_data = MessageData::decode(msg.data_bytes.as_ref().unwrap().as_slice()).unwrap();
                             let msg_timestamp = msg_data.timestamp;
                             let block_timestamp = block.header.as_ref().unwrap().timestamp;
-                            time_to_confirmation.push(block_timestamp as f64 - (msg_timestamp as f64));
+                            time_to_confirmation.push(block_timestamp  - msg_timestamp as u64);
                             num_messages_processed += 1;
+                            pending_messages.remove(&msg.hash);
                         }
                     }
-        }
+                }
             }
-            Some(_) = messages_rx.recv() => {
+            Some(message) = messages_rx.recv() => {
                 num_messages_submitted += 1;
+                pending_messages.insert(message.hash);
             },
         }
     }
