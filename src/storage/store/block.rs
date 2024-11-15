@@ -1,8 +1,10 @@
 use crate::proto::snapchain::Block;
-use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch, RocksdbError};
+use crate::storage::db::{PageOptions, RocksDB, RocksdbError};
 use prost::Message;
-use serde::Deserialize;
+use std::sync::Arc;
 use thiserror::Error;
+
+static PAGE_SIZE: usize = 100;
 
 // All keys should be prefixed with an element in [RootPrefix] so there's no chance of duplicate keys across different stores
 enum RootPrefix {
@@ -137,4 +139,58 @@ pub fn put_block(db: &RocksDB, block: Block) -> Result<(), BlockStorageError> {
     txn.put(primary_key, block.encode_to_vec());
     db.commit(txn)?;
     Ok(())
+}
+
+#[derive(Default, Clone)]
+pub struct BlockStore {
+    db: Arc<RocksDB>,
+}
+
+impl BlockStore {
+    pub fn new(db: Arc<RocksDB>) -> BlockStore {
+        BlockStore { db }
+    }
+
+    pub fn put_block(&self, block: Block) -> Result<(), BlockStorageError> {
+        put_block(&self.db, block)
+    }
+
+    pub fn max_block_number(&self, shard_index: u32) -> Result<u64, BlockStorageError> {
+        let current_height = get_current_height(&self.db, shard_index)?;
+        match current_height {
+            None => Ok(0),
+            Some(height) => Ok(height),
+        }
+    }
+
+    pub fn get_blocks(
+        &self,
+        start_block_number: u64,
+        stop_block_number: Option<u64>,
+        shard_index: u32,
+    ) -> Result<Vec<Block>, BlockStorageError> {
+        let mut blocks = vec![];
+        let mut next_page_token = None;
+        loop {
+            let block_page = get_blocks_in_range(
+                &self.db,
+                &PageOptions {
+                    page_size: Some(PAGE_SIZE),
+                    page_token: next_page_token,
+                    reverse: false,
+                },
+                shard_index,
+                start_block_number,
+                stop_block_number,
+            )?;
+            blocks.extend(block_page.blocks);
+            if block_page.next_page_token.is_none() {
+                break;
+            } else {
+                next_page_token = block_page.next_page_token
+            }
+        }
+
+        Ok(blocks)
+    }
 }

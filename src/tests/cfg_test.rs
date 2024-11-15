@@ -1,4 +1,3 @@
-use crate::cfg::load_and_merge_config;
 use std::env;
 
 #[derive(Debug)]
@@ -32,6 +31,7 @@ impl Drop for EnvRestorer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cfg::load_and_merge_config;
     use serial_test::serial; // for setting env vars
     use std::fs::File;
     use std::io::Write;

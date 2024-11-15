@@ -4,14 +4,13 @@ use std::sync::Arc;
 
 use hex;
 use libp2p::identity::ed25519::Keypair;
-use snapchain::consensus::consensus::BlockStore;
 use snapchain::network::server::MySnapchainService;
 use snapchain::node::snapchain_node::SnapchainNode;
 use snapchain::proto::message;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::proto::snapchain::Block;
 use snapchain::storage::db::{PageOptions, RocksDB};
-use snapchain::storage::store::{get_blocks_in_range, put_block};
+use snapchain::storage::store::{get_blocks_in_range, put_block, BlockStore};
 use snapchain::{
     consensus::consensus::ConsensusMsg,
     core::types::{ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext},
