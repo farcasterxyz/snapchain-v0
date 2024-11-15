@@ -139,6 +139,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         gossip_tx.clone(),
         block_tx,
         block_store.clone(),
+        app_config.rocksdb_dir,
     )
     .await;
 

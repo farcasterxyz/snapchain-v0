@@ -91,8 +91,10 @@ impl ShardEngine {
     }
 
     pub fn get_confirmed_height(&self) -> Height {
-        // TODO: look up in db
-        return Height::new(self.shard_id, 0);
+        match self.shard_store.max_block_number() {
+            Ok(block_num) => Height::new(self.shard_id, block_num),
+            Err(_) => Height::new(self.shard_id, 0),
+        }
     }
 }
 

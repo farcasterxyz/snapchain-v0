@@ -37,6 +37,7 @@ impl SnapchainNode {
         gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
         block_tx: mpsc::Sender<Block>,
         block_store: BlockStore,
+        rocksdb_dir: String,
     ) -> Self {
         let validator_address = Address(keypair.public().to_bytes());
 
@@ -73,8 +74,7 @@ impl SnapchainNode {
                 threshold_params: Default::default(),
             };
             let ctx = SnapchainValidatorContext::new(keypair.clone());
-            // TODO(aditi): fix this
-            let db = RocksDB::new(format!(".rocks/shard{}", shard_id).as_str());
+            let db = RocksDB::new(format!("{}/shard{}", rocksdb_dir, shard_id).as_str());
             db.open().unwrap();
             let shard_store = ShardStore::new(db);
             let engine = ShardEngine::new(shard_id, shard_store);
