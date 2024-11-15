@@ -1,8 +1,8 @@
-use malachite_common::{ValidatorSet};
-use std::time::{Duration};
 use async_trait::async_trait;
 use libp2p::identity::ed25519::{Keypair, SecretKey};
+use malachite_common::ValidatorSet;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 

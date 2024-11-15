@@ -54,12 +54,12 @@ impl ShardValidator {
     }
 
     pub fn get_current_height(&self) -> Result<u64, BlockProposerError> {
-        match &self.block_proposer {
-            None => Ok(0),
-            Some(block_proposer) => block_proposer
-                .block_store
-                .max_block_number(self.shard_id.shard_id())
-                .map_err(|err| BlockProposerError::BlockStorageError(err)),
+        if let Some(proposer) = &self.block_proposer {
+            Ok(proposer.get_confirmed_height().block_number)
+        } else if let Some(proposer) = &self.shard_proposer {
+            Ok(proposer.get_confirmed_height().block_number)
+        } else {
+            panic!("No proposer set");
         }
     }
 
