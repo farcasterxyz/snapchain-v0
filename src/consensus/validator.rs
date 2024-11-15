@@ -53,14 +53,13 @@ impl ShardValidator {
         self.validator_set.count()
     }
 
-    pub fn get_current_height(&self) -> Result<u64, BlockProposerError> {
-        if let Some(proposer) = &self.block_proposer {
-            Ok(proposer.get_confirmed_height().block_number)
-        } else if let Some(proposer) = &self.shard_proposer {
-            Ok(proposer.get_confirmed_height().block_number)
-        } else {
-            panic!("No proposer set");
+    pub fn get_current_height(&self) -> u64 {
+        if let Some(p) = &self.block_proposer {
+            return p.get_confirmed_height().block_number;
+        } else if let Some(p) = &self.shard_proposer {
+            return p.get_confirmed_height().block_number;
         }
+        panic!("No proposer set on validator");
     }
 
     pub fn add_validator(&mut self, validator: SnapchainValidator) -> bool {

@@ -609,7 +609,7 @@ impl Actor for Consensus {
             self.shard_id.clone(),
             self.ctx.public_key(),
             None,
-            state.shard_validator.get_current_height()?,
+            state.shard_validator.get_current_height(),
         ));
         Ok(())
     }
