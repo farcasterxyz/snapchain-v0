@@ -1,8 +1,8 @@
-use malachite_common::{ValidatorSet};
-use std::time::{Duration};
 use async_trait::async_trait;
 use libp2p::identity::ed25519::{Keypair, SecretKey};
+use malachite_common::ValidatorSet;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -609,7 +609,7 @@ impl Actor for Consensus {
             self.shard_id.clone(),
             self.ctx.public_key(),
             None,
-            state.shard_validator.get_current_height()?,
+            state.shard_validator.get_current_height(),
         ));
         Ok(())
     }
