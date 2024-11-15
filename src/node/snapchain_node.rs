@@ -9,7 +9,7 @@ use crate::network::gossip::GossipEvent;
 use crate::proto::message;
 use crate::proto::snapchain::Block;
 use crate::storage::db::RocksDB;
-use crate::storage::store::engine::{ShardEngine, SnapchainEngine};
+use crate::storage::store::engine::{BlockEngine, ShardEngine};
 use crate::storage::store::shard::ShardStore;
 use crate::storage::store::BlockStore;
 use libp2p::identity::ed25519::Keypair;
@@ -74,7 +74,7 @@ impl SnapchainNode {
             };
             let ctx = SnapchainValidatorContext::new(keypair.clone());
             // TODO(aditi): fix this
-            let db = Arc::new(RocksDB::new(format!(".rocks/shard{}", shard_id).as_str()));
+            let db = RocksDB::new(format!(".rocks/shard{}", shard_id).as_str());
             db.open().unwrap();
             let shard_store = ShardStore::new(db);
             let engine = ShardEngine::new(shard_id, shard_store);
@@ -134,7 +134,7 @@ impl SnapchainNode {
             threshold_params: Default::default(),
         };
 
-        let engine = SnapchainEngine::new(block_shard.shard_id(), block_store.clone());
+        let engine = BlockEngine::new(block_shard.shard_id(), block_store.clone());
 
         let block_proposer = BlockProposer::new(
             validator_address.clone(),

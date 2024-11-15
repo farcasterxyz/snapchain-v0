@@ -118,13 +118,13 @@ pub fn put_shard_chunk(db: &RocksDB, shard_chunk: ShardChunk) -> Result<(), Shar
     Ok(())
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct ShardStore {
-    db: Arc<RocksDB>,
+    db: RocksDB,
 }
 
 impl ShardStore {
-    pub fn new(db: Arc<RocksDB>) -> ShardStore {
+    pub fn new(db: RocksDB) -> ShardStore {
         ShardStore { db }
     }
 

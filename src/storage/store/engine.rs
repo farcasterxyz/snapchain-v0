@@ -1,5 +1,5 @@
 use crate::core::types::{proto, Height};
-use crate::proto::snapchain::Block;
+use crate::proto::snapchain::{Block, ShardChunk};
 use crate::proto::{message, snapchain};
 use crate::storage::db::RocksDB;
 use crate::storage::store::BlockStore;
@@ -74,13 +74,20 @@ impl ShardEngine {
         true
     }
 
-    pub fn commit_state_change(&mut self, _shard_state_change: ShardStateChange) {
+    pub fn commit_shard_chunk(&mut self, shard_chunk: ShardChunk) {
         // Create a db transaction
         // Replay the state change
         // If the state root does not match or any of the messages fail to merge, panic?
         // write the events to the db
         // Commit the transaction
         // Emit events
+        // TODO: Commit state change into shard store here.
+        match self.shard_store.put_shard_chunk(shard_chunk) {
+            Err(err) => {
+                error!("Unable to write shard chunk to store {}", err)
+            }
+            Ok(()) => {}
+        }
     }
 
     pub fn get_confirmed_height(&self) -> Height {
@@ -89,36 +96,20 @@ impl ShardEngine {
     }
 }
 
-pub struct SnapchainEngine {
+pub struct BlockEngine {
     block_store: BlockStore,
-    block_shard: u32,
+    shard_id: u32,
 }
 
-impl SnapchainEngine {
-    pub fn new(block_shard: u32, block_store: BlockStore) -> Self {
-        SnapchainEngine {
-            block_shard,
+impl BlockEngine {
+    pub fn new(shard_id: u32, block_store: BlockStore) -> Self {
+        BlockEngine {
+            shard_id,
             block_store,
         }
     }
 
     pub fn commit_block(&mut self, block: Block) {
-        // Commit the individual shards state changes
-        // for shard_chunks in block.shard_chunks.clone() {
-        //     let shard_index = shard_chunks
-        //         .header
-        //         .clone()
-        //         .unwrap()
-        //         .height
-        //         .unwrap()
-        //         .shard_index;
-        //     self.commit_state_change(ShardStateChange {
-        //         shard_id: shard_index,
-        //         new_state_root: shard_chunks.header.unwrap().shard_root,
-        //         transactions: shard_chunks.transactions,
-        //     });
-        // }
-
         let result = self.block_store.put_block(block);
         if result.is_err() {
             error!("Failed to store block: {:?}", result.err());
@@ -126,9 +117,9 @@ impl SnapchainEngine {
     }
 
     pub fn get_confirmed_height(&self) -> Height {
-        match self.block_store.max_block_number(self.block_shard) {
-            Ok(block_num) => Height::new(self.block_shard, block_num),
-            Err(_) => Height::new(self.block_shard, 0),
+        match self.block_store.max_block_number(self.shard_id) {
+            Ok(block_num) => Height::new(self.shard_id, block_num),
+            Err(_) => Height::new(self.shard_id, 0),
         }
     }
 }

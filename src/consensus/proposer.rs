@@ -5,7 +5,7 @@ use crate::core::types::{
 use crate::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 use crate::proto::rpc::BlocksRequest;
 use crate::proto::snapchain::{Block, BlockHeader, FullProposal, ShardChunk, ShardHeader};
-use crate::storage::store::engine::{ShardEngine, ShardStateChange, SnapchainEngine};
+use crate::storage::store::engine::{BlockEngine, ShardEngine, ShardStateChange};
 use crate::storage::store::BlockStorageError;
 use malachite_common::{Round, Validity};
 use prost::Message;
@@ -149,6 +149,8 @@ impl Proposer for ShardProposer {
                 let _ = tx_decision.send(proposal.clone()).await;
             }
             self.chunks.push(proposal.shard_chunk().unwrap());
+            self.engine
+                .commit_shard_chunk(proposal.shard_chunk().unwrap());
             self.proposed_chunks.remove(&value);
         }
     }
@@ -188,7 +190,7 @@ pub struct BlockProposer {
     shard_decision_rx: RxDecision,
     num_shards: u32,
     block_tx: mpsc::Sender<Block>,
-    engine: SnapchainEngine,
+    engine: BlockEngine,
 }
 
 impl BlockProposer {
@@ -198,7 +200,7 @@ impl BlockProposer {
         shard_decision_rx: RxDecision,
         num_shards: u32,
         block_tx: mpsc::Sender<Block>,
-        engine: SnapchainEngine,
+        engine: BlockEngine,
     ) -> BlockProposer {
         BlockProposer {
             shard_id,
