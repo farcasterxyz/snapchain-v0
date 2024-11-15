@@ -81,7 +81,6 @@ impl ShardEngine {
         // write the events to the db
         // Commit the transaction
         // Emit events
-        // TODO: Commit state change into shard store here.
         match self.shard_store.put_shard_chunk(shard_chunk) {
             Err(err) => {
                 error!("Unable to write shard chunk to store {}", err)
