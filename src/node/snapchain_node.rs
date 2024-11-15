@@ -8,7 +8,8 @@ use crate::core::types::{
 use crate::network::gossip::GossipEvent;
 use crate::proto::message;
 use crate::proto::snapchain::Block;
-use crate::storage::store::engine::SnapchainEngine;
+use crate::storage::db::RocksDB;
+use crate::storage::store::engine::{ShardEngine, SnapchainEngine};
 use crate::storage::store::BlockStore;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
@@ -70,8 +71,13 @@ impl SnapchainNode {
                 threshold_params: Default::default(),
             };
             let ctx = SnapchainValidatorContext::new(keypair.clone());
-            let engine = SnapchainEngine::new(block_store.clone());
+            // TODO(aditi): fix this
+            let db = RocksDB::new(format!(".rocks/shard{}", shard_id).as_str());
+            db.open().unwrap();
+            let engine = ShardEngine::new(shard_id, db);
+
             let messages_tx = engine.messages_tx();
+
             let shard_proposer = ShardProposer::new(
                 validator_address.clone(),
                 shard.clone(),
@@ -125,7 +131,8 @@ impl SnapchainNode {
             threshold_params: Default::default(),
         };
 
-        let engine = SnapchainEngine::new(block_store.clone());
+        let engine = SnapchainEngine::new(block_shard.shard_id(), block_store.clone());
+
         let block_proposer = BlockProposer::new(
             validator_address.clone(),
             block_shard.clone(),
