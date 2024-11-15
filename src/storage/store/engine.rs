@@ -15,16 +15,6 @@ pub struct ShardStateChange {
     pub transactions: Vec<proto::Transaction>,
 }
 
-// pub trait Engine {
-//     fn propose_state_change(&mut self, shard_id: u32) -> ShardStateChange;
-//     fn validate_state_change(&mut self, shard_state_change: &ShardStateChange) -> bool;
-//     fn commit_state_change(&mut self, shard_state_change: ShardStateChange);
-
-//     fn commit_block(&mut self, block: proto::Block);
-
-//     fn get_confirmed_height(&self, shard_id: u32) -> Height;
-// }
-
 pub struct ShardEngine {
     shard_id: u32,
     shard_store: RocksDB,
