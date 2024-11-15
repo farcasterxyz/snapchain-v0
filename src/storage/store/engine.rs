@@ -4,7 +4,7 @@ use crate::proto::{message, snapchain};
 use crate::storage::store::BlockStore;
 use std::iter;
 use tokio::sync::mpsc;
-use tracing::error;
+use tracing::{error, warn};
 
 // Shard state root and the transactions
 pub struct ShardStateChange {
@@ -27,6 +27,7 @@ pub struct SnapchainEngine {
     block_store: BlockStore,
     messages_rx: mpsc::Receiver<message::Message>,
     messages_tx: mpsc::Sender<message::Message>,
+    count: u64,
 }
 
 impl SnapchainEngine {
@@ -36,6 +37,7 @@ impl SnapchainEngine {
             block_store,
             messages_rx,
             messages_tx,
+            count: 1,
         }
     }
 
@@ -48,6 +50,8 @@ impl Engine for SnapchainEngine {
     fn propose_state_change(&mut self, shard: u32) -> ShardStateChange {
         let it = iter::from_fn(|| self.messages_rx.try_recv().ok());
         let user_messages: Vec<message::Message> = it.collect();
+
+        self.count += user_messages.len() as u64;
 
         let transactions = vec![snapchain::Transaction {
             fid: 1234,                      //TODO
@@ -64,14 +68,22 @@ impl Engine for SnapchainEngine {
         // Rollback the transaction
         // Return the state change
 
+        let hash = self.count.to_be_bytes().to_vec();
+
+        warn!(hash = hex::encode(hash.clone()), "propose",);
+
         ShardStateChange {
             shard_id: shard,
-            new_state_root: vec![],
+            new_state_root: hash.clone(),
             transactions,
         }
     }
 
-    fn validate_state_change(&mut self, _shard_state_change: &ShardStateChange) -> bool {
+    fn validate_state_change(&mut self, shard_state_change: &ShardStateChange) -> bool {
+        let hash = shard_state_change.new_state_root.clone();
+
+        warn!(hash = hex::encode(hash.clone()), "validate");
+
         // Create a db transaction
         // Replay the state change
         // If all messages merge successfully and the merkle trie root matches the stateroot in the state change, return true
