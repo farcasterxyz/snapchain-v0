@@ -8,7 +8,7 @@ use std::iter;
 use tokio::sync::mpsc;
 use tracing::error;
 
-use super::shard::ShardStore;
+use super::shard::{self, ShardStore};
 
 // Shard state root and the transactions
 pub struct ShardStateChange {
@@ -99,15 +99,11 @@ impl ShardEngine {
 
 pub struct BlockEngine {
     block_store: BlockStore,
-    shard_id: u32,
 }
 
 impl BlockEngine {
-    pub fn new(shard_id: u32, block_store: BlockStore) -> Self {
-        BlockEngine {
-            shard_id,
-            block_store,
-        }
+    pub fn new(block_store: BlockStore) -> Self {
+        BlockEngine { block_store }
     }
 
     pub fn commit_block(&mut self, block: Block) {
@@ -118,9 +114,11 @@ impl BlockEngine {
     }
 
     pub fn get_confirmed_height(&self) -> Height {
-        match self.block_store.max_block_number(self.shard_id) {
-            Ok(block_num) => Height::new(self.shard_id, block_num),
-            Err(_) => Height::new(self.shard_id, 0),
+        let shard_index = 0;
+        // TODO(aditi): There's no reason we need to provide a shard id here anymore
+        match self.block_store.max_block_number(shard_index) {
+            Ok(block_num) => Height::new(shard_index, block_num),
+            Err(_) => Height::new(shard_index, 0),
         }
     }
 }

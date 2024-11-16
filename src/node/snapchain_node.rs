@@ -134,7 +134,7 @@ impl SnapchainNode {
             threshold_params: Default::default(),
         };
 
-        let engine = BlockEngine::new(block_shard.shard_id(), block_store.clone());
+        let engine = BlockEngine::new(block_store.clone());
 
         let block_proposer = BlockProposer::new(
             validator_address.clone(),

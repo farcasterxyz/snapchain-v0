@@ -51,7 +51,7 @@ pub struct ShardProposer {
     chunks: Vec<ShardChunk>,
     proposed_chunks: BTreeMap<ShardHash, FullProposal>,
     tx_decision: Option<TxDecision>,
-    engine: ShardEngine, // TODO: Use the trait here, once we figure out how to pass Box<dyn Engine> to the actor
+    engine: ShardEngine,
 }
 
 impl ShardProposer {
