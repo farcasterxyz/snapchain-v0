@@ -9,7 +9,7 @@ use tokio::signal::ctrl_c;
 use tokio::sync::mpsc;
 use tokio::{select, time};
 use tonic::transport::Server;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use snapchain::consensus::consensus::SystemMessage;
@@ -27,8 +27,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let app_config = snapchain::cfg::load_and_merge_config(args)?;
 
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    match app_config.log_format.as_str() {
+        "text" => tracing_subscriber::fmt().with_env_filter(env_filter).init(),
+        "json" => tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(env_filter)
+            .init(),
+        _ => {
+            return Err(format!("Invalid log format: {}", app_config.log_format).into());
+        }
+    }
+
     if app_config.id == 0 {
         return Err("node id must be specified greater than 0".into());
+    }
+    if app_config.clear_db {
+        let db_dir = format!("{}", app_config.rocksdb_dir);
+        std::fs::remove_dir_all(db_dir.clone()).unwrap();
+        std::fs::create_dir_all(db_dir.clone()).unwrap();
+        warn!("Cleared db at {:?}", db_dir);
     }
 
     let addr = app_config.gossip.address.clone();
@@ -45,18 +63,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         grpc_addr = grpc_addr,
         "SnapchainService listening",
     );
-
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    match app_config.log_format.as_str() {
-        "text" => tracing_subscriber::fmt().with_env_filter(env_filter).init(),
-        "json" => tracing_subscriber::fmt()
-            .json()
-            .with_env_filter(env_filter)
-            .init(),
-        _ => {
-            return Err(format!("Invalid log format: {}", app_config.log_format).into());
-        }
-    }
 
     let keypair = app_config.consensus.keypair().clone();
 

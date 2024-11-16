@@ -20,7 +20,7 @@ async fn main() {
             std::fs::create_dir(format!("nodes/{id}")).expect("Failed to create node directory");
         } else {
             if std::path::Path::new(db_dir.clone().as_str()).exists() {
-                std::fs::remove_dir(db_dir.clone()).expect("Failed to remove .rocks directory");
+                std::fs::remove_dir_all(db_dir.clone()).expect("Failed to remove .rocks directory");
             }
         }
         let secret_key = hex::encode(SecretKey::generate());
