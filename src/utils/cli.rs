@@ -1,8 +1,7 @@
 use crate::proto::message;
 use crate::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 use crate::proto::{rpc, snapchain::Block};
-use ed25519_dalek::{SecretKey, Signer, SigningKey};
-use hex::FromHex;
+use ed25519_dalek::{Signer, SigningKey};
 use message::CastType::Cast;
 use message::MessageType::CastAdd;
 use message::{CastAddBody, FarcasterNetwork, MessageData};
