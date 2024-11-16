@@ -5,20 +5,18 @@ use crate::core::types::{
 use crate::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 use crate::proto::rpc::BlocksRequest;
 use crate::proto::snapchain::{Block, BlockHeader, FullProposal, ShardChunk, ShardHeader};
-use crate::proto::{message, snapchain};
 use crate::storage::store::engine::{Engine, ShardStateChange, SnapchainEngine};
-use crate::storage::store::{BlockStorageError, BlockStore};
+use crate::storage::store::BlockStorageError;
 use malachite_common::{Round, Validity};
 use prost::Message;
 use std::collections::BTreeMap;
-use std::iter;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tokio::{select, time};
 use tonic::Request;
-use tracing::{debug, error, warn};
+use tracing::{error, warn};
 
 const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
 

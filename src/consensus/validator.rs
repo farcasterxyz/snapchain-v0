@@ -1,4 +1,4 @@
-use crate::consensus::proposer::{BlockProposer, BlockProposerError, Proposer, ShardProposer};
+use crate::consensus::proposer::{BlockProposer, Proposer, ShardProposer};
 use crate::core::types::{
     Address, Height, ShardHash, ShardId, SnapchainShard, SnapchainValidator,
     SnapchainValidatorContext, SnapchainValidatorSet,

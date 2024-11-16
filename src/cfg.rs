@@ -18,6 +18,7 @@ pub struct Config {
     pub gossip: network::gossip::Config,
     pub rpc_address: String,
     pub rocksdb_dir: String,
+    pub clear_db: bool,
 }
 
 impl Default for Config {
@@ -31,6 +32,7 @@ impl Default for Config {
             gossip: network::gossip::Config::default(),
             rpc_address: "0.0.0.0:3383".to_string(),
             rocksdb_dir: ".rocks".to_string(),
+            clear_db: false,
         }
     }
 }
@@ -45,6 +47,9 @@ pub struct CliArgs {
 
     #[arg(long, help = "Path to the config file")]
     config_path: Option<String>,
+
+    #[arg(long, action, help = "Start the node with a clean database")]
+    clear_db: bool,
     // All new arguments that are to override values from config files or environment variables
     // should be probably be optional (`Option<T>`) and without a default. Setting a default
     // in this case will have the effect of automatically overriding all previous configuration
@@ -84,6 +89,7 @@ pub fn load_and_merge_config(args: Vec<String>) -> Result<Config, Box<dyn Error>
     if let Some(log_format) = cli_args.log_format {
         config.log_format = log_format;
     }
+    config.clear_db = cli_args.clear_db;
 
     Ok(config)
 }
