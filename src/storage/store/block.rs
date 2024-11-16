@@ -4,11 +4,14 @@ use prost::Message;
 use std::sync::Arc;
 use thiserror::Error;
 
+use super::PAGE_SIZE_MAX;
+
 static PAGE_SIZE: usize = 100;
 
 // All keys should be prefixed with an element in [RootPrefix] so there's no chance of duplicate keys across different stores
-enum RootPrefix {
+pub enum RootPrefix {
     Block = 1,
+    Shard = 2,
 }
 
 // TODO(aditi): This code definitely needs unit tests
@@ -27,7 +30,6 @@ pub enum BlockStorageError {
     TooManyBlocksInResult,
 }
 
-pub const PAGE_SIZE_MAX: usize = 10_000;
 /** A page of messages returned from various APIs */
 pub struct BlockPage {
     pub blocks: Vec<Block>,

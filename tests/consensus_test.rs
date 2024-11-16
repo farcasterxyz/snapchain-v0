@@ -39,6 +39,15 @@ impl Drop for NodeForTest {
     }
 }
 
+fn make_tmp_path() -> String {
+    tempfile::tempdir()
+        .unwrap()
+        .path()
+        .as_os_str()
+        .to_string_lossy()
+        .to_string()
+}
+
 impl NodeForTest {
     pub async fn create(keypair: Keypair, num_shards: u32, grpc_port: u32) -> Self {
         let mut config = snapchain::consensus::consensus::Config::default();
@@ -47,13 +56,7 @@ impl NodeForTest {
         let (gossip_tx, gossip_rx) = mpsc::channel::<GossipEvent<SnapchainValidatorContext>>(100);
 
         let (block_tx, mut block_rx) = mpsc::channel::<Block>(100);
-        let tmp_path = tempfile::tempdir()
-            .unwrap()
-            .path()
-            .as_os_str()
-            .to_string_lossy()
-            .to_string();
-        let db = Arc::new(RocksDB::new(&tmp_path));
+        let db = Arc::new(RocksDB::new(&make_tmp_path()));
         db.open().unwrap();
         let block_store = BlockStore::new(db.clone());
         let node = SnapchainNode::create(
@@ -63,6 +66,7 @@ impl NodeForTest {
             gossip_tx,
             block_tx,
             block_store.clone(),
+            make_tmp_path(),
         )
         .await;
 

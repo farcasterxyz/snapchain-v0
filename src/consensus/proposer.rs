@@ -5,7 +5,7 @@ use crate::core::types::{
 use crate::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 use crate::proto::rpc::BlocksRequest;
 use crate::proto::snapchain::{Block, BlockHeader, FullProposal, ShardChunk, ShardHeader};
-use crate::storage::store::engine::{Engine, ShardStateChange, SnapchainEngine};
+use crate::storage::store::engine::{BlockEngine, ShardEngine, ShardStateChange};
 use crate::storage::store::BlockStorageError;
 use malachite_common::{Round, Validity};
 use prost::Message;
@@ -51,14 +51,14 @@ pub struct ShardProposer {
     chunks: Vec<ShardChunk>,
     proposed_chunks: BTreeMap<ShardHash, FullProposal>,
     tx_decision: Option<TxDecision>,
-    engine: SnapchainEngine, // TODO: Use the trait here, once we figure out how to pass Box<dyn Engine> to the actor
+    engine: ShardEngine,
 }
 
 impl ShardProposer {
     pub fn new(
         address: Address,
         shard_id: SnapchainShard,
-        engine: SnapchainEngine,
+        engine: ShardEngine,
         tx_decision: Option<TxDecision>,
     ) -> ShardProposer {
         ShardProposer {
@@ -149,12 +149,14 @@ impl Proposer for ShardProposer {
                 let _ = tx_decision.send(proposal.clone()).await;
             }
             self.chunks.push(proposal.shard_chunk().unwrap());
+            self.engine
+                .commit_shard_chunk(proposal.shard_chunk().unwrap());
             self.proposed_chunks.remove(&value);
         }
     }
 
     fn get_confirmed_height(&self) -> Height {
-        self.engine.get_confirmed_height(self.shard_id.shard_id())
+        self.engine.get_confirmed_height()
     }
 }
 
@@ -188,7 +190,7 @@ pub struct BlockProposer {
     shard_decision_rx: RxDecision,
     num_shards: u32,
     block_tx: mpsc::Sender<Block>,
-    engine: SnapchainEngine,
+    engine: BlockEngine,
 }
 
 impl BlockProposer {
@@ -198,7 +200,7 @@ impl BlockProposer {
         shard_decision_rx: RxDecision,
         num_shards: u32,
         block_tx: mpsc::Sender<Block>,
-        engine: SnapchainEngine,
+        engine: BlockEngine,
     ) -> BlockProposer {
         BlockProposer {
             shard_id,
@@ -386,6 +388,6 @@ impl Proposer for BlockProposer {
     }
 
     fn get_confirmed_height(&self) -> Height {
-        self.engine.get_confirmed_height(self.shard_id.shard_id())
+        self.engine.get_confirmed_height()
     }
 }

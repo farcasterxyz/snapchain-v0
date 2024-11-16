@@ -8,13 +8,16 @@ use crate::core::types::{
 use crate::network::gossip::GossipEvent;
 use crate::proto::message;
 use crate::proto::snapchain::Block;
-use crate::storage::store::engine::SnapchainEngine;
+use crate::storage::db::RocksDB;
+use crate::storage::store::engine::{BlockEngine, ShardEngine};
+use crate::storage::store::shard::ShardStore;
 use crate::storage::store::BlockStore;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
 use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -34,6 +37,7 @@ impl SnapchainNode {
         gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
         block_tx: mpsc::Sender<Block>,
         block_store: BlockStore,
+        rocksdb_dir: String,
     ) -> Self {
         let validator_address = Address(keypair.public().to_bytes());
 
@@ -70,8 +74,13 @@ impl SnapchainNode {
                 threshold_params: Default::default(),
             };
             let ctx = SnapchainValidatorContext::new(keypair.clone());
-            let engine = SnapchainEngine::new(block_store.clone());
+            let db = RocksDB::new(format!("{}/shard{}", rocksdb_dir, shard_id).as_str());
+            db.open().unwrap();
+            let shard_store = ShardStore::new(db);
+            let engine = ShardEngine::new(shard_id, shard_store);
+
             let messages_tx = engine.messages_tx();
+
             let shard_proposer = ShardProposer::new(
                 validator_address.clone(),
                 shard.clone(),
@@ -125,7 +134,8 @@ impl SnapchainNode {
             threshold_params: Default::default(),
         };
 
-        let engine = SnapchainEngine::new(block_store.clone());
+        let engine = BlockEngine::new(block_store.clone());
+
         let block_proposer = BlockProposer::new(
             validator_address.clone(),
             block_shard.clone(),
