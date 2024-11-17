@@ -1,6 +1,8 @@
 use ed25519_dalek::{SecretKey, Signer, SigningKey};
 use hex::FromHex;
-use snapchain::utils::cli::compose_message;
+use snapchain::{
+    proto::rpc::snapchain_service_client::SnapchainServiceClient, utils::cli::compose_message,
+};
 
 #[tokio::main]
 async fn main() {
@@ -10,12 +12,10 @@ async fn main() {
             .unwrap(),
     );
 
-    compose_message(
-        private_key,
-        6833,
-        "http://127.0.0.1:3383".to_string(),
-        "Welcome from Rust!",
-    )
-    .await
-    .unwrap();
+    let mut client = SnapchainServiceClient::connect("http://127.0.0.1:3383".to_string())
+        .await
+        .unwrap();
+    compose_message(&mut client, private_key, 6833, "Welcome from Rust!")
+        .await
+        .unwrap();
 }
