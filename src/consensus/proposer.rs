@@ -20,7 +20,7 @@ use tracing::{error, warn};
 
 const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
 
-fn current_time() -> u64 {
+pub fn current_time() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()

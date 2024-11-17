@@ -26,7 +26,7 @@ pub struct ShardEngine {
 
 impl ShardEngine {
     pub fn new(shard_id: u32, shard_store: ShardStore) -> ShardEngine {
-        let (messages_tx, messages_rx) = mpsc::channel::<message::Message>(100);
+        let (messages_tx, messages_rx) = mpsc::channel::<message::Message>(10_000);
         ShardEngine {
             shard_id,
             shard_store,
