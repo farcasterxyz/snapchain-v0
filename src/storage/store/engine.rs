@@ -12,6 +12,7 @@ use tracing::{error, event, info, warn, Level};
 use super::shard::{self, ShardStore};
 
 // Shard state root and the transactions
+#[derive(Clone)]
 pub struct ShardStateChange {
     pub shard_id: u32,
     pub new_state_root: Vec<u8>,
@@ -84,8 +85,8 @@ impl ShardEngine {
 
         warn!(
             shard,
-            insert = encode_vec(&hashes.clone()),
             old_root_hash = hex::encode(self.trie.root_hash().unwrap()),
+            insert = encode_vec(&hashes.clone()),
             "propose – before insert",
         );
 

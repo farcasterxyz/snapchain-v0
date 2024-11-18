@@ -3,11 +3,12 @@ mod tests {
     use crate::proto::message::Message;
     use crate::proto::snapchain::{ShardChunk, ShardHeader, Transaction};
     use crate::storage::db;
-    use crate::storage::store::engine::ShardEngine;
+    use crate::storage::store::engine::{ShardEngine, ShardStateChange};
     use crate::storage::store::shard::ShardStore;
     use crate::utils::cli;
     use ed25519_dalek::{SecretKey, SigningKey};
     use hex::FromHex;
+    use tracing_subscriber::EnvFilter;
 
     fn new_engine() -> ShardEngine {
         let dir = tempfile::TempDir::new().unwrap();
@@ -20,12 +21,33 @@ mod tests {
         ShardEngine::new(1, shard_store)
     }
 
+    fn enable_logging() {
+        let env_filter =
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .try_init();
+    }
+
     fn from_hex(s: &str) -> Vec<u8> {
         hex::decode(s).unwrap()
     }
 
     fn to_hex(b: &[u8]) -> String {
         hex::encode(b)
+    }
+
+    fn state_change_to_shard_chunk(change: ShardStateChange) -> ShardChunk {
+        let mut chunk = default_shard_chunk();
+
+        chunk.header.as_mut().unwrap().shard_root = change.new_state_root;
+
+        //TODO: all messages
+        chunk.transactions[0]
+            .user_messages
+            .push(change.transactions[0].user_messages[0].clone());
+
+        chunk
     }
 
     fn default_shard_chunk() -> ShardChunk {
@@ -105,9 +127,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_send_messages() {
+        enable_logging();
         let mut engine = new_engine();
         let messages_tx = engine.messages_tx();
         let msg = default_message();
+
+        assert_eq!(
+            "dcf21a11dac4c3e7944f0d5254a2ebbf23c964df",
+            to_hex(&msg.hash),
+        );
+
         messages_tx.send(msg.clone()).await.unwrap();
 
         let state_change = engine.propose_state_change(1);
@@ -118,7 +147,10 @@ mod tests {
 
         let msg0 = &state_change.transactions[0].user_messages[0];
 
-        assert_eq!(to_hex(&msg0.hash), to_hex(&msg.hash));
+        assert_eq!(
+            "dcf21a11dac4c3e7944f0d5254a2ebbf23c964df",
+            to_hex(&msg0.hash)
+        );
 
         assert_eq!(
             "4ecbed7e119cf4999271780abb881dfaa579d85e",
@@ -128,5 +160,9 @@ mod tests {
             "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
             to_hex(&engine.trie_root_hash())
         );
+
+        let chunk = state_change_to_shard_chunk(state_change.clone());
+
+        engine.commit_shard_chunk(chunk);
     }
 }
