@@ -85,10 +85,8 @@ impl MerkleTrie {
         }
 
         // Then load the root node
-        let root_key = TrieNode::make_primary_key(&[], None);
-        if let Some(root_bytes) = self.db.get(&root_key)? {
-            let root_node = TrieNode::deserialize(&root_bytes.as_slice())?;
-
+        let loaded = self.load_root()?;
+        if let Some(root_node) = loaded {
             // Replace the root node
             self.root.write().unwrap().replace(root_node);
         } else {
@@ -96,6 +94,16 @@ impl MerkleTrie {
         }
 
         Ok(())
+    }
+
+    fn load_root(&self) -> Result<Option<TrieNode>, HubError> {
+        let root_key = TrieNode::make_primary_key(&[], None);
+        if let Some(root_bytes) = self.db.get(&root_key)? {
+            let root_node = TrieNode::deserialize(&root_bytes.as_slice())?;
+            Ok(Some(root_node))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn db(&self) -> Arc<RocksDB> {
@@ -112,19 +120,40 @@ impl MerkleTrie {
     }
 
     pub fn stop(&self) -> Result<(), HubError> {
-        // Grab the root with a write lock
-        let mut root = self.root.write().unwrap().take();
-        if let Some(root) = root.as_mut() {
-            // And write everything to disk
-            self.unload_from_memory(root, true)?;
-        }
-
         // Close
         if self.db_owned.load(std::sync::atomic::Ordering::Relaxed) {
             self.db.close();
         }
 
         Ok(())
+    }
+
+    pub fn commit(&self) -> Result<(), HubError> {
+        if let Some(root) = self.root.write().unwrap().as_mut() {
+            self.unload_from_memory(root, true)
+        } else {
+            panic!("commit") // TODO
+        }
+    }
+
+    pub fn reload(&self) -> Result<(), HubError> {
+        let loaded = self.load_root()?;
+
+        match loaded {
+            Some(replacement_root) => {
+                let mut root_guard = self.root.write().unwrap();
+                root_guard.replace(replacement_root);
+
+                let mut txn_batch = self.txn_batch.lock().unwrap();
+                *txn_batch = RocksDbTransactionBatch::new();
+
+                Ok(())
+            }
+            None => Err(HubError {
+                code: "bad_request.internal_error".to_string(),
+                message: "unable to reload root".to_string(),
+            }),
+        }
     }
 
     /**
@@ -166,8 +195,6 @@ impl MerkleTrie {
             let results = root.insert(&self.db, &mut txn, keys, 0)?;
 
             self.txn_batch.lock().unwrap().merge(txn);
-            self.unload_from_memory(root, false)?;
-
             Ok(results)
         } else {
             Err(HubError {
@@ -196,7 +223,6 @@ impl MerkleTrie {
             let results = root.delete(&self.db, &mut txn, keys, 0)?;
 
             self.txn_batch.lock().unwrap().merge(txn);
-            self.unload_from_memory(root, false)?;
             Ok(results)
         } else {
             Err(HubError {

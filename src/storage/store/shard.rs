@@ -120,12 +120,12 @@ pub fn put_shard_chunk(db: &RocksDB, shard_chunk: ShardChunk) -> Result<(), Shar
 
 #[derive(Default)]
 pub struct ShardStore {
-    db: RocksDB,
+    pub db: Arc<RocksDB>, // TODO: pub and Arc are temporary to allow trie to use
 }
 
 impl ShardStore {
     pub fn new(db: RocksDB) -> ShardStore {
-        ShardStore { db }
+        ShardStore { db: Arc::new(db) }
     }
 
     pub fn put_shard_chunk(&self, shard_chunk: ShardChunk) -> Result<(), ShardStorageError> {
