@@ -59,6 +59,18 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "hashes don't match")]
+    fn test_engine_commit_with_mismatched_hash() {
+        let mut engine = new_engine();
+        let state_change = engine.propose_state_change(1);
+
+        let mut chunk = default_shard_chunk();
+        chunk.header.as_mut().unwrap().shard_root =
+            from_hex("ffffffffffffffffffffffffffffffffffffffff");
+        engine.commit_shard_chunk(chunk);
+    }
+
+    #[test]
     // #[should_panic(expected = "abc123")]
     // which mismatched hash?
     fn test_engine_commit_no_messages_happy_path() {
@@ -68,6 +80,7 @@ mod tests {
         let mut chunk = default_shard_chunk();
         chunk.header.as_mut().unwrap().shard_root =
             from_hex("237b11d0dd9e78994ef2f141c7f170d48bb51d34");
+
         engine.commit_shard_chunk(chunk);
 
         assert_eq!(
