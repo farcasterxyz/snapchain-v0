@@ -191,6 +191,7 @@ impl Proposer for ShardProposer {
                     });
                     let missing_shard_chunks = rpc_client.get_shard_chunks(request).await?;
                     for shard_chunk in missing_shard_chunks.get_ref().shard_chunks.clone() {
+                        self.engine.commit_shard_chunk(shard_chunk.clone());
                         self.publish_new_shard_chunk(shard_chunk).await;
                     }
                 }
@@ -372,10 +373,8 @@ impl Proposer for BlockProposer {
 
     async fn decide(&mut self, height: Height, _round: Round, value: ShardHash) {
         if let Some(proposal) = self.proposed_blocks.get(&value) {
-            self.engine.commit_block(proposal.block().unwrap());
-
             self.publish_new_block(proposal.block().unwrap()).await;
-
+            self.engine.commit_block(proposal.block().unwrap());
             self.proposed_blocks.remove(&value);
             self.pending_chunks.remove(&height.block_number);
         }
@@ -404,6 +403,7 @@ impl Proposer for BlockProposer {
                     });
                     let missing_blocks = rpc_client.get_blocks(request).await?;
                     for block in missing_blocks.get_ref().blocks.clone() {
+                        self.engine.commit_block(block.clone());
                         self.publish_new_block(block).await;
                     }
                 }

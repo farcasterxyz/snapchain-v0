@@ -84,11 +84,9 @@ impl NodeForTest {
             assert_eq!(block.shard_chunks.len(), num_shards as usize);
         };
 
-        let put_block_store = block_store.clone();
         tokio::spawn(async move {
             while let Some(block) = block_rx.recv().await {
                 assert_valid_block(&block);
-                put_block_store.put_block(block).unwrap();
             }
         });
 

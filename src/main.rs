@@ -119,19 +119,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Use the new non-global metrics registry when we upgrade to newer version of malachite
     let _ = Metrics::register(registry);
 
-    let (block_tx, mut block_rx) = mpsc::channel::<Block>(100);
-
-    let write_block_store = block_store.clone();
-    tokio::spawn(async move {
-        while let Some(block) = block_rx.recv().await {
-            match write_block_store.put_block(block) {
-                Err(err) => {
-                    error!("Unable to put block in db {:#?}", err)
-                }
-                Ok(()) => {}
-            }
-        }
-    });
+    let (block_tx, _block_rx) = mpsc::channel::<Block>(100);
 
     let node = SnapchainNode::create(
         keypair.clone(),
