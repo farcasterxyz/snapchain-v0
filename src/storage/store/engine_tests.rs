@@ -42,10 +42,10 @@ mod tests {
 
         chunk.header.as_mut().unwrap().shard_root = change.new_state_root;
 
-        //TODO: all messages
+        //TODO: don't assume 1 transaction
         chunk.transactions[0]
             .user_messages
-            .push(change.transactions[0].user_messages[0].clone());
+            .extend(change.transactions[0].user_messages.iter().cloned());
 
         chunk
     }
@@ -129,50 +129,63 @@ mod tests {
     fn test_engine_commit_no_messages_happy_path() {
         let mut engine = new_engine();
         let state_change = engine.propose_state_change(1);
+        let expected_roots = vec!["237b11d0dd9e78994ef2f141c7f170d48bb51d34"];
 
-        let mut chunk = default_shard_chunk();
-        chunk.header.as_mut().unwrap().shard_root =
-            from_hex("237b11d0dd9e78994ef2f141c7f170d48bb51d34");
-
+        let chunk = state_change_to_shard_chunk(state_change);
         engine.commit_shard_chunk(chunk);
 
-        assert_eq!(
-            "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
-            to_hex(&engine.trie_root_hash())
-        );
+        assert_eq!(expected_roots[0], to_hex(&engine.trie_root_hash()));
     }
 
     #[tokio::test]
     async fn test_engine_send_messages_one_by_one() {
         //TODO: add shard height to remove store errors
-        let (msg1, msg2) = entities();
-
         enable_logging();
+        let (msg1, msg2) = entities();
         let mut engine = new_engine();
         let messages_tx = engine.messages_tx();
-
-        messages_tx.send(msg1.clone()).await.unwrap();
-
-        let state_change = engine.propose_state_change(1);
-
-        assert_eq!(1, state_change.shard_id);
-        assert_eq!(state_change.transactions.len(), 1);
-        assert_eq!(1, state_change.transactions[0].user_messages.len());
-
-        let prop_msg_1 = &state_change.transactions[0].user_messages[0];
-        assert_eq!(to_hex(&prop_msg_1.hash), to_hex(&msg1.hash));
-
-        assert_eq!(
+        let expected_roots = vec![
+            "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
             "8d566fb56cabed2665962a558dd2d4be0b0e4f6c",
-            to_hex(&state_change.new_state_root)
-        );
+            "215cee5fa4850848a9f9f06a93b0ba4da2ff52ef",
+        ];
 
-        let chunk = state_change_to_shard_chunk(state_change.clone());
-        engine.commit_shard_chunk(chunk);
+        {
+            messages_tx.send(msg1.clone()).await.unwrap();
+            let state_change = engine.propose_state_change(1);
 
-        assert_eq!(
-            "8d566fb56cabed2665962a558dd2d4be0b0e4f6c",
-            to_hex(&engine.trie_root_hash())
-        );
+            assert_eq!(1, state_change.shard_id);
+            assert_eq!(state_change.transactions.len(), 1);
+            assert_eq!(1, state_change.transactions[0].user_messages.len());
+
+            let prop_msg = &state_change.transactions[0].user_messages[0];
+            assert_eq!(to_hex(&prop_msg.hash), to_hex(&msg1.hash));
+
+            assert_eq!(expected_roots[1], to_hex(&state_change.new_state_root));
+
+            let chunk = state_change_to_shard_chunk(state_change.clone());
+            engine.commit_shard_chunk(chunk);
+
+            assert_eq!(expected_roots[1], to_hex(&engine.trie_root_hash()));
+        }
+
+        {
+            messages_tx.send(msg2.clone()).await.unwrap();
+            let state_change = engine.propose_state_change(1);
+
+            assert_eq!(1, state_change.shard_id);
+            assert_eq!(state_change.transactions.len(), 1);
+            assert_eq!(1, state_change.transactions[0].user_messages.len());
+
+            let prop_msg = &state_change.transactions[0].user_messages[0];
+            assert_eq!(to_hex(&prop_msg.hash), to_hex(&msg2.hash));
+
+            assert_eq!(expected_roots[2], to_hex(&state_change.new_state_root));
+
+            let chunk = state_change_to_shard_chunk(state_change.clone());
+            engine.commit_shard_chunk(chunk);
+
+            assert_eq!(expected_roots[2], to_hex(&engine.trie_root_hash()));
+        }
     }
 }
