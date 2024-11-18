@@ -76,6 +76,23 @@ mod tests {
         cli::compose_message(private_key, 1234, text, Some(0))
     }
 
+    fn entities() -> (Message, Message) {
+        let msg1 = default_message("msg1");
+        let msg2 = default_message("msg2");
+
+        assert_eq!(
+            "eb1850b43b2dd25935222c9137f5fa71b02b9689",
+            to_hex(&msg1.hash),
+        );
+
+        assert_eq!(
+            "ee0fcb6344d22ea2af4f97859108eb5a3c6650fd",
+            to_hex(&msg2.hash),
+        );
+
+        (msg1, msg2)
+    }
+
     #[test]
     fn test_engine_basic_propose() {
         let mut engine = new_engine();
@@ -126,24 +143,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_engine_send_messages() {
+    async fn test_engine_send_messages_one_by_one() {
         //TODO: add shard height to remove store errors
+        let (msg1, msg2) = entities();
 
         enable_logging();
         let mut engine = new_engine();
         let messages_tx = engine.messages_tx();
-        let msg1 = default_message("msg1");
-        let msg2 = default_message("msg2");
-
-        assert_eq!(
-            "eb1850b43b2dd25935222c9137f5fa71b02b9689",
-            to_hex(&msg1.hash),
-        );
-
-        assert_eq!(
-            "ee0fcb6344d22ea2af4f97859108eb5a3c6650fd",
-            to_hex(&msg2.hash),
-        );
 
         messages_tx.send(msg1.clone()).await.unwrap();
 
