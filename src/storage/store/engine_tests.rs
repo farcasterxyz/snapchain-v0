@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::proto::message::Message;
-    use crate::proto::snapchain::{ShardChunk, ShardHeader, Transaction};
+    use crate::proto::snapchain::{Height, ShardChunk, ShardHeader, Transaction};
     use crate::storage::db;
     use crate::storage::store::engine::{ShardEngine, ShardStateChange};
     use crate::storage::store::shard::ShardStore;
@@ -37,10 +37,18 @@ mod tests {
         hex::encode(b)
     }
 
-    fn state_change_to_shard_chunk(change: ShardStateChange) -> ShardChunk {
+    fn state_change_to_shard_chunk(
+        shard_idx: u32,
+        block_number: u64,
+        change: ShardStateChange,
+    ) -> ShardChunk {
         let mut chunk = default_shard_chunk();
 
         chunk.header.as_mut().unwrap().shard_root = change.new_state_root;
+        chunk.header.as_mut().unwrap().height = Some(Height {
+            shard_index: shard_idx,
+            block_number: block_number,
+        });
 
         //TODO: don't assume 1 transaction
         chunk.transactions[0]
@@ -131,7 +139,7 @@ mod tests {
         let state_change = engine.propose_state_change(1);
         let expected_roots = vec!["237b11d0dd9e78994ef2f141c7f170d48bb51d34"];
 
-        let chunk = state_change_to_shard_chunk(state_change);
+        let chunk = state_change_to_shard_chunk(1, 1, state_change);
         engine.commit_shard_chunk(chunk);
 
         assert_eq!(expected_roots[0], to_hex(&engine.trie_root_hash()));
@@ -139,7 +147,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_send_messages_one_by_one() {
-        //TODO: add shard height to remove store errors
         enable_logging();
         let (msg1, msg2) = entities();
         let mut engine = new_engine();
@@ -149,6 +156,10 @@ mod tests {
             "8d566fb56cabed2665962a558dd2d4be0b0e4f6c",
             "215cee5fa4850848a9f9f06a93b0ba4da2ff52ef",
         ];
+
+        let height = engine.get_confirmed_height();
+        assert_eq!(height.shard_index, 1);
+        assert_eq!(height.block_number, 0);
 
         {
             messages_tx.send(msg1.clone()).await.unwrap();
@@ -163,10 +174,14 @@ mod tests {
 
             assert_eq!(expected_roots[1], to_hex(&state_change.new_state_root));
 
-            let chunk = state_change_to_shard_chunk(state_change.clone());
+            let chunk = state_change_to_shard_chunk(1, 1, state_change.clone());
             engine.commit_shard_chunk(chunk);
 
             assert_eq!(expected_roots[1], to_hex(&engine.trie_root_hash()));
+
+            let height = engine.get_confirmed_height();
+            assert_eq!(height.shard_index, 1);
+            // assert_eq!(height.block_number, 1); // TODO
         }
 
         {
@@ -182,10 +197,53 @@ mod tests {
 
             assert_eq!(expected_roots[2], to_hex(&state_change.new_state_root));
 
-            let chunk = state_change_to_shard_chunk(state_change.clone());
+            let chunk = state_change_to_shard_chunk(1, 2, state_change.clone());
             engine.commit_shard_chunk(chunk);
 
             assert_eq!(expected_roots[2], to_hex(&engine.trie_root_hash()));
+
+            let height = engine.get_confirmed_height();
+            assert_eq!(height.shard_index, 1);
+            // assert_eq!(height.block_number, 2); // TODO
+        }
+    }
+
+    #[tokio::test]
+    async fn test_engine_send_two_messages() {
+        enable_logging();
+        let (msg1, msg2) = entities();
+        let mut engine = new_engine();
+        let messages_tx = engine.messages_tx();
+        let expected_roots = vec![
+            "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
+            "215cee5fa4850848a9f9f06a93b0ba4da2ff52ef",
+        ];
+
+        {
+            messages_tx.send(msg1.clone()).await.unwrap();
+            messages_tx.send(msg2.clone()).await.unwrap();
+            let state_change = engine.propose_state_change(1);
+
+            assert_eq!(1, state_change.shard_id);
+            assert_eq!(state_change.transactions.len(), 1);
+            assert_eq!(2, state_change.transactions[0].user_messages.len());
+
+            let prop_msg_1 = &state_change.transactions[0].user_messages[0];
+            assert_eq!(to_hex(&prop_msg_1.hash), to_hex(&msg1.hash));
+
+            let prop_msg_2 = &state_change.transactions[0].user_messages[1];
+            assert_eq!(to_hex(&prop_msg_2.hash), to_hex(&msg2.hash));
+
+            assert_eq!(expected_roots[1], to_hex(&state_change.new_state_root));
+
+            let chunk = state_change_to_shard_chunk(1, 1, state_change.clone());
+            engine.commit_shard_chunk(chunk);
+
+            assert_eq!(expected_roots[1], to_hex(&engine.trie_root_hash()));
+
+            let height = engine.get_confirmed_height();
+            assert_eq!(height.shard_index, 1);
+            // assert_eq!(height.block_number, 1); // TODO
         }
     }
 }

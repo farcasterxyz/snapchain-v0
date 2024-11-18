@@ -85,7 +85,6 @@ impl ShardEngine {
 
         warn!(
             shard,
-            old_root_hash = hex::encode(self.trie.root_hash().unwrap()),
             insert = encode_vec(&hashes.clone()),
             "propose – before insert",
         );
