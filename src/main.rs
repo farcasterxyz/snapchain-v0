@@ -1,6 +1,7 @@
 use malachite_metrics::{Metrics, SharedRegistry};
 use snapchain::proto::snapchain::Block;
 use snapchain::storage::store::BlockStore;
+use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -146,10 +147,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //TODO: don't assume shard
     //TODO: remove/redo unwrap
     let messages_tx = node.messages_tx_by_shard.get(&1u32).unwrap().clone();
+    let rpc_shard_stores = node.shard_stores.clone();
 
     let rpc_block_store = block_store.clone();
     tokio::spawn(async move {
-        let service = MySnapchainService::new(rpc_block_store, messages_tx);
+        let service = MySnapchainService::new(rpc_block_store, rpc_shard_stores, messages_tx);
 
         let resp = Server::builder()
             .add_service(SnapchainServiceServer::new(service))

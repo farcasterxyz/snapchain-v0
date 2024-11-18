@@ -7,7 +7,7 @@ use crate::core::types::{
 };
 use crate::network::gossip::GossipEvent;
 use crate::proto::message;
-use crate::proto::snapchain::Block;
+use crate::proto::snapchain::{Block, ShardChunk};
 use crate::storage::db::RocksDB;
 use crate::storage::store::engine::{BlockEngine, ShardEngine};
 use crate::storage::store::shard::ShardStore;
@@ -25,6 +25,7 @@ const MAX_SHARDS: u32 = 3;
 pub struct SnapchainNode {
     pub consensus_actors: BTreeMap<u32, ActorRef<ConsensusMsg<SnapchainValidatorContext>>>,
     pub messages_tx_by_shard: HashMap<u32, mpsc::Sender<message::Message>>,
+    pub shard_stores: HashMap<u32, ShardStore>,
     pub address: Address,
 }
 
@@ -42,9 +43,11 @@ impl SnapchainNode {
 
         let mut consensus_actors = BTreeMap::new();
 
-        let (shard_decision_tx, shard_decision_rx) = mpsc::channel::<Decision>(100);
+        let (shard_decision_tx, shard_decision_rx) = mpsc::channel::<ShardChunk>(100);
 
         let mut shard_messages: HashMap<u32, mpsc::Sender<message::Message>> = HashMap::new();
+
+        let mut shard_stores = HashMap::new();
 
         // Create the shard validators
         for shard_id in config.shard_ids() {
@@ -76,6 +79,7 @@ impl SnapchainNode {
             let db = RocksDB::new(format!("{}/shard{}", rocksdb_dir, shard_id).as_str());
             db.open().unwrap();
             let shard_store = ShardStore::new(db);
+            shard_stores.insert(shard_id, shard_store.clone());
             let engine = ShardEngine::new(shard_id, shard_store);
 
             let messages_tx = engine.messages_tx();
@@ -168,6 +172,7 @@ impl SnapchainNode {
             consensus_actors,
             messages_tx_by_shard: shard_messages,
             address: validator_address,
+            shard_stores,
         }
     }
 

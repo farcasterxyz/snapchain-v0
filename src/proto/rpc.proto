@@ -14,7 +14,18 @@ message BlocksResponse {
   repeated snapchain.Block blocks = 1;
 }
 
+message ShardChunksRequest {
+  uint32 shard_id = 1;
+  uint64 start_block_number = 2;
+  optional uint64 stop_block_number = 3;
+}
+
+message ShardChunksResponse {
+  repeated snapchain.ShardChunk shard_chunks = 1;
+}
+
 service SnapchainService {
   rpc SubmitMessage(message.Message) returns (message.Message);
   rpc GetBlocks(BlocksRequest) returns (BlocksResponse);
+  rpc GetShardChunks(ShardChunksRequest) returns (ShardChunksResponse);
 };

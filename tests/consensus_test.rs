@@ -99,8 +99,9 @@ impl NodeForTest {
         let grpc_addr = format!("0.0.0.0:{}", grpc_port);
         let addr = grpc_addr.clone();
         let grpc_block_store = block_store.clone();
+        let grpc_shard_stores = node.shard_stores.clone();
         tokio::spawn(async move {
-            let service = MySnapchainService::new(grpc_block_store, messages_tx);
+            let service = MySnapchainService::new(grpc_block_store, grpc_shard_stores, messages_tx);
 
             let grpc_socket_addr: SocketAddr = addr.parse().unwrap();
             let resp = Server::builder()

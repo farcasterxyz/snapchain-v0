@@ -203,6 +203,16 @@ impl ShardEngine {
             Err(_) => Height::new(self.shard_id, 0),
         }
     }
+
+    pub fn get_last_shard_chunk(&self) -> Option<ShardChunk> {
+        match self.shard_store.get_last_shard_chunk() {
+            Ok(shard_chunk) => shard_chunk,
+            Err(err) => {
+                error!("Unable to obtain last block {:#?}", err);
+                None
+            }
+        }
+    }
 }
 
 pub struct BlockEngine {
@@ -218,6 +228,17 @@ impl BlockEngine {
         let result = self.block_store.put_block(block);
         if result.is_err() {
             error!("Failed to store block: {:?}", result.err());
+        }
+    }
+
+    pub fn get_last_block(&self) -> Option<Block> {
+        let shard_index = 0;
+        match self.block_store.get_last_block(shard_index) {
+            Ok(block) => block,
+            Err(err) => {
+                error!("Unable to obtain last block {:#?}", err);
+                None
+            }
         }
     }
 

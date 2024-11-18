@@ -76,10 +76,7 @@ fn get_block_page_by_prefix(
     })
 }
 
-pub fn get_current_height(
-    db: &RocksDB,
-    shard_index: u32,
-) -> Result<Option<u64>, BlockStorageError> {
+pub fn get_last_block(db: &RocksDB, shard_index: u32) -> Result<Option<Block>, BlockStorageError> {
     let start_block_key = make_block_key(shard_index, 0);
     let block_page = get_block_page_by_prefix(
         db,
@@ -96,7 +93,15 @@ pub fn get_current_height(
         return Err(BlockStorageError::TooManyBlocksInResult);
     }
 
-    match block_page.blocks.get(0).cloned() {
+    Ok(block_page.blocks.get(0).cloned())
+}
+
+pub fn get_current_height(
+    db: &RocksDB,
+    shard_index: u32,
+) -> Result<Option<u64>, BlockStorageError> {
+    let last_block = get_last_block(db, shard_index)?;
+    match last_block {
         None => Ok(None),
         Some(block) => match block.header {
             None => Ok(None),
@@ -151,6 +156,10 @@ impl BlockStore {
 
     pub fn put_block(&self, block: Block) -> Result<(), BlockStorageError> {
         put_block(&self.db, block)
+    }
+
+    pub fn get_last_block(&self, shard_index: u32) -> Result<Option<Block>, BlockStorageError> {
+        get_last_block(&self.db, shard_index)
     }
 
     pub fn max_block_number(&self, shard_index: u32) -> Result<u64, BlockStorageError> {
