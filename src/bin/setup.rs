@@ -1,7 +1,23 @@
+use clap::Parser;
 use libp2p::identity::ed25519::SecretKey;
+use std::time::Duration;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Delay for proposing a value (e.g. "250ms")
+    #[arg(long, value_parser = parse_duration)]
+    propose_value_delay: Duration,
+}
+
+fn parse_duration(arg: &str) -> Result<Duration, String> {
+    humantime::parse_duration(arg).map_err(|e| e.to_string())
+}
 
 #[tokio::main]
 async fn main() {
+    let args = Args::parse();
+
     // Create 4 nodes by default
     let nodes = 4;
 
@@ -35,6 +51,8 @@ async fn main() {
             .collect::<Vec<String>>()
             .join(",");
 
+        let propose_value_delay = humantime::format_duration(args.propose_value_delay);
+
         let config_file_content = format!(
             r#"
 id = {id}
@@ -47,8 +65,12 @@ bootstrap_peers = "{other_nodes_addresses}"
 
 [consensus]
 private_key = "{secret_key}"
-            "#,
+propose_value_delay = "{propose_value_delay}"
+            "#
         );
+
+        // clean up whitespace
+        let config_file_content = config_file_content.trim().to_string() + "\n";
 
         std::fs::write(
             format!("nodes/{id}/snapchain.toml", id = id),

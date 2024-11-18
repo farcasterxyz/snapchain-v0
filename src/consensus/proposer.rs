@@ -52,6 +52,7 @@ pub struct ShardProposer {
     proposed_chunks: BTreeMap<ShardHash, FullProposal>,
     tx_decision: Option<TxDecision>,
     engine: ShardEngine,
+    propose_value_delay: Duration,
 }
 
 impl ShardProposer {
@@ -60,6 +61,7 @@ impl ShardProposer {
         shard_id: SnapchainShard,
         engine: ShardEngine,
         tx_decision: Option<TxDecision>,
+        propose_value_delay: Duration,
     ) -> ShardProposer {
         ShardProposer {
             shard_id,
@@ -68,6 +70,7 @@ impl ShardProposer {
             proposed_chunks: BTreeMap::new(),
             tx_decision,
             engine,
+            propose_value_delay,
         }
     }
 }
@@ -81,7 +84,7 @@ impl Proposer for ShardProposer {
     ) -> FullProposal {
         // Sleep before proposing the value so we don't produce blocks too fast
         // TODO: rethink/reconsider
-        // tokio::time::sleep(Duration::from_millis(250)).await;
+        tokio::time::sleep(self.propose_value_delay).await;
 
         let previous_chunk = self.chunks.last();
         let parent_hash = match previous_chunk {
