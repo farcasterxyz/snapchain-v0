@@ -156,13 +156,13 @@ mod tests {
             "4ecbed7e119cf4999271780abb881dfaa579d85e",
             to_hex(&state_change.new_state_root)
         );
-        assert_eq!(
-            "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
-            to_hex(&engine.trie_root_hash())
-        );
 
         let chunk = state_change_to_shard_chunk(state_change.clone());
-
         engine.commit_shard_chunk(chunk);
+
+        assert_eq!(
+            "4ecbed7e119cf4999271780abb881dfaa579d85e",
+            to_hex(&engine.trie_root_hash())
+        );
     }
 }
