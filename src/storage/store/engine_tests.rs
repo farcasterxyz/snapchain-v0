@@ -108,13 +108,18 @@ mod tests {
         let mut engine = new_engine();
         let messages_tx = engine.messages_tx();
         let msg = default_message();
-        messages_tx.send(msg).await.unwrap();
+        messages_tx.send(msg.clone()).await.unwrap();
 
         let state_change = engine.propose_state_change(1);
 
         assert_eq!(1, state_change.shard_id);
         assert_eq!(state_change.transactions.len(), 1);
         assert_eq!(1, state_change.transactions[0].user_messages.len());
+
+        let msg0 = &state_change.transactions[0].user_messages[0];
+
+        assert_eq!(to_hex(&msg0.hash), to_hex(&msg.hash));
+
         assert_eq!(
             "4ecbed7e119cf4999271780abb881dfaa579d85e",
             to_hex(&state_change.new_state_root)
