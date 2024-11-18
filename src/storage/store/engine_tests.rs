@@ -65,7 +65,7 @@ mod tests {
         }
     }
 
-    fn default_message() -> Message {
+    fn default_message(text: &str) -> Message {
         let private_key = SigningKey::from_bytes(
             &SecretKey::from_hex(
                 "1000000000000000000000000000000000000000000000000000000000000000",
@@ -73,7 +73,7 @@ mod tests {
             .unwrap(),
         );
 
-        cli::compose_message(private_key, 1234, "this is the note", Some(0))
+        cli::compose_message(private_key, 1234, text, Some(0))
     }
 
     #[test]
@@ -127,17 +127,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_send_messages() {
+        //TODO: add shard height to remove store errors
+
         enable_logging();
         let mut engine = new_engine();
         let messages_tx = engine.messages_tx();
-        let msg = default_message();
+        let msg1 = default_message("msg1");
+        let msg2 = default_message("msg2");
 
         assert_eq!(
-            "dcf21a11dac4c3e7944f0d5254a2ebbf23c964df",
-            to_hex(&msg.hash),
+            "eb1850b43b2dd25935222c9137f5fa71b02b9689",
+            to_hex(&msg1.hash),
         );
 
-        messages_tx.send(msg.clone()).await.unwrap();
+        assert_eq!(
+            "ee0fcb6344d22ea2af4f97859108eb5a3c6650fd",
+            to_hex(&msg2.hash),
+        );
+
+        messages_tx.send(msg1.clone()).await.unwrap();
 
         let state_change = engine.propose_state_change(1);
 
@@ -145,15 +153,11 @@ mod tests {
         assert_eq!(state_change.transactions.len(), 1);
         assert_eq!(1, state_change.transactions[0].user_messages.len());
 
-        let msg0 = &state_change.transactions[0].user_messages[0];
+        let prop_msg_1 = &state_change.transactions[0].user_messages[0];
+        assert_eq!(to_hex(&prop_msg_1.hash), to_hex(&msg1.hash));
 
         assert_eq!(
-            "dcf21a11dac4c3e7944f0d5254a2ebbf23c964df",
-            to_hex(&msg0.hash)
-        );
-
-        assert_eq!(
-            "4ecbed7e119cf4999271780abb881dfaa579d85e",
+            "8d566fb56cabed2665962a558dd2d4be0b0e4f6c",
             to_hex(&state_change.new_state_root)
         );
 
@@ -161,7 +165,7 @@ mod tests {
         engine.commit_shard_chunk(chunk);
 
         assert_eq!(
-            "4ecbed7e119cf4999271780abb881dfaa579d85e",
+            "8d566fb56cabed2665962a558dd2d4be0b0e4f6c",
             to_hex(&engine.trie_root_hash())
         );
     }
