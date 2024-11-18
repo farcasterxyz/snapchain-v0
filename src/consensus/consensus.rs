@@ -48,6 +48,9 @@ impl<Ctx: Context + SnapchainContext> From<TimeoutElapsed<Timeout>> for Consensu
 pub struct Config {
     pub private_key: String,
     pub shard_ids: String,
+
+    #[serde(with = "humantime_serde")]
+    pub propose_value_delay: Duration,
 }
 
 impl Config {
@@ -76,6 +79,7 @@ impl Config {
                 .map(|i| i.to_string())
                 .collect::<Vec<String>>()
                 .join(","),
+            propose_value_delay: self.propose_value_delay,
         }
     }
 }
@@ -85,6 +89,7 @@ impl Default for Config {
         Self {
             private_key: hex::encode(SecretKey::generate()),
             shard_ids: "1".to_string(),
+            propose_value_delay: Duration::from_millis(250),
         }
     }
 }

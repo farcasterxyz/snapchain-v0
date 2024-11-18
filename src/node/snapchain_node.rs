@@ -86,6 +86,7 @@ impl SnapchainNode {
                 shard.clone(),
                 engine,
                 Some(shard_decision_tx.clone()),
+                config.propose_value_delay,
             );
 
             shard_messages.insert(shard_id, messages_tx);
