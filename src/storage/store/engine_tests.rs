@@ -1,10 +1,13 @@
 #[cfg(test)]
 mod tests {
-    use crate::core::types::Height;
+    use crate::proto::message::Message;
     use crate::proto::snapchain::{ShardChunk, ShardHeader, Transaction};
     use crate::storage::db;
     use crate::storage::store::engine::ShardEngine;
     use crate::storage::store::shard::ShardStore;
+    use crate::utils::cli;
+    use ed25519_dalek::{SecretKey, SigningKey};
+    use hex::FromHex;
 
     fn new_engine() -> ShardEngine {
         let dir = tempfile::TempDir::new().unwrap();
@@ -38,6 +41,17 @@ mod tests {
             hash: vec![],
             votes: None,
         }
+    }
+
+    fn default_message() -> Message {
+        let private_key = SigningKey::from_bytes(
+            &SecretKey::from_hex(
+                "1000000000000000000000000000000000000000000000000000000000000000",
+            )
+            .unwrap(),
+        );
+
+        cli::compose_message(private_key, 1234, "this is the note", Some(0))
     }
 
     #[test]
@@ -83,6 +97,28 @@ mod tests {
 
         engine.commit_shard_chunk(chunk);
 
+        assert_eq!(
+            "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
+            to_hex(&engine.trie_root_hash())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_engine_send_messages() {
+        let mut engine = new_engine();
+        let messages_tx = engine.messages_tx();
+        let msg = default_message();
+        messages_tx.send(msg).await.unwrap();
+
+        let state_change = engine.propose_state_change(1);
+
+        assert_eq!(1, state_change.shard_id);
+        assert_eq!(state_change.transactions.len(), 1);
+        assert_eq!(1, state_change.transactions[0].user_messages.len());
+        assert_eq!(
+            "4ecbed7e119cf4999271780abb881dfaa579d85e",
+            to_hex(&state_change.new_state_root)
+        );
         assert_eq!(
             "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
             to_hex(&engine.trie_root_hash())
