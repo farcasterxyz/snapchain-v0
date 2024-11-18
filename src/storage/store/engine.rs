@@ -61,6 +61,10 @@ impl ShardEngine {
         self.messages_tx.clone()
     }
 
+    pub(crate) fn trie_root_hash(&self) -> Vec<u8> {
+        self.trie.root_hash().unwrap()
+    }
+
     pub fn propose_state_change(&mut self, shard: u32) -> ShardStateChange {
         //TODO: return Result instead of .unwrap() ?
         let it = iter::from_fn(|| self.messages_rx.try_recv().ok());
