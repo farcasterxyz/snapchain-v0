@@ -159,7 +159,8 @@ impl Proposer for ShardProposer {
 
     async fn decide(&mut self, _height: Height, _round: Round, value: ShardHash) {
         if let Some(proposal) = self.proposed_chunks.get(&value) {
-            self.publish_new_shard_chunk(proposal.shard_chunk().unwrap());
+            self.publish_new_shard_chunk(proposal.shard_chunk().unwrap())
+                .await;
             self.chunks.push(proposal.shard_chunk().unwrap());
             self.engine
                 .commit_shard_chunk(proposal.shard_chunk().unwrap());
@@ -268,6 +269,7 @@ impl BlockProposer {
             let timeout = time::sleep_until(deadline);
             select! {
                 _ = poll_interval.tick() => {
+                    // TODO(aditi): This breaks if syncd shard chunks show up in shard_decision_rx.
                     if let Ok(chunk) = self.shard_decision_rx.try_recv() {
                         let chunk_height = chunk.header.clone().unwrap().height.unwrap();
                         let chunk_block_number = chunk_height.block_number;
