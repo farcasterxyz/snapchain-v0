@@ -291,11 +291,16 @@ async fn test_basic_consensus() {
 
     tokio::spawn(async move {
         let mut i: i32 = 0;
+        let prefix = vec![0, 0, 0, 0, 0, 0];
         loop {
             info!(i, "sending message");
+
+            let mut hash = prefix.clone();
+            hash.extend_from_slice(&i.to_be_bytes()); // just for now
+
             messages_tx1
                 .send(message::Message {
-                    hash: i.to_be_bytes().to_vec(), // just for now
+                    hash: hash,
                     data: None,
                     data_bytes: None,
                     hash_scheme: message::HashScheme::Blake3 as i32,
