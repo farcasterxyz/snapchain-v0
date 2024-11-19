@@ -32,34 +32,13 @@ pub struct TrieSnapshot {
 
 pub struct MerkleTrie {
     root: Option<TrieNode>,
-    db_owned: AtomicBool,
     txn_batch: Mutex<RocksDbTransactionBatch>,
 }
 
 impl MerkleTrie {
-    pub fn new(main_db_path: &str) -> Result<Self, HubError> {
-        let path = Path::join(Path::new(main_db_path), Path::new(TRIE_DBPATH_PREFIX))
-            .into_os_string()
-            .into_string()
-            .map_err(|os_str| {
-                HubError::validation_failure(
-                    format!("error with Merkle Trie path {:?}", os_str).as_str(),
-                )
-            })?;
-        let db = Arc::new(RocksDB::new(path.as_str()));
-
+    pub fn new() -> Result<Self, HubError> {
         Ok(MerkleTrie {
             root: None,
-            db_owned: AtomicBool::new(true),
-            txn_batch: Mutex::new(RocksDbTransactionBatch::new()),
-        })
-    }
-
-    // TODO: rename
-    pub fn new_with_db() -> Result<Self, HubError> {
-        Ok(MerkleTrie {
-            root: None,
-            db_owned: AtomicBool::new(false),
             txn_batch: Mutex::new(RocksDbTransactionBatch::new()),
         })
     }
@@ -75,9 +54,7 @@ impl MerkleTrie {
     }
 
     pub fn initialize(&mut self, db: &RocksDB) -> Result<(), HubError> {
-        if self.db_owned.load(std::sync::atomic::Ordering::Relaxed) {
-            db.open()?;
-        }
+        // db must be "open" by now
 
         let loaded = self.load_root(db)?;
         if let Some(root_node) = loaded {

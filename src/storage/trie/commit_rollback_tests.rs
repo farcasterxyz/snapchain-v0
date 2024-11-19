@@ -24,7 +24,7 @@ mod tests {
     fn test_merkle_trie_basic_operations() -> Result<(), HubError> {
         let dir = TempDir::new()?;
         let db_path = dir.path().join("a.db");
-        let mut t = MerkleTrie::new(db_path.to_str().unwrap())?;
+        let mut t = MerkleTrie::new()?;
         let db = &RocksDB::new(db_path.to_str().unwrap());
         db.open().unwrap();
 
@@ -80,7 +80,7 @@ mod tests {
             let db = &RocksDB::new(db_path.to_str().unwrap());
             db.open().unwrap();
 
-            let mut t1 = MerkleTrie::new(db_path.to_str().unwrap())?;
+            let mut t1 = MerkleTrie::new()?;
 
             t1.initialize(db)?;
             t1.insert(db, hashes1.clone())?;
@@ -94,7 +94,7 @@ mod tests {
 
         {
             let db_path = dir.path().join("t2.db");
-            let mut t2 = MerkleTrie::new(db_path.to_str().unwrap())?;
+            let mut t2 = MerkleTrie::new()?;
             let db = &RocksDB::new(db_path.to_str().unwrap());
             db.open().unwrap();
             t2.initialize(db)?;

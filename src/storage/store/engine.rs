@@ -39,7 +39,7 @@ impl ShardEngine {
         // TODO: adding the trie here introduces many calls that want to return errors. Rethink unwrap strategy.
 
         // TODO: refactor trie code to work with transactions only instead of having its own reference to the db (probably).
-        let mut trie = merkle_trie::MerkleTrie::new_with_db().unwrap();
+        let mut trie = merkle_trie::MerkleTrie::new().unwrap();
         trie.initialize(db).unwrap();
 
         // TODO: The empty trie currently has some issues with the newly added commit/rollback code. Remove when we can.

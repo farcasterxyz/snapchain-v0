@@ -15,7 +15,7 @@ mod tests {
         let db = &RocksDB::new(&tmp_path);
         db.open().unwrap();
 
-        let mut trie = MerkleTrie::new(&tmp_path).unwrap();
+        let mut trie = MerkleTrie::new().unwrap();
         trie.initialize(db).unwrap();
 
         let key1: Vec<_> = "0000482712".bytes().collect();
