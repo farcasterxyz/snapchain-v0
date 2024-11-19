@@ -1,15 +1,13 @@
 use crate::core::types::{proto, Height};
 use crate::proto::snapchain::{Block, ShardChunk};
 use crate::proto::{message, snapchain};
-use crate::storage::db::RocksDB;
 use crate::storage::store::BlockStore;
 use crate::storage::trie::merkle_trie;
-use std::collections::HashMap;
 use std::iter;
 use tokio::sync::mpsc;
-use tracing::{error, event, info, warn, Level};
+use tracing::{error, warn};
 
-use super::shard::{self, ShardStore};
+use super::shard::ShardStore;
 
 // Shard state root and the transactions
 #[derive(Clone)]

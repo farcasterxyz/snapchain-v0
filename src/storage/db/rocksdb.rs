@@ -1,5 +1,5 @@
-use crate::storage::store::increment_vec_u8;
-use prost::DecodeError;
+use crate::core::error::HubError;
+use crate::storage::util::increment_vec_u8;
 use rocksdb::{Options, TransactionDB};
 use std::collections::HashMap;
 use std::fs::{self};
@@ -14,8 +14,8 @@ pub enum RocksdbError {
     #[error(transparent)]
     InternalError(#[from] rocksdb::Error),
 
-    #[error(transparent)]
-    DecodeError(#[from] DecodeError),
+    #[error("Unable to decode message")]
+    DecodeError,
 
     #[error("DB is not open")]
     DbNotOpen,
@@ -272,9 +272,9 @@ impl RocksDB {
         stop_prefix: Option<Vec<u8>>,
         page_options: &PageOptions,
         mut f: F,
-    ) -> Result<bool, RocksdbError>
+    ) -> Result<bool, HubError>
     where
-        F: FnMut(&[u8], &[u8]) -> Result<bool, RocksdbError>,
+        F: FnMut(&[u8], &[u8]) -> Result<bool, HubError>,
     {
         let iter_opts = RocksDB::get_iterator_options(start_prefix, stop_prefix, page_options);
 
@@ -323,9 +323,9 @@ impl RocksDB {
         stop_prefix: Option<Vec<u8>>,
         page_options: &PageOptions,
         f: F,
-    ) -> Result<bool, RocksdbError>
+    ) -> Result<bool, HubError>
     where
-        F: FnMut(&[u8], &[u8]) -> Result<bool, RocksdbError>,
+        F: FnMut(&[u8], &[u8]) -> Result<bool, HubError>,
     {
         let unbounded_page_options = PageOptions {
             page_size: None,

@@ -1,111 +1,29 @@
 use super::{
-    bytes_compare, delete_message_transaction, get_message, hub_error_to_js_throw,
-    is_message_in_time_range, make_message_primary_key, message, message_decode, message_encode,
-    put_message_transaction,
-    utils::{self, encode_messages_to_js_object, get_page_options, get_store, vec_to_u8_24},
-    MessagesPage, StoreEventHandler, TS_HASH_LENGTH,
+    super::super::util::{bytes_compare, vec_to_u8_24},
+    delete_message_transaction, get_message, get_messages_page_by_prefix, is_message_in_time_range,
+    make_message_primary_key, make_ts_hash, message_decode, message_encode,
+    put_message_transaction, MessagesPage, TS_HASH_LENGTH,
 };
+use crate::core::error::HubError;
+use crate::storage::db::PageOptions;
 use crate::{
-    db::{RocksDB, RocksDbTransactionBatch},
-    protos::{
-        self, hub_event, link_body::Target, message_data::Body, HubEvent, HubEventType,
-        MergeMessageBody, Message, MessageType,
-    },
-    store::make_ts_hash,
+    proto::message::{link_body::Target, message_data::Body, Message, MessageType},
+    storage::db::{RocksDB, RocksDbTransactionBatch},
 };
-use crate::{logger::LOGGER, THREAD_POOL};
-use neon::types::{Finalize, JsBuffer, JsNumber, JsString};
-use neon::{context::Context, types::JsArray};
-use neon::{context::FunctionContext, result::JsResult, types::JsPromise};
-use neon::{object::Object, types::buffer::TypedArray};
-use prost::Message as _;
-use rocksdb;
-use slog::{o, warn};
+use std::clone::Clone;
 use std::string::ToString;
 use std::sync::{Arc, Mutex};
-use std::{clone::Clone, fmt::Display};
-
-#[derive(Debug, PartialEq)]
-pub struct HubError {
-    pub code: String,
-    pub message: String,
-}
-
-impl HubError {
-    pub fn validation_failure(error_message: &str) -> HubError {
-        HubError {
-            code: "bad_request.validation_failure".to_string(),
-            message: error_message.to_string(),
-        }
-    }
-
-    pub fn invalid_parameter(error_message: &str) -> HubError {
-        HubError {
-            code: "bad_request.invalid_param".to_string(),
-            message: error_message.to_string(),
-        }
-    }
-
-    pub fn internal_db_error(error_message: &str) -> HubError {
-        HubError {
-            code: "db.internal_error".to_string(),
-            message: error_message.to_string(),
-        }
-    }
-
-    pub fn not_found(error_message: &str) -> HubError {
-        HubError {
-            code: "not_found".to_string(),
-            message: error_message.to_string(),
-        }
-    }
-}
-
-impl Display for HubError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", self.code, self.message)
-    }
-}
-
-/** Convert RocksDB errors  */
-impl From<rocksdb::Error> for HubError {
-    fn from(e: rocksdb::Error) -> HubError {
-        HubError {
-            code: "db.internal_error".to_string(),
-            message: e.to_string(),
-        }
-    }
-}
-
-/** Convert Neon errors */
-impl From<neon::result::Throw> for HubError {
-    fn from(e: neon::result::Throw) -> HubError {
-        HubError {
-            code: "bad_request.validation_failure".to_string(),
-            message: e.to_string(),
-        }
-    }
-}
-
-/** Convert io::Result error type to HubError */
-impl From<std::io::Error> for HubError {
-    fn from(e: std::io::Error) -> HubError {
-        HubError {
-            code: "bad_request.io_error".to_string(),
-            message: e.to_string(),
-        }
-    }
-}
+use tracing::warn;
 
 pub const FID_LOCKS_COUNT: usize = 4;
 pub const PAGE_SIZE_MAX: usize = 10_000;
 
-#[derive(Debug, Default)]
-pub struct PageOptions {
-    pub page_size: Option<usize>,
-    pub page_token: Option<Vec<u8>>,
-    pub reverse: bool,
-}
+// #[derive(Debug, Default)]
+// pub struct PageOptions {
+//     pub page_size: Option<usize>,
+//     pub page_token: Option<Vec<u8>>,
+//     pub reverse: bool,
+// }
 
 /// The `Send` trait indicates that a type can be safely transferred between threads.
 /// The `Sync` trait indicates that a type can be safely shared between threads.
@@ -228,14 +146,16 @@ pub trait StoreDef: Send + Sync {
                     &db,
                     message.data.as_ref().unwrap().fid as u32,
                     self.postfix(),
-                    &utils::vec_to_u8_24(&remove_ts_hash)?,
+                    &vec_to_u8_24(&remove_ts_hash)?,
                 )?;
 
                 if maybe_existing_remove.is_some() {
                     conflicts.push(maybe_existing_remove.unwrap());
                 } else {
-                    warn!(LOGGER, "Message's ts_hash exists but message not found in store";
-                        o!("remove_ts_hash" => format!("{:x?}", remove_ts_hash.unwrap())));
+                    warn!(
+                        remove_ts_hash = format!("{:x?}", remove_ts_hash.unwrap()),
+                        "Message's ts_hash exists but message not found in store"
+                    );
                 }
             }
         }
@@ -271,12 +191,14 @@ pub trait StoreDef: Send + Sync {
                 &db,
                 message.data.as_ref().unwrap().fid as u32,
                 self.postfix(),
-                &utils::vec_to_u8_24(&add_ts_hash)?,
+                &vec_to_u8_24(&add_ts_hash)?,
             )?;
 
             if maybe_existing_add.is_none() {
-                warn!(LOGGER, "Message's ts_hash exists but message not found in store";
-                    o!("add_ts_hash" => format!("{:x?}", add_ts_hash.unwrap())));
+                warn!(
+                    add_ts_hash = format!("{:x?}", add_ts_hash.unwrap()),
+                    "Message's ts_hash exists but message not found in store"
+                );
             } else {
                 conflicts.push(maybe_existing_add.unwrap());
             }
@@ -309,74 +231,69 @@ pub trait StoreDef: Send + Sync {
         bytes_compare(&a_ts_hash[4..24], &b_ts_hash[4..24])
     }
 
-    fn revoke_event_args(&self, message: &Message) -> HubEvent {
-        HubEvent {
-            r#type: HubEventType::RevokeMessage as i32,
-            body: Some(hub_event::Body::RevokeMessageBody(
-                protos::RevokeMessageBody {
-                    message: Some(message.clone()),
-                },
-            )),
-            id: 0,
-        }
-    }
+    // fn revoke_event_args(&self, message: &Message) -> HubEvent {
+    //     HubEvent {
+    //         r#type: HubEventType::RevokeMessage as i32,
+    //         body: Some(hub_event::Body::RevokeMessageBody(
+    //             protos::RevokeMessageBody {
+    //                 message: Some(message.clone()),
+    //             },
+    //         )),
+    //         id: 0,
+    //     }
+    // }
 
-    fn merge_event_args(&self, message: &Message, merge_conflicts: Vec<Message>) -> HubEvent {
-        HubEvent {
-            r#type: HubEventType::MergeMessage as i32,
-            body: Some(hub_event::Body::MergeMessageBody(MergeMessageBody {
-                message: Some(message.clone()),
-                deleted_messages: match &message.data {
-                    Some(data) => {
-                        if data.r#type == self.compact_state_message_type() as i32 {
-                            // In the case of merging compact state, we omit the deleted messages as this would
-                            // result in an unbounded message size:
-                            Vec::<Message>::new()
-                        } else {
-                            merge_conflicts
-                        }
-                    }
-                    None => Vec::<Message>::new(),
-                },
-            })),
-            id: 0,
-        }
-    }
+    // fn merge_event_args(&self, message: &Message, merge_conflicts: Vec<Message>) -> HubEvent {
+    //     HubEvent {
+    //         r#type: HubEventType::MergeMessage as i32,
+    //         body: Some(hub_event::Body::MergeMessageBody(MergeMessageBody {
+    //             message: Some(message.clone()),
+    //             deleted_messages: match &message.data {
+    //                 Some(data) => {
+    //                     if data.r#type == self.compact_state_message_type() as i32 {
+    //                         // In the case of merging compact state, we omit the deleted messages as this would
+    //                         // result in an unbounded message size:
+    //                         Vec::<Message>::new()
+    //                     } else {
+    //                         merge_conflicts
+    //                     }
+    //                 }
+    //                 None => Vec::<Message>::new(),
+    //             },
+    //         })),
+    //         id: 0,
+    //     }
+    // }
 
-    fn prune_event_args(&self, message: &Message) -> HubEvent {
-        HubEvent {
-            r#type: HubEventType::PruneMessage as i32,
-            body: Some(hub_event::Body::PruneMessageBody(
-                protos::PruneMessageBody {
-                    message: Some(message.clone()),
-                },
-            )),
-            id: 0,
-        }
-    }
+    // fn prune_event_args(&self, message: &Message) -> HubEvent {
+    //     HubEvent {
+    //         r#type: HubEventType::PruneMessage as i32,
+    //         body: Some(hub_event::Body::PruneMessageBody(
+    //             protos::PruneMessageBody {
+    //                 message: Some(message.clone()),
+    //             },
+    //         )),
+    //         id: 0,
+    //     }
+    // }
 }
 
 pub struct Store {
     store_def: Box<dyn StoreDef>,
-    store_event_handler: Arc<StoreEventHandler>,
+    // store_event_handler: Arc<StoreEventHandler>,
     fid_locks: Arc<[Mutex<()>; 4]>,
     db: Arc<RocksDB>,
-    logger: slog::Logger,
-}
-
-impl Finalize for Store {
-    fn finalize<'a, C: neon::context::Context<'a>>(self, _cx: &mut C) {}
 }
 
 impl Store {
     pub fn new_with_store_def(
         db: Arc<RocksDB>,
-        store_event_handler: Arc<StoreEventHandler>,
+        // store_event_handler: Arc<StoreEventHandler>,
         store_def: Box<dyn StoreDef>,
     ) -> Store {
         Store {
             store_def,
-            store_event_handler,
+            // store_event_handler,
             fid_locks: Arc::new([
                 Mutex::new(()),
                 Mutex::new(()),
@@ -384,12 +301,7 @@ impl Store {
                 Mutex::new(()),
             ]),
             db,
-            logger: LOGGER.new(o!("component" => "Store")),
         }
-    }
-
-    pub fn logger(&self) -> &slog::Logger {
-        &self.logger
     }
 
     pub fn store_def(&self) -> &dyn StoreDef {
@@ -400,18 +312,15 @@ impl Store {
         self.db.clone()
     }
 
-    pub fn event_handler(&self) -> Arc<StoreEventHandler> {
-        self.store_event_handler.clone()
-    }
+    // pub fn event_handler(&self) -> Arc<StoreEventHandler> {
+    //     self.store_event_handler.clone()
+    // }
 
     pub fn postfix(&self) -> u8 {
         self.store_def.postfix()
     }
 
-    pub fn get_add(
-        &self,
-        partial_message: &protos::Message,
-    ) -> Result<Option<protos::Message>, HubError> {
+    pub fn get_add(&self, partial_message: &Message) -> Result<Option<Message>, HubError> {
         // First check the fid
         if partial_message.data.is_none() || partial_message.data.as_ref().unwrap().fid == 0 {
             return Err(HubError {
@@ -431,14 +340,11 @@ impl Store {
             &self.db,
             partial_message.data.as_ref().unwrap().fid as u32,
             self.store_def.postfix(),
-            &utils::vec_to_u8_24(&message_ts_hash)?,
+            &vec_to_u8_24(&message_ts_hash)?,
         )
     }
 
-    pub fn get_remove(
-        &self,
-        partial_message: &protos::Message,
-    ) -> Result<Option<protos::Message>, HubError> {
+    pub fn get_remove(&self, partial_message: &Message) -> Result<Option<Message>, HubError> {
         if !self.store_def.remove_type_supported() {
             return Err(HubError {
                 code: "bad_request.validation_failure".to_string(),
@@ -465,7 +371,7 @@ impl Store {
             &self.db,
             partial_message.data.as_ref().unwrap().fid as u32,
             self.store_def.postfix(),
-            &utils::vec_to_u8_24(&message_ts_hash)?,
+            &vec_to_u8_24(&message_ts_hash)?,
         )
     }
 
@@ -476,11 +382,11 @@ impl Store {
         filter: Option<F>,
     ) -> Result<MessagesPage, HubError>
     where
-        F: Fn(&protos::Message) -> bool,
+        F: Fn(&Message) -> bool,
     {
         let prefix = make_message_primary_key(fid, self.store_def.postfix(), None);
         let messages_page =
-            message::get_messages_page_by_prefix(&self.db, &prefix, &page_options, |message| {
+            get_messages_page_by_prefix(&self.db, &prefix, &page_options, |message| {
                 self.store_def.is_add_type(&message)
                     && filter.as_ref().map(|f| f(&message)).unwrap_or(true)
             })?;
@@ -495,7 +401,7 @@ impl Store {
         filter: Option<F>,
     ) -> Result<MessagesPage, HubError>
     where
-        F: Fn(&protos::Message) -> bool,
+        F: Fn(&Message) -> bool,
     {
         if !self.store_def.remove_type_supported() {
             return Err(HubError {
@@ -505,11 +411,10 @@ impl Store {
         }
 
         let prefix = make_message_primary_key(fid, self.store_def.postfix(), None);
-        let messages =
-            message::get_messages_page_by_prefix(&self.db, &prefix, &page_options, |message| {
-                self.store_def.is_remove_type(&message)
-                    && filter.as_ref().map(|f| f(&message)).unwrap_or(true)
-            })?;
+        let messages = get_messages_page_by_prefix(&self.db, &prefix, &page_options, |message| {
+            self.store_def.is_remove_type(&message)
+                && filter.as_ref().map(|f| f(&message)).unwrap_or(true)
+        })?;
 
         Ok(messages)
     }
@@ -697,21 +602,22 @@ impl Store {
             });
         }
 
-        let mut hub_event = self.store_def.revoke_event_args(message);
-
-        let id = self
-            .store_event_handler
-            .commit_transaction(&mut txn, &mut hub_event)?;
+        // let mut hub_event = self.store_def.revoke_event_args(message);
+        //
+        // let id = self
+        //     .store_event_handler
+        //     .commit_transaction(&mut txn, &mut hub_event)?;
 
         // Commit the transaction
         self.db.commit(txn)?;
 
-        hub_event.id = id;
+        // hub_event.id = id;
 
         // Serialize the hub_event
-        let hub_event_bytes = hub_event.encode_to_vec();
+        // let hub_event_bytes = hub_event.encode_to_vec();
 
-        Ok(hub_event_bytes)
+        // Ok(hub_event_bytes)
+        Ok(vec![]) // TODO: Use actual event
     }
 
     fn read_compact_state_details(
@@ -777,8 +683,11 @@ impl Store {
         // 1. Delete all remove messages
         // 2. Delete all add messages that are not in the target_fids list
         let prefix = &make_message_primary_key(fid, self.store_def.postfix(), None);
-        self.db
-            .for_each_iterator_by_prefix(prefix, &PageOptions::default(), |_key, value| {
+        self.db.for_each_iterator_by_prefix(
+            Some(prefix.to_vec()),
+            None,
+            &PageOptions::default(),
+            |_key, value| {
                 let message = message_decode(value)?;
 
                 // Only if message is older than the compact state message
@@ -803,7 +712,8 @@ impl Store {
                 }
 
                 Ok(false) // Continue the iteration
-            })?;
+            },
+        )?;
 
         let mut txn = self.db.txn();
         // Delete all the merge conflicts
@@ -813,20 +723,21 @@ impl Store {
         self.put_add_compact_state_transaction(&mut txn, message)?;
 
         // Event Handler
-        let mut hub_event = self.store_def.merge_event_args(message, merge_conflicts);
+        // let mut hub_event = self.store_def.merge_event_args(message, merge_conflicts);
 
-        let id = self
-            .store_event_handler
-            .commit_transaction(&mut txn, &mut hub_event)?;
+        // let id = self
+        //     .store_event_handler
+        //     .commit_transaction(&mut txn, &mut hub_event)?;
 
         // Commit the transaction
         self.db.commit(txn)?;
 
-        hub_event.id = id;
+        // hub_event.id = id;
         // Serialize the hub_event
-        let hub_event_bytes = hub_event.encode_to_vec();
+        // let hub_event_bytes = hub_event.encode_to_vec();
 
-        Ok(hub_event_bytes)
+        // Ok(hub_event_bytes)
+        Ok(vec![]) // TODO: Use actual event
     }
 
     pub fn merge_add(
@@ -877,20 +788,21 @@ impl Store {
         self.put_add_transaction(&mut txn, &ts_hash, message)?;
 
         // Event handler
-        let mut hub_event = self.store_def.merge_event_args(message, merge_conflicts);
+        // let mut hub_event = self.store_def.merge_event_args(message, merge_conflicts);
 
-        let id = self
-            .store_event_handler
-            .commit_transaction(&mut txn, &mut hub_event)?;
+        // let id = self
+        //     .store_event_handler
+        //     .commit_transaction(&mut txn, &mut hub_event)?;
 
         // Commit the transaction
         self.db.commit(txn)?;
 
-        hub_event.id = id;
+        // hub_event.id = id;
         // Serialize the hub_event
-        let hub_event_bytes = hub_event.encode_to_vec();
+        // let hub_event_bytes = hub_event.encode_to_vec();
 
-        Ok(hub_event_bytes)
+        // Ok(hub_event_bytes)
+        Ok(vec![]) // TODO: Use actual event
     }
 
     pub fn merge_remove(
@@ -936,20 +848,21 @@ impl Store {
         self.put_remove_transaction(&mut txn, ts_hash, message)?;
 
         // Event handler
-        let mut hub_event = self.store_def.merge_event_args(message, merge_conflicts);
+        // let mut hub_event = self.store_def.merge_event_args(message, merge_conflicts);
 
-        let id = self
-            .store_event_handler
-            .commit_transaction(&mut txn, &mut hub_event)?;
+        // let id = self
+        //     .store_event_handler
+        //     .commit_transaction(&mut txn, &mut hub_event)?;
 
         // Commit the transaction
         self.db.commit(txn)?;
 
-        hub_event.id = id;
+        // hub_event.id = id;
         // Serialize the hub_event
-        let hub_event_bytes = hub_event.encode_to_vec();
+        // let hub_event_bytes = hub_event.encode_to_vec();
 
-        Ok(hub_event_bytes)
+        // Ok(hub_event_bytes)
+        Ok(vec![]) // TODO: Use actual event
     }
 
     fn prune_messages(
@@ -957,8 +870,8 @@ impl Store {
         fid: u32,
         cached_count: u64,
         max_count: u64,
-    ) -> Result<Vec<HubEvent>, HubError> {
-        let mut pruned_events = vec![];
+    ) -> Result<Vec<u8>, HubError> {
+        let pruned_events = vec![];
 
         let mut count = cached_count;
         let max_message_count = if self.store_def.get_prune_size_limit() > 0 {
@@ -970,8 +883,11 @@ impl Store {
         let mut txn = self.db.txn();
 
         let prefix = &make_message_primary_key(fid, self.store_def.postfix(), None);
-        self.db
-            .for_each_iterator_by_prefix(prefix, &PageOptions::default(), |_key, value| {
+        self.db.for_each_iterator_by_prefix(
+            Some(prefix.to_vec()),
+            None,
+            &PageOptions::default(),
+            |_key, value| {
                 if count <= max_message_count {
                     return Ok(true); // Stop the iteration, nothing left to prune
                 }
@@ -995,18 +911,19 @@ impl Store {
                 }
 
                 // Event Handler
-                let mut hub_event = self.store_def.prune_event_args(&message);
-                let id = self
-                    .store_event_handler
-                    .commit_transaction(&mut txn, &mut hub_event)?;
+                // let mut hub_event = self.store_def.prune_event_args(&message);
+                // let id = self
+                //     .store_event_handler
+                //     .commit_transaction(&mut txn, &mut hub_event)?;
 
                 count -= 1;
 
-                hub_event.id = id;
-                pruned_events.push(hub_event);
+                // hub_event.id = id;
+                // pruned_events.push(hub_event);
 
                 Ok(false) // Continue the iteration
-            })?;
+            },
+        )?;
 
         self.db.commit(txn)?;
         Ok(pruned_events)
@@ -1020,13 +937,12 @@ impl Store {
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
         let prefix = make_message_primary_key(fid, self.store_def.postfix(), None);
-        let messages =
-            message::get_messages_page_by_prefix(&self.db, &prefix, &page_options, |message| {
-                is_message_in_time_range(start_time, stop_time, message)
-                    && (self.store_def.is_add_type(&message)
-                        || (self.store_def.remove_type_supported()
-                            && self.store_def.is_remove_type(&message)))
-            })?;
+        let messages = get_messages_page_by_prefix(&self.db, &prefix, &page_options, |message| {
+            is_message_in_time_range(start_time, stop_time, message)
+                && (self.store_def.is_add_type(&message)
+                    || (self.store_def.remove_type_supported()
+                        && self.store_def.is_remove_type(&message)))
+        })?;
 
         Ok(messages)
     }
@@ -1042,15 +958,11 @@ impl Store {
 
         match self.store_def.make_compact_state_prefix(fid) {
             Ok(prefix) => {
-                let messages = message::get_messages_page_by_prefix(
-                    &self.db,
-                    &prefix,
-                    &page_options,
-                    |message| {
+                let messages =
+                    get_messages_page_by_prefix(&self.db, &prefix, &page_options, |message| {
                         self.store_def.compact_state_type_supported()
                             && self.store_def.is_compact_state_type(&message)
-                    },
-                )?;
+                    })?;
 
                 Ok(messages)
             }
@@ -1059,242 +971,7 @@ impl Store {
     }
 }
 
-// Neon bindings
 // Note about dispatch - The methods are dispatched to the Store struct, which is a Box<dyn StoreDef>.
 // This means the NodeJS code can pass in any store, and the Rust code will call the correct method
 // for that store
-impl Store {
-    pub fn js_merge(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let store = get_store(&mut cx)?;
-
-        let message_bytes_result = cx.argument::<JsBuffer>(0);
-        let message_bytes = message_bytes_result.unwrap().as_slice(&cx).to_vec();
-        let message = Message::decode(message_bytes.as_slice());
-
-        let result = if message.is_err() {
-            let e = message.unwrap_err();
-            Err(HubError {
-                code: "bad_request.validation_failure".to_string(),
-                message: e.to_string(),
-            })
-        } else {
-            let m = message.unwrap();
-            store.merge(&m)
-        };
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-        deferred.settle_with(&channel, move |mut cx| match result {
-            Ok(hub_event_bytes) => {
-                let mut js_buffer = cx.buffer(hub_event_bytes.len())?;
-                js_buffer
-                    .as_mut_slice(&mut cx)
-                    .copy_from_slice(&hub_event_bytes);
-                Ok(js_buffer)
-            }
-            Err(e) => cx.throw_error(format!("{}/{}", e.code, e.message)),
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_merge_many(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let store = get_store(&mut cx)?;
-
-        // Get the messages array. Each message is a buffer in this array
-        let messages_array = cx.argument::<JsArray>(0).unwrap();
-        let messages = messages_array
-            .to_vec(&mut cx)?
-            .iter()
-            .map(|message_bytes| {
-                let message_bytes = message_bytes.downcast::<JsBuffer, _>(&mut cx).unwrap();
-                let message = Message::decode(message_bytes.as_slice(&cx));
-                if message.is_err() {
-                    return Err(HubError {
-                        code: "bad_request.validation_failure".to_string(),
-                        message: message.unwrap_err().to_string(),
-                    });
-                }
-                Ok(message.unwrap())
-            })
-            .collect::<Vec<_>>();
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        // We run the merge in a threadpool because it can be very CPU intensive and it will block
-        // the NodeJS main thread.
-        THREAD_POOL.lock().unwrap().execute(move || {
-            let results = messages
-                .into_iter()
-                .map(|message| match message {
-                    Err(e) => return Err(e),
-                    Ok(message) => store.merge(&message),
-                })
-                .collect::<Vec<_>>();
-
-            deferred.settle_with(&channel, move |mut cx| {
-                let js_array = JsArray::new(&mut cx, results.len());
-                results.iter().enumerate().for_each(|(i, r)| match r {
-                    Ok(hub_event_bytes) => {
-                        let mut js_buffer = cx.buffer(hub_event_bytes.len()).unwrap();
-                        js_buffer
-                            .as_mut_slice(&mut cx)
-                            .copy_from_slice(&hub_event_bytes);
-                        js_array.set(&mut cx, i as u32, js_buffer).unwrap();
-                    }
-                    Err(e) => {
-                        let js_error_string =
-                            JsString::new(&mut cx, format!("{}/{}", e.code, e.message));
-                        js_array.set(&mut cx, i as u32, js_error_string).unwrap();
-                    }
-                });
-
-                Ok(js_array)
-            });
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_revoke(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let store = get_store(&mut cx)?;
-
-        let message_bytes = cx.argument::<JsBuffer>(0);
-        let message = Message::decode(message_bytes.unwrap().as_slice(&cx));
-
-        let result = if message.is_err() {
-            Err(HubError {
-                code: "bad_request.validation_failure".to_string(),
-                message: message.unwrap_err().to_string(),
-            })
-        } else {
-            let m = message.unwrap();
-            store.revoke(&m)
-        };
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-        deferred.settle_with(&channel, move |mut cx| match result {
-            Ok(hub_event_bytes) => {
-                let mut js_buffer = cx.buffer(hub_event_bytes.len())?;
-                js_buffer
-                    .as_mut_slice(&mut cx)
-                    .copy_from_slice(&hub_event_bytes);
-                Ok(js_buffer)
-            }
-            Err(e) => cx.throw_error(format!("{}/{}", e.code, e.message)),
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_prune_messages(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let store = get_store(&mut cx)?;
-
-        let fid = cx.argument::<JsNumber>(0).unwrap().value(&mut cx) as u32;
-        let cached_count = cx.argument::<JsNumber>(1).unwrap().value(&mut cx) as u64;
-        let units = cx.argument::<JsNumber>(2).unwrap().value(&mut cx) as u64;
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        // We run the prune in a threadpool because it can be very CPU intensive and it will block
-        // the NodeJS main thread.
-        THREAD_POOL.lock().unwrap().execute(move || {
-            // Run the prune job in a separate thread
-            let prune_result = store.prune_messages(fid, cached_count, units);
-
-            deferred.settle_with(&channel, move |mut cx| {
-                let pruned_events = match prune_result {
-                    Ok(pruned_events) => pruned_events,
-                    Err(e) => return cx.throw_error(format!("{}/{}", e.code, e.message)),
-                };
-
-                let js_array = cx.empty_array();
-                for (i, hub_event) in pruned_events.iter().enumerate() {
-                    let hub_event_bytes = hub_event.encode_to_vec();
-                    let mut js_buffer = cx.buffer(hub_event_bytes.len())?;
-                    js_buffer
-                        .as_mut_slice(&mut cx)
-                        .copy_from_slice(&hub_event_bytes);
-                    js_array.set(&mut cx, i as u32, js_buffer)?;
-                }
-
-                Ok(js_array)
-            });
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_get_message(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let store = get_store(&mut cx)?;
-
-        let fid = cx.argument::<JsNumber>(0).unwrap().value(&mut cx) as u32;
-        let set = cx.argument::<JsNumber>(1).unwrap().value(&mut cx) as u8;
-        let ts_hash = match vec_to_u8_24(&Some(cx.argument::<JsBuffer>(2)?.as_slice(&cx).to_vec()))
-        {
-            Ok(ts_hash) => ts_hash,
-            Err(e) => return hub_error_to_js_throw(&mut cx, e),
-        };
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        deferred.settle_with(&channel, move |mut cx| {
-            let message = match get_message(&store.db, fid, set, &ts_hash) {
-                Ok(Some(message)) => message,
-                Ok(None) => {
-                    return cx.throw_error(format!("{}/{}", "not_found", "message not found"))
-                }
-                Err(e) => return hub_error_to_js_throw(&mut cx, e),
-            };
-
-            let message_bytes = message.encode_to_vec();
-            let mut js_buffer = cx.buffer(message_bytes.len())?;
-            js_buffer
-                .as_mut_slice(&mut cx)
-                .copy_from_slice(&message_bytes);
-            Ok(js_buffer)
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_get_all_messages_by_fid(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let store = get_store(&mut cx)?;
-
-        let fid = cx.argument::<JsNumber>(0).unwrap().value(&mut cx) as u32;
-        let page_options = get_page_options(&mut cx, 1)?;
-        let start_time = match cx.argument_opt(2) {
-            Some(arg) => match arg.downcast::<JsNumber, _>(&mut cx) {
-                Ok(v) => Some(v.value(&mut cx) as u32),
-                _ => None,
-            },
-            None => None,
-        };
-        let stop_time = match cx.argument_opt(3) {
-            Some(arg) => match arg.downcast::<JsNumber, _>(&mut cx) {
-                Ok(v) => Some(v.value(&mut cx) as u32),
-                _ => None,
-            },
-            None => None,
-        };
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        deferred.settle_with(&channel, move |mut tcx| {
-            let messages =
-                match store.get_all_messages_by_fid(fid, start_time, stop_time, &page_options) {
-                    Ok(messages) => messages,
-                    Err(e) => return tcx.throw_error(format!("{}/{}", e.code, e.message)),
-                };
-
-            encode_messages_to_js_object(&mut tcx, messages)
-        });
-
-        Ok(promise)
-    }
-}
+impl Store {}

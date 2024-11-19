@@ -17,7 +17,6 @@ use malachite_config::TimeoutConfig;
 use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
 

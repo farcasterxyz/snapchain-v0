@@ -1,7 +1,4 @@
-use super::super::{
-    db::{RocksDB, RocksDbTransactionBatch},
-    hub_error::HubError,
-};
+use super::super::db::{RocksDB, RocksDbTransactionBatch};
 use super::trie_node::{TrieNode, TIMESTAMP_LENGTH};
 use std::{
     collections::HashMap,
@@ -10,6 +7,7 @@ use std::{
 };
 
 // Threadpool for use in the store
+use crate::core::error::HubError;
 use once_cell::sync::Lazy;
 use threadpool::ThreadPool;
 
