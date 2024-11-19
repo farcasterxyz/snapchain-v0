@@ -22,7 +22,6 @@ pub struct TrieSnapshot {
 
 pub struct MerkleTrie {
     root: Option<TrieNode>,
-    // txn_batch: Mutex<RocksDbTransactionBatch>,
 }
 
 impl MerkleTrie {
@@ -66,16 +65,6 @@ impl MerkleTrie {
             Ok(None)
         }
     }
-
-    // fn load_root(&self) -> Result<Option<TrieNode>, HubError> {
-    //     let root_key = TrieNode::make_primary_key(&[], None);
-    //     if let Some(root_bytes) = self.db.get(&root_key)? {
-    //         let root_node = TrieNode::deserialize(&root_bytes.as_slice())?;
-    //         Ok(Some(root_node))
-    //     } else {
-    //         Ok(None)
-    //     }
-    // }
 
     pub fn reload(&mut self, db: &RocksDB) -> Result<(), HubError> {
         // Load the root node using the provided database reference
