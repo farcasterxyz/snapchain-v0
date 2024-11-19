@@ -8,9 +8,10 @@ mod tests {
     use crate::utils::cli;
     use ed25519_dalek::{SecretKey, SigningKey};
     use hex::FromHex;
+    use tempfile;
     use tracing_subscriber::EnvFilter;
 
-    fn new_engine() -> ShardEngine {
+    fn new_engine() -> (ShardEngine, tempfile::TempDir) {
         let dir = tempfile::TempDir::new().unwrap();
         let db_path = dir.path().join("a.db");
 
@@ -18,7 +19,7 @@ mod tests {
         db.open().unwrap();
 
         let shard_store = ShardStore::new(db);
-        ShardEngine::new(1, shard_store)
+        (ShardEngine::new(1, shard_store), dir)
     }
 
     fn enable_logging() {
@@ -103,7 +104,7 @@ mod tests {
 
     #[test]
     fn test_engine_basic_propose() {
-        let mut engine = new_engine();
+        let (mut engine, _tmpdir) = new_engine();
         let state_change = engine.propose_state_change(1);
 
         assert_eq!(1, state_change.shard_id);
@@ -122,7 +123,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "hashes don't match")]
     fn test_engine_commit_with_mismatched_hash() {
-        let mut engine = new_engine();
+        let (mut engine, _tmpdir) = new_engine();
         let state_change = engine.propose_state_change(1);
 
         let mut chunk = default_shard_chunk();
@@ -135,7 +136,7 @@ mod tests {
     // #[should_panic(expected = "abc123")]
     // which mismatched hash?
     fn test_engine_commit_no_messages_happy_path() {
-        let mut engine = new_engine();
+        let (mut engine, _tmpdir) = new_engine();
         let state_change = engine.propose_state_change(1);
         let expected_roots = vec!["237b11d0dd9e78994ef2f141c7f170d48bb51d34"];
 
@@ -147,15 +148,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_send_messages_one_by_one() {
-        enable_logging();
+        // enable_logging();
         let (msg1, msg2) = entities();
-        let mut engine = new_engine();
+        let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
         let expected_roots = vec![
             "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
             "8d566fb56cabed2665962a558dd2d4be0b0e4f6c",
             "215cee5fa4850848a9f9f06a93b0ba4da2ff52ef",
         ];
+
+        /* note: Hard-coded expected_roots is going to be fragile for some time.
+        This is by design during initial development. Any time these hashes change,
+        we'll want to investigate and verify that things are working as expected.
+        At some point this will become unwieldy and we'll have confidence that our
+        state changes are working as expected and at that point feel free to just check
+        that the root hash in the merkle trie matches the hash in the state change struct,
+        or otherwise refactor to taste.
+        */
 
         let height = engine.get_confirmed_height();
         assert_eq!(height.shard_index, 1);
@@ -210,9 +220,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_send_two_messages() {
-        enable_logging();
+        // enable_logging();
         let (msg1, msg2) = entities();
-        let mut engine = new_engine();
+        let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
         let expected_roots = vec![
             "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
