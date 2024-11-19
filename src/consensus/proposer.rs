@@ -55,7 +55,7 @@ pub struct ShardProposer {
     address: Address,
     chunks: Vec<ShardChunk>,
     proposed_chunks: BTreeMap<ShardHash, FullProposal>,
-    tx_decision: Option<mpsc::Sender<ShardChunk>>,
+    tx_decision: mpsc::Sender<ShardChunk>,
     engine: ShardEngine,
     propose_value_delay: Duration,
 }
@@ -65,7 +65,7 @@ impl ShardProposer {
         address: Address,
         shard_id: SnapchainShard,
         engine: ShardEngine,
-        tx_decision: Option<mpsc::Sender<ShardChunk>>,
+        tx_decision: mpsc::Sender<ShardChunk>,
         propose_value_delay: Duration,
     ) -> ShardProposer {
         ShardProposer {
@@ -80,9 +80,7 @@ impl ShardProposer {
     }
 
     async fn publish_new_shard_chunk(&self, shard_chunk: ShardChunk) {
-        if let Some(tx_decision) = &self.tx_decision {
-            let _ = tx_decision.send(shard_chunk).await;
-        }
+        &self.tx_decision.send(shard_chunk).await;
     }
 }
 

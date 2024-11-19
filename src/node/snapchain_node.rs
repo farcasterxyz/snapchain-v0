@@ -47,7 +47,7 @@ impl SnapchainNode {
 
         let mut shard_messages: HashMap<u32, mpsc::Sender<message::Message>> = HashMap::new();
 
-        let mut shard_stores = HashMap::new();
+        let mut shard_stores: HashMap<u32, ShardStore> = HashMap::new();
 
         // Create the shard validators
         for shard_id in config.shard_ids() {
@@ -88,7 +88,7 @@ impl SnapchainNode {
                 validator_address.clone(),
                 shard.clone(),
                 engine,
-                Some(shard_decision_tx.clone()),
+                shard_decision_tx.clone(),
                 config.propose_value_delay,
             );
 
