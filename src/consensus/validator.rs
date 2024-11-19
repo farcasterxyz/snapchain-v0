@@ -70,14 +70,14 @@ impl ShardValidator {
         self.started = true;
     }
 
-    pub async fn sync_with_new_validator(&mut self, validator: &SnapchainValidator) {
+    pub async fn sync_against_validator(&mut self, validator: &SnapchainValidator) {
         if let Some(p) = &mut self.block_proposer {
-            match p.register_validator(&validator).await {
+            match p.sync_against_validator(&validator).await {
                 Ok(()) => {}
                 Err(err) => error!("Error registering validator {:#?}", err),
             };
         } else if let Some(p) = &mut self.shard_proposer {
-            match p.register_validator(&validator).await {
+            match p.sync_against_validator(&validator).await {
                 Ok(()) => {}
                 Err(err) => error!("Error registering validator {:#?}", err),
             }

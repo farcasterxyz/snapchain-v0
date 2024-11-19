@@ -14,7 +14,7 @@ use malachite_consensus::{Effect, ProposedValue, Resume, SignedConsensusMsg};
 use malachite_metrics::Metrics;
 
 use crate::consensus::timers::{TimeoutElapsed, TimerScheduler};
-use crate::consensus::validator::ShardValidator;
+use crate::consensus::validator::{self, ShardValidator};
 use crate::core::types::{
     Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator,
     SnapchainValidatorContext,
@@ -327,7 +327,7 @@ impl Consensus {
                 // println!("Connected to {connected_peers}/{total_peers} peers");
                 state
                     .shard_validator
-                    .sync_with_new_validator(&validator)
+                    .sync_against_validator(&validator)
                     .await;
 
                 self.metrics.connected_peers.inc();
@@ -355,6 +355,37 @@ impl Consensus {
                     "Received proposed value: {:?} at {:?}",
                     height, self.params.address
                 );
+
+                let current_height = state.shard_validator.get_current_height();
+
+                // TODO(aditi): Make 1000 configurable.
+                if height.block_number > current_height + 1000 {
+                    panic!("Node is too far behind to join consensus. Try restarting. Current block number {}. Expected block number {}", current_height, height.block_number )
+                }
+
+                // TODO(aditi): Remove, for debugging
+                error!(
+                    "Received full proposal proposal height {}, current height {}",
+                    height.block_number, current_height
+                );
+                if height.block_number > current_height + 1 {
+                    // TODO(aditi): Remove, for debugging
+                    error!("Need to sync");
+                    let validator_set = state.shard_validator.get_validator_set();
+                    match validator_set.get_by_address(&full_proposal.proposer_address()) {
+                        None => {
+                            // TODO(aditi): Fix message
+                            error!("Missing validator");
+                        }
+                        Some(validator) => {
+                            state
+                                .shard_validator
+                                .sync_against_validator(&validator)
+                                .await
+                        }
+                    }
+                }
+
                 let proposed_value = state.shard_validator.add_proposed_value(full_proposal);
 
                 let result = self

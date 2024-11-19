@@ -43,7 +43,7 @@ pub trait Proposer {
 
     fn get_confirmed_height(&self) -> Height;
 
-    async fn register_validator(
+    async fn sync_against_validator(
         &mut self,
         validator: &SnapchainValidator,
     ) -> Result<(), Box<dyn std::error::Error>>;
@@ -166,7 +166,7 @@ impl Proposer for ShardProposer {
         self.engine.get_confirmed_height()
     }
 
-    async fn register_validator(
+    async fn sync_against_validator(
         &mut self,
         validator: &SnapchainValidator,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -377,7 +377,7 @@ impl Proposer for BlockProposer {
         self.engine.get_confirmed_height()
     }
 
-    async fn register_validator(
+    async fn sync_against_validator(
         &mut self,
         validator: &SnapchainValidator,
     ) -> Result<(), Box<dyn std::error::Error>> {
