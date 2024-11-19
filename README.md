@@ -28,20 +28,9 @@ Before you begin, ensure you have the following installed:
 
 ## Running the Application
 
-To run a Snapchain node, use the following command:
-
-First setup the node configs:
+For development, you can run multiple nodes by running:
 ```
-cargo run --bin setup 
+docker compose up --build
 ```
 
-Then to run the first node:
-```
-cargo run -- --id 1
-```
-
-To run additional nodes:
-```
-cargo run -- --id 2
-cargo run -- --id 3
-```
+These will be configured to communicate with each other.

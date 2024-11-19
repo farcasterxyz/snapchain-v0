@@ -1,0 +1,52 @@
+x-common: &common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  init: true # Auto-reap zombie processes and forward process signals
+  environment:
+    RUST_BACKTRACE: "full"
+
+services:
+  node1:
+    <<: *common
+    command: ["./snapchain", "--config-path", "./nodes/1/snapchain.toml"]
+    ports:
+      - "50051:50051/udp"
+      - "3383:3383/tcp"
+    networks:
+      snapchain_subnet:
+        ipv4_address: 172.100.0.11
+  node2:
+    <<: *common
+    command: ["./snapchain", "--config-path", "./nodes/2/snapchain.toml"]
+    ports:
+      - "50052:50052/udp"
+      - "3384:3384/tcp"
+    networks:
+      snapchain_subnet:
+        ipv4_address: 172.100.0.12
+  node3:
+    <<: *common
+    command: ["./snapchain", "--config-path", "./nodes/3/snapchain.toml"]
+    ports:
+      - "50053:50053/udp"
+      - "3385:3385/tcp"
+    networks:
+      snapchain_subnet:
+        ipv4_address: 172.100.0.13
+  node4:
+    <<: *common
+    command: ["./snapchain", "--config-path", "./nodes/4/snapchain.toml"]
+    ports:
+      - "50054:50054/udp"
+      - "3386:3386/tcp"
+    networks:
+      snapchain_subnet:
+        ipv4_address: 172.100.0.14
+
+networks:
+  snapchain_subnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.100.0.0/24
