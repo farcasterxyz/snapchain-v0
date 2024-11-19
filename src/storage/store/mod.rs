@@ -1,5 +1,4 @@
 pub use self::block::*;
-pub use self::utils::*;
 
 pub mod account;
 pub mod block;

@@ -7,14 +7,12 @@ use super::{
 use crate::core::error::HubError;
 use crate::storage::db::PageOptions;
 use crate::{
-    proto::message::{self, link_body::Target, message_data::Body, Message, MessageType},
+    proto::message::{link_body::Target, message_data::Body, Message, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
-use prost::Message as _;
-use rocksdb;
+use std::clone::Clone;
 use std::string::ToString;
 use std::sync::{Arc, Mutex};
-use std::{clone::Clone, fmt::Display};
 use tracing::warn;
 
 pub const FID_LOCKS_COUNT: usize = 4;
@@ -873,7 +871,7 @@ impl Store {
         cached_count: u64,
         max_count: u64,
     ) -> Result<Vec<u8>, HubError> {
-        let mut pruned_events = vec![];
+        let pruned_events = vec![];
 
         let mut count = cached_count;
         let max_message_count = if self.store_def.get_prune_size_limit() > 0 {

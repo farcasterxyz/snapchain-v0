@@ -12,7 +12,6 @@ use crate::{
     proto::message::{self, Message, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
-use prost::Message as _;
 use std::{borrow::Borrow, convert::TryInto, sync::Arc};
 
 type Parent = message::cast_add_body::Parent;
