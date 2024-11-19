@@ -24,6 +24,9 @@ pub enum ShardStorageError {
 
     #[error("Too many shards in result")]
     TooManyShardsInResult,
+
+    #[error("Hub error")]
+    HubError,
 }
 
 /** A page of messages returned from various APIs */
@@ -51,32 +54,37 @@ fn get_shard_page_by_prefix(
     let mut shard_chunks = Vec::new();
     let mut last_key = vec![];
 
-    let res = db.for_each_iterator_by_prefix_paged(
-        start_prefix,
-        stop_prefix,
+    let start_prefix = match start_prefix {
+        None => make_shard_key(0),
+        Some(key) => key,
+    };
+
+    let stop_prefix = match stop_prefix {
+        None => {
+            // Covers everything up to the end of the shard keys
+            vec![RootPrefix::Shard as u8 + 1]
+        }
+        Some(key) => key,
+    };
+
+    db.for_each_iterator_by_prefix_paged(
+        Some(start_prefix),
+        Some(stop_prefix),
         page_options,
         |key, value| {
-            let shard_res = ShardChunk::decode(value).map_err(|e| HubError::from(e));
+            let shard_chunk = ShardChunk::decode(value).map_err(|e| HubError::from(e))?;
 
-            match shard_res {
-                Err(err) => {
-                    error!("shard page result {:#?} {:#?}", err, value);
-                    return Err(err);
-                }
-                Ok(shard_chunk) => {
-                    shard_chunks.push(shard_chunk);
+            shard_chunks.push(shard_chunk);
 
-                    if shard_chunks.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
-                        last_key = key.to_vec();
-                        return Ok(true); // Stop iterating
-                    }
-
-                    Ok(false) // Continue iterating
-                }
+            if shard_chunks.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
+                last_key = key.to_vec();
+                return Ok(true); // Stop iterating
             }
+
+            Ok(false) // Continue iterating
         },
-    );
-    res.map_err(|e| ShardStorageError::TooManyShardsInResult)?; // TODO: Return the right error
+    )
+    .map_err(|e| ShardStorageError::HubError)?; // TODO: Return the right error
 
     let next_page_token = if last_key.len() > 0 {
         Some(last_key)
@@ -91,7 +99,7 @@ fn get_shard_page_by_prefix(
 }
 
 pub fn get_last_shard_chunk(db: &RocksDB) -> Result<Option<ShardChunk>, ShardStorageError> {
-    let start_block_key = make_shard_key(0);
+    let start_shard_key = make_shard_key(0);
     let shard_page = get_shard_page_by_prefix(
         db,
         &PageOptions {
@@ -99,7 +107,7 @@ pub fn get_last_shard_chunk(db: &RocksDB) -> Result<Option<ShardChunk>, ShardSto
             page_size: Some(1),
             page_token: None,
         },
-        Some(start_block_key),
+        Some(start_shard_key),
         None,
     )?;
 
@@ -126,7 +134,6 @@ pub fn get_current_height(db: &RocksDB) -> Result<Option<u64>, ShardStorageError
 
 pub fn put_shard_chunk(db: &RocksDB, shard_chunk: ShardChunk) -> Result<(), ShardStorageError> {
     // TODO: We need to introduce a transaction model
-    let mut txn = db.txn();
     let header = shard_chunk
         .header
         .as_ref()
@@ -136,8 +143,8 @@ pub fn put_shard_chunk(db: &RocksDB, shard_chunk: ShardChunk) -> Result<(), Shar
         .as_ref()
         .ok_or(ShardStorageError::ShardMissingHeight)?;
     let primary_key = make_shard_key(height.block_number);
-    txn.put(primary_key, shard_chunk.encode_to_vec());
-    db.commit(txn)?;
+    let data = shard_chunk.encode_to_vec();
+    db.put(&primary_key, data.as_slice())?;
     Ok(())
 }
 

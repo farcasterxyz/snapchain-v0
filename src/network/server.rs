@@ -52,12 +52,11 @@ impl SnapchainService for MySnapchainService {
         &self,
         request: Request<BlocksRequest>,
     ) -> Result<Response<BlocksResponse>, Status> {
-        let shard_index = request.get_ref().shard_id;
         let start_block_number = request.get_ref().start_block_number;
         let stop_block_number = request.get_ref().stop_block_number;
         match self
             .block_store
-            .get_blocks(start_block_number, stop_block_number, shard_index)
+            .get_blocks(start_block_number, stop_block_number)
         {
             Err(err) => Err(Status::from_error(Box::new(err))),
             Ok(blocks) => {

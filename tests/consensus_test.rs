@@ -61,6 +61,7 @@ impl NodeForTest {
         let (block_tx, mut block_rx) = mpsc::channel::<Block>(100);
         let db = Arc::new(RocksDB::new(&make_tmp_path()));
         db.open().unwrap();
+        db.clear().unwrap();
         let block_store = BlockStore::new(db.clone());
         let node = SnapchainNode::create(
             keypair.clone(),
@@ -156,17 +157,13 @@ impl NodeForTest {
     }
 
     pub async fn num_blocks(&self) -> usize {
-        let mut count = 0;
-        for i in 0..self.num_shards {
-            let blocks = self.block_store.get_blocks(0, None, i).unwrap();
-            count += blocks.len()
-        }
-        count
+        let blocks = self.block_store.get_blocks(0, None).unwrap();
+        blocks.len()
     }
 
     pub async fn num_shard_chunks(&self) -> usize {
         let mut count = 0;
-        for (_, shard_store) in self.node.shard_stores.iter() {
+        for (_shard_id, shard_store) in self.node.shard_stores.iter() {
             count += shard_store.get_shard_chunks(0, None).unwrap().len();
         }
 
@@ -174,18 +171,14 @@ impl NodeForTest {
     }
 
     pub async fn total_messages(&self) -> usize {
-        let mut count = 0;
-        for i in 0..self.num_shards {
-            let messages = self
-                .block_store
-                .get_blocks(0, None, i)
-                .unwrap()
-                .into_iter()
-                .map(|b| b.shard_chunks[0].transactions[0].user_messages.len());
-            count += messages.len()
-        }
+        let messages = self
+            .block_store
+            .get_blocks(0, None)
+            .unwrap()
+            .into_iter()
+            .map(|b| b.shard_chunks[0].transactions[0].user_messages.len());
 
-        count
+        messages.len()
     }
 }
 

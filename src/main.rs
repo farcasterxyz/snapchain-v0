@@ -181,7 +181,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     for i in 0..=app_config.consensus.num_shards() {
                         let current_height =
                         if i == 0 {
-                            block_store.max_block_number(i).unwrap_or_else(|_| 0)
+                            block_store.max_block_number().unwrap_or_else(|_| 0)
                         } else {
                             let shard_store = node.shard_stores.get(&i);
                             match shard_store {

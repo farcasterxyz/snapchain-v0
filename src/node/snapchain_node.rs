@@ -18,7 +18,7 @@ use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::{BTreeMap, HashMap};
 use tokio::sync::mpsc;
-use tracing::warn;
+use tracing::{error, warn};
 
 const MAX_SHARDS: u32 = 3;
 
@@ -57,7 +57,7 @@ impl SnapchainNode {
                 panic!("Shard ID must be between 1 and 3");
             }
 
-            let current_height = match block_store.max_block_number(shard_id) {
+            let current_height = match block_store.max_block_number() {
                 Err(_) => 0,
                 Ok(height) => height,
             };
@@ -118,7 +118,7 @@ impl SnapchainNode {
         // Now create the block validator
         let block_shard = SnapchainShard::new(0);
 
-        let current_height = match block_store.max_block_number(0) {
+        let current_height = match block_store.max_block_number() {
             Err(_) => 0,
             Ok(height) => height,
         };

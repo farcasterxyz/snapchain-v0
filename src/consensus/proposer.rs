@@ -53,7 +53,6 @@ pub trait Proposer {
 pub struct ShardProposer {
     shard_id: SnapchainShard,
     address: Address,
-    chunks: Vec<ShardChunk>,
     proposed_chunks: BTreeMap<ShardHash, FullProposal>,
     tx_decision: mpsc::Sender<ShardChunk>,
     engine: ShardEngine,
@@ -71,7 +70,6 @@ impl ShardProposer {
         ShardProposer {
             shard_id,
             address,
-            chunks: vec![],
             proposed_chunks: BTreeMap::new(),
             tx_decision,
             engine,
@@ -95,7 +93,7 @@ impl Proposer for ShardProposer {
         // TODO: rethink/reconsider
         tokio::time::sleep(self.propose_value_delay).await;
 
-        let previous_chunk = self.chunks.last();
+        let previous_chunk = self.engine.get_last_shard_chunk();
         let parent_hash = match previous_chunk {
             Some(chunk) => chunk.hash.clone(),
             None => vec![0, 32],
@@ -159,7 +157,6 @@ impl Proposer for ShardProposer {
         if let Some(proposal) = self.proposed_chunks.get(&value) {
             self.publish_new_shard_chunk(proposal.shard_chunk().unwrap())
                 .await;
-            self.chunks.push(proposal.shard_chunk().unwrap());
             self.engine
                 .commit_shard_chunk(proposal.shard_chunk().unwrap());
             self.proposed_chunks.remove(&value);
