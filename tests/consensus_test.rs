@@ -35,6 +35,9 @@ struct NodeForTest {
 impl Drop for NodeForTest {
     fn drop(&mut self) {
         self.db.destroy().unwrap();
+        for (_, shard_store) in self.node.shard_stores.iter_mut() {
+            shard_store.db.destroy().unwrap();
+        }
         self.node.stop();
     }
 }

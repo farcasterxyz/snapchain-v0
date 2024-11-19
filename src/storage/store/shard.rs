@@ -6,6 +6,7 @@ use crate::storage::db::{PageOptions, RocksDB, RocksdbError};
 use prost::Message;
 use std::sync::Arc;
 use thiserror::Error;
+use tracing::error;
 
 static PAGE_SIZE: usize = 100;
 
@@ -50,18 +51,32 @@ fn get_shard_page_by_prefix(
     let mut shard_chunks = Vec::new();
     let mut last_key = vec![];
 
-    db.for_each_iterator_by_prefix_paged(start_prefix, stop_prefix, page_options, |key, value| {
-        let block = ShardChunk::decode(value).map_err(|e| HubError::from(e))?;
-        shard_chunks.push(block);
+    let res = db.for_each_iterator_by_prefix_paged(
+        start_prefix,
+        stop_prefix,
+        page_options,
+        |key, value| {
+            let shard_res = ShardChunk::decode(value).map_err(|e| HubError::from(e));
 
-        if shard_chunks.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
-            last_key = key.to_vec();
-            return Ok(true); // Stop iterating
-        }
+            match shard_res {
+                Err(err) => {
+                    error!("shard page result {:#?} {:#?}", err, value);
+                    return Err(err);
+                }
+                Ok(shard_chunk) => {
+                    shard_chunks.push(shard_chunk);
 
-        Ok(false) // Continue iterating
-    })
-    .map_err(|e| ShardStorageError::TooManyShardsInResult)?; // TODO: Return the right error
+                    if shard_chunks.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
+                        last_key = key.to_vec();
+                        return Ok(true); // Stop iterating
+                    }
+
+                    Ok(false) // Continue iterating
+                }
+            }
+        },
+    );
+    res.map_err(|e| ShardStorageError::TooManyShardsInResult)?; // TODO: Return the right error
 
     let next_page_token = if last_key.len() > 0 {
         Some(last_key)
