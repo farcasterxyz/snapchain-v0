@@ -7,7 +7,7 @@ use snapchain::consensus::proposer::current_time;
 use snapchain::proto::message;
 use snapchain::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 use snapchain::proto::snapchain::Block;
-use snapchain::utils::cli::{compose_message, follow_blocks};
+use snapchain::utils::cli::{compose_message, follow_blocks, send_message};
 use std::collections::HashSet;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -54,11 +54,14 @@ fn start_submit_messages(
                         timer.tick().await;
                     }
                 };
-                let message = compose_message(
+                let message = send_message(
                     &mut client,
-                    private_key.clone(),
-                    6833,
-                    format!("For benchmarking {}", i).as_str(),
+                    &compose_message(
+                        private_key.clone(),
+                        6833,
+                        format!("For benchmarking {}", i).as_str(),
+                        None,
+                    ),
                 )
                 .await
                 .unwrap();
