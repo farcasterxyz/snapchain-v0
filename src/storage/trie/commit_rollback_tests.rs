@@ -70,7 +70,7 @@ mod tests {
 
         {
             let db_path = dir.path().join("t1.db");
-            let t1 = MerkleTrie::new(db_path.to_str().unwrap())?;
+            let mut t1 = MerkleTrie::new(db_path.to_str().unwrap())?;
             t1.initialize()?;
             t1.insert(hashes1.clone())?;
             let items = t1.items()?;
@@ -83,7 +83,7 @@ mod tests {
 
         {
             let db_path = dir.path().join("t2.db");
-            let t2 = MerkleTrie::new(db_path.to_str().unwrap())?;
+            let mut t2 = MerkleTrie::new(db_path.to_str().unwrap())?;
             t2.initialize()?;
             t2.insert(hashes1)?;
             let items = t2.items()?;

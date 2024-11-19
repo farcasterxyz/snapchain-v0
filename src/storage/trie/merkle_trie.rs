@@ -31,7 +31,7 @@ pub struct TrieSnapshot {
 }
 
 pub struct MerkleTrie {
-    root: RwLock<Option<TrieNode>>,
+    root: Option<TrieNode>,
     db: Arc<RocksDB>,
     db_owned: AtomicBool,
     txn_batch: Mutex<RocksDbTransactionBatch>,
@@ -50,7 +50,7 @@ impl MerkleTrie {
         let db = Arc::new(RocksDB::new(path.as_str()));
 
         Ok(MerkleTrie {
-            root: RwLock::new(None),
+            root: None,
             db,
             db_owned: AtomicBool::new(true),
             txn_batch: Mutex::new(RocksDbTransactionBatch::new()),
@@ -59,24 +59,24 @@ impl MerkleTrie {
 
     pub fn new_with_db(db: Arc<RocksDB>) -> Result<Self, HubError> {
         Ok(MerkleTrie {
-            root: RwLock::new(None),
+            root: None,
             db,
             db_owned: AtomicBool::new(false),
             txn_batch: Mutex::new(RocksDbTransactionBatch::new()),
         })
     }
 
-    fn create_empty_root(&self) {
+    fn create_empty_root(&mut self) {
         let root_key = TrieNode::make_primary_key(&[], None);
         let empty = TrieNode::new();
         let serialized = TrieNode::serialize(&empty);
 
         // Write the empty root node to the DB
         self.txn_batch.lock().unwrap().put(root_key, serialized);
-        self.root.write().unwrap().replace(empty);
+        self.root.replace(empty);
     }
 
-    pub fn initialize(&self) -> Result<(), HubError> {
+    pub fn initialize(&mut self) -> Result<(), HubError> {
         // First open the DB
         if self.db_owned.load(std::sync::atomic::Ordering::Relaxed) {
             self.db.open()?;
@@ -86,7 +86,7 @@ impl MerkleTrie {
         let loaded = self.load_root()?;
         if let Some(root_node) = loaded {
             // Replace the root node
-            self.root.write().unwrap().replace(root_node);
+            self.root.replace(root_node);
         } else {
             self.create_empty_root();
         }
@@ -108,12 +108,10 @@ impl MerkleTrie {
         self.db.clone()
     }
 
-    pub fn clear(&self) -> Result<(), HubError> {
+    pub fn clear(&mut self) -> Result<(), HubError> {
         self.txn_batch.lock().unwrap().batch.clear();
         self.db.clear()?;
-
         self.create_empty_root();
-
         Ok(())
     }
 
@@ -122,25 +120,24 @@ impl MerkleTrie {
         if self.db_owned.load(std::sync::atomic::Ordering::Relaxed) {
             self.db.close();
         }
-
         Ok(())
     }
 
-    pub fn commit(&self) -> Result<(), HubError> {
-        if let Some(root) = self.root.write().unwrap().as_mut() {
-            self.unload_from_memory(root, true)
+    pub fn commit(&mut self) -> Result<(), HubError> {
+        if let Some(root) = self.root.as_mut() {
+            let mut txn_batch = self.txn_batch.lock().unwrap();
+            Self::unload_from_memory(&mut *txn_batch, &self.db, root)?;
+            Ok(())
         } else {
-            panic!("commit") // TODO
+            panic!("commit"); // TODO
         }
     }
-
-    pub fn reload(&self) -> Result<(), HubError> {
+    pub fn reload(&mut self) -> Result<(), HubError> {
         let loaded = self.load_root()?;
 
         match loaded {
             Some(replacement_root) => {
-                let mut root_guard = self.root.write().unwrap();
-                root_guard.replace(replacement_root);
+                self.root.replace(replacement_root);
 
                 let mut txn_batch = self.txn_batch.lock().unwrap();
                 *txn_batch = RocksDbTransactionBatch::new();
@@ -153,28 +150,27 @@ impl MerkleTrie {
             }),
         }
     }
-
     /**
      *  Unload children from memory after every few ops, to prevent memory leaks.
      *  Note: We require a write-locked root node to perform this operation, which should
      *  be supplied by the caller.
      */
-    fn unload_from_memory(&self, root: &mut TrieNode, force: bool) -> Result<(), HubError> {
-        let mut txn_batch = self.txn_batch.lock().unwrap();
-        if force || txn_batch.batch.len() > TRIE_UNLOAD_THRESHOLD {
-            // Take the txn_batch out of the lock and replace it with a new one
-            let pending_txn_batch =
-                std::mem::replace(&mut *txn_batch, RocksDbTransactionBatch::new());
+    fn unload_from_memory(
+        txn_batch: &mut RocksDbTransactionBatch,
+        db: &Arc<RocksDB>,
+        root: &mut TrieNode,
+    ) -> Result<(), HubError> {
+        // Take the txn_batch out of the lock and replace it with a new one
+        let pending_txn_batch = std::mem::replace(txn_batch, RocksDbTransactionBatch::new());
 
-            // Commit the txn_batch
-            self.db.commit(pending_txn_batch)?;
+        // Commit the txn_batch
+        db.commit(pending_txn_batch)?;
 
-            root.unload_children();
-        }
+        root.unload_children();
         Ok(())
     }
 
-    pub fn insert(&self, keys: Vec<Vec<u8>>) -> Result<Vec<bool>, HubError> {
+    pub fn insert(&mut self, keys: Vec<Vec<u8>>) -> Result<Vec<bool>, HubError> {
         if keys.is_empty() {
             return Ok(Vec::new());
         }
@@ -188,7 +184,7 @@ impl MerkleTrie {
             }
         }
 
-        if let Some(root) = self.root.write().unwrap().as_mut() {
+        if let Some(root) = self.root.as_mut() {
             let mut txn = RocksDbTransactionBatch::new();
             let results = root.insert(&self.db, &mut txn, keys, 0)?;
 
@@ -202,7 +198,7 @@ impl MerkleTrie {
         }
     }
 
-    pub fn delete(&self, keys: Vec<Vec<u8>>) -> Result<Vec<bool>, HubError> {
+    pub fn delete(&mut self, keys: Vec<Vec<u8>>) -> Result<Vec<bool>, HubError> {
         if keys.is_empty() {
             return Ok(Vec::new());
         }
@@ -216,7 +212,7 @@ impl MerkleTrie {
             }
         }
 
-        if let Some(root) = self.root.write().unwrap().as_mut() {
+        if let Some(root) = self.root.as_mut() {
             let mut txn = RocksDbTransactionBatch::new();
             let results = root.delete(&self.db, &mut txn, keys, 0)?;
 
@@ -230,8 +226,8 @@ impl MerkleTrie {
         }
     }
 
-    pub fn exists(&self, key: &Vec<u8>) -> Result<bool, HubError> {
-        if let Some(root) = self.root.write().unwrap().as_mut() {
+    pub fn exists(&mut self, key: &Vec<u8>) -> Result<bool, HubError> {
+        if let Some(root) = self.root.as_mut() {
             root.exists(&self.db, &key, 0)
         } else {
             Err(HubError {
@@ -242,7 +238,7 @@ impl MerkleTrie {
     }
 
     pub fn items(&self) -> Result<usize, HubError> {
-        if let Some(root) = self.root.read().unwrap().as_ref() {
+        if let Some(root) = self.root.as_ref() {
             Ok(root.items())
         } else {
             Err(HubError {
@@ -273,7 +269,7 @@ impl MerkleTrie {
     }
 
     pub fn root_hash(&self) -> Result<Vec<u8>, HubError> {
-        if let Some(root) = self.root.read().unwrap().as_ref() {
+        if let Some(root) = self.root.as_ref() {
             Ok(root.hash())
         } else {
             Err(HubError {
@@ -283,8 +279,8 @@ impl MerkleTrie {
         }
     }
 
-    pub fn get_all_values(&self, prefix: &[u8]) -> Result<Vec<Vec<u8>>, HubError> {
-        if let Some(root) = self.root.write().unwrap().as_mut() {
+    pub fn get_all_values(&mut self, prefix: &[u8]) -> Result<Vec<Vec<u8>>, HubError> {
+        if let Some(root) = self.root.as_mut() {
             if let Some(node) = root.get_node_from_trie(&self.db, prefix, 0) {
                 node.get_all_values(&self.db, prefix)
             } else {
@@ -298,8 +294,8 @@ impl MerkleTrie {
         }
     }
 
-    pub fn get_snapshot(&self, prefix: &[u8]) -> Result<TrieSnapshot, HubError> {
-        if let Some(root) = self.root.write().unwrap().as_mut() {
+    pub fn get_snapshot(&mut self, prefix: &[u8]) -> Result<TrieSnapshot, HubError> {
+        if let Some(root) = self.root.as_mut() {
             let result = root.get_snapshot(&self.db, prefix, 0);
 
             result

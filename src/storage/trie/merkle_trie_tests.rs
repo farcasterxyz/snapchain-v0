@@ -11,7 +11,7 @@ mod tests {
             .to_string_lossy()
             .to_string();
 
-        let trie = MerkleTrie::new(&tmp_path).unwrap();
+        let mut trie = MerkleTrie::new(&tmp_path).unwrap();
         trie.initialize().unwrap();
 
         let key1: Vec<_> = "0000482712".bytes().collect();
