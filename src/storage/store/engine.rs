@@ -1,13 +1,13 @@
+use super::shard::ShardStore;
 use crate::core::types::{proto, Height};
 use crate::proto::snapchain::{Block, ShardChunk};
 use crate::proto::{message, snapchain};
+use crate::storage::db::RocksDbTransactionBatch;
 use crate::storage::store::BlockStore;
 use crate::storage::trie::merkle_trie;
 use std::iter;
 use tokio::sync::mpsc;
 use tracing::{error, warn};
-
-use super::shard::ShardStore;
 
 // Shard state root and the transactions
 #[derive(Clone)]
@@ -39,13 +39,15 @@ impl ShardEngine {
         // TODO: adding the trie here introduces many calls that want to return errors. Rethink unwrap strategy.
 
         // TODO: refactor trie code to work with transactions only instead of having its own reference to the db (probably).
+
+        let mut txn_batch = RocksDbTransactionBatch::new();
         let mut trie = merkle_trie::MerkleTrie::new().unwrap();
-        trie.initialize(db).unwrap();
+        trie.initialize(db, &mut txn_batch).unwrap();
 
         // TODO: The empty trie currently has some issues with the newly added commit/rollback code. Remove when we can.
-        trie.insert(db, vec![vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]])
+        trie.insert(db, &mut txn_batch, vec![vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]])
             .unwrap();
-        trie.commit(db).unwrap();
+        db.commit(txn_batch).unwrap();
         trie.reload(db).unwrap();
 
         let (messages_tx, messages_rx) = mpsc::channel::<message::Message>(10_000);
@@ -91,7 +93,8 @@ impl ShardEngine {
 
         let db = &*self.shard_store.db;
 
-        self.trie.insert(db, hashes);
+        let mut txn_batch = RocksDbTransactionBatch::new();
+        self.trie.insert(db, &mut txn_batch, hashes);
         let new_root_hash = self.trie.root_hash().unwrap();
         let count = self.trie.items().unwrap();
 
@@ -159,7 +162,11 @@ impl ShardEngine {
 
         let db = &*self.shard_store.db;
 
-        self.trie.insert(db, hashes.clone()).unwrap();
+        let mut txn_batch = RocksDbTransactionBatch::new();
+
+        self.trie
+            .insert(db, &mut txn_batch, hashes.clone())
+            .unwrap();
         let root1 = self.trie.root_hash().unwrap();
 
         let hashes_match = &root1 == &shard_root;
@@ -173,17 +180,11 @@ impl ShardEngine {
         );
 
         if hashes_match {
-            self.trie.commit(db).unwrap();
+            db.commit(txn_batch).unwrap();
+            self.trie.reload(db).unwrap();
             let committed_root = self.trie.root_hash().unwrap();
 
-            self.trie.reload(db).unwrap();
-            let reloaded_root = self.trie.root_hash().unwrap();
-
-            error!(
-                committed_root = hex::encode(committed_root),
-                reloaded_root = hex::encode(reloaded_root),
-                "commit!"
-            );
+            error!(committed_root = hex::encode(committed_root), "commit!");
         } else {
             error!("panic!");
             panic!("hashes don't match")

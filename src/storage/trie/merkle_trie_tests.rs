@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::storage::db::RocksDB;
+    use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
     use crate::storage::trie::merkle_trie::MerkleTrie;
 
     #[test]
@@ -15,28 +15,32 @@ mod tests {
         let db = &RocksDB::new(&tmp_path);
         db.open().unwrap();
 
+        let mut txn_batch = RocksDbTransactionBatch::new();
+
         let mut trie = MerkleTrie::new().unwrap();
-        trie.initialize(db).unwrap();
+        trie.initialize(db, &mut txn_batch).unwrap();
 
         let key1: Vec<_> = "0000482712".bytes().collect();
         println!("{:?}", key1);
-        trie.insert(db, vec![key1.clone()]).unwrap();
+        trie.insert(db, &mut txn_batch, vec![key1.clone()]).unwrap();
 
-        let node = trie.get_node(db, &key1).unwrap();
+        let node = trie.get_node(db, &mut txn_batch, &key1).unwrap();
         assert_eq!(node.value().unwrap(), key1);
 
         // Add another key
         let key2: Vec<_> = "0000482713".bytes().collect();
-        trie.insert(db, vec![key2.clone()]).unwrap();
+        trie.insert(db, &mut txn_batch, vec![key2.clone()]).unwrap();
 
         // The get node should still work for both keys
-        let node = trie.get_node(db, &key1).unwrap();
+        let node = trie.get_node(db, &mut txn_batch, &key1).unwrap();
         assert_eq!(node.value().unwrap(), key1);
-        let node = trie.get_node(db, &key2).unwrap();
+        let node = trie.get_node(db, &mut txn_batch, &key2).unwrap();
         assert_eq!(node.value().unwrap(), key2);
 
         // Getting the node with first 9 bytes should return the node with key1
-        let common_node = trie.get_node(db, &key1[0..9].to_vec()).unwrap();
+        let common_node = trie
+            .get_node(db, &mut txn_batch, &key1[0..9].to_vec())
+            .unwrap();
         assert_eq!(common_node.is_leaf(), false);
         assert_eq!(common_node.children().len(), 2);
         let mut children_keys: Vec<_> = common_node.children().keys().collect();
@@ -46,12 +50,16 @@ mod tests {
         assert_eq!(*children_keys[1], key2[9]);
 
         // Get the metadata for the root node
-        let root_metadata = trie.get_trie_node_metadata(db, &key1[0..1]).unwrap();
+        let root_metadata = trie
+            .get_trie_node_metadata(db, &mut txn_batch, &key1[0..1])
+            .unwrap();
         assert_eq!(root_metadata.prefix, "0".bytes().collect::<Vec<_>>());
         assert_eq!(root_metadata.num_messages, 2);
         assert_eq!(root_metadata.children.len(), 1);
 
-        let metadata = trie.get_trie_node_metadata(db, &key1[0..9]).unwrap();
+        let metadata = trie
+            .get_trie_node_metadata(db, &mut txn_batch, &key1[0..9])
+            .unwrap();
 
         // Get the children
         let mut children = metadata
