@@ -37,9 +37,6 @@ impl ShardEngine {
         let db = &*shard_store.db;
 
         // TODO: adding the trie here introduces many calls that want to return errors. Rethink unwrap strategy.
-
-        // TODO: refactor trie code to work with transactions only instead of having its own reference to the db (probably).
-
         let mut txn_batch = RocksDbTransactionBatch::new();
         let mut trie = merkle_trie::MerkleTrie::new().unwrap();
         trie.initialize(db, &mut txn_batch).unwrap();
