@@ -42,12 +42,12 @@ async fn main() {
         let secret_key = hex::encode(SecretKey::generate());
         let rpc_port = base_rpc_port + i;
         let gossip_port = base_gossip_port + i;
-        let host = "127.0.0.1";
+        let host = format!("172.100.0.1{i}");
         let rpc_address = format!("{host}:{rpc_port}");
-        let gossip_multi_addr = format!("/ip4/127.0.0.1/udp/{gossip_port}/quic-v1");
+        let gossip_multi_addr = format!("/ip4/{host}/udp/{gossip_port}/quic-v1");
         let other_nodes_addresses = (1..=nodes)
             .filter(|&x| x != id)
-            .map(|x| format!("/ip4/127.0.0.1/udp/{:?}/quic-v1", base_gossip_port + x))
+            .map(|x| format!("/ip4/172.100.0.1{x}/udp/{:?}/quic-v1", base_gossip_port + x))
             .collect::<Vec<String>>()
             .join(",");
 
