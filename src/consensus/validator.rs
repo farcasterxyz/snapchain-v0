@@ -22,6 +22,7 @@ pub struct ShardValidator {
     block_proposer: Option<BlockProposer>,
     shard_proposer: Option<ShardProposer>,
     pub started: bool,
+    pub first_proposal: bool,
 }
 
 impl ShardValidator {
@@ -42,6 +43,7 @@ impl ShardValidator {
             block_proposer,
             shard_proposer,
             started: false,
+            first_proposal: true,
         }
     }
 
@@ -110,6 +112,7 @@ impl ShardValidator {
         &mut self,
         full_proposal: FullProposal,
     ) -> ProposedValue<SnapchainValidatorContext> {
+        self.first_proposal = false;
         let value = full_proposal.shard_hash();
         let validity = if let Some(block_proposer) = &mut self.block_proposer {
             block_proposer.add_proposed_value(&full_proposal)

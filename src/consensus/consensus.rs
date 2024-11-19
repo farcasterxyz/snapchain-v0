@@ -368,7 +368,8 @@ impl Consensus {
                     "Received full proposal proposal height {}, current height {}",
                     height.block_number, current_height
                 );
-                if height.block_number > current_height + 1 {
+                if state.shard_validator.first_proposal && height.block_number > current_height + 1
+                {
                     // TODO(aditi): Remove, for debugging
                     error!("Need to sync");
                     let validator_set = state.shard_validator.get_validator_set();

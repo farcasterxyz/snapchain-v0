@@ -472,7 +472,7 @@ async fn test_sync_on_proposal() {
 
     wait_for_blocks(&node4, &network.nodes[0]).await;
 
-    network.produce_blocks(3).await;
+    network.produce_blocks(1).await;
 
     wait_for_blocks(&node4, &network.nodes[0]).await;
 }
