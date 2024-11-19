@@ -179,7 +179,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if tick_count % 5 == 0 {
                     let nonce = tick_count as u64;
                     for i in 0..=app_config.consensus.num_shards() {
-                        let current_height = block_store.max_block_number(i).unwrap_or_else(|_| 0);
+                        let current_height =
+                        if i == 0 {
+                            block_store.max_block_number(i).unwrap_or_else(|_| 0)
+                        } else {
+                            let shard_store = node.shard_stores.get(&i);
+                            match shard_store {
+                                None => 0,
+                                Some(shard_store) => shard_store.max_block_number().unwrap_or_else(|_| 0)
+                            }
+                        };
 
                         let register_validator = proto::RegisterValidator {
                             validator: Some(proto::Validator {

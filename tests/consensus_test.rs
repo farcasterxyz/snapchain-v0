@@ -9,8 +9,8 @@ use snapchain::node::snapchain_node::SnapchainNode;
 use snapchain::proto::message;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::proto::snapchain::Block;
-use snapchain::storage::db::{PageOptions, RocksDB};
-use snapchain::storage::store::{get_blocks_in_range, put_block, BlockStore};
+use snapchain::storage::db::RocksDB;
+use snapchain::storage::store::BlockStore;
 use snapchain::{
     consensus::consensus::ConsensusMsg,
     core::types::{ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext},
@@ -158,6 +158,15 @@ impl NodeForTest {
             let blocks = self.block_store.get_blocks(0, None, i).unwrap();
             count += blocks.len()
         }
+        count
+    }
+
+    pub async fn num_shard_chunks(&self) -> usize {
+        let mut count = 0;
+        for (_, shard_store) in self.node.shard_stores.iter() {
+            count += shard_store.get_shard_chunks(0, None).unwrap().len();
+        }
+
         count
     }
 
@@ -316,34 +325,29 @@ async fn test_basic_consensus() {
 
     network.produce_blocks(3).await;
 
-    assert!(
-        network.nodes[0].num_blocks().await >= 3,
-        "Node 1 should have confirmed blocks"
-    );
-    assert!(
-        network.nodes[0].total_messages().await > 0,
-        "Node 1 should have messages"
-    );
-    assert!(
-        network.nodes[1].num_blocks().await >= 3,
-        "Node 2 should have confirmed blocks"
-    );
-    assert!(
-        network.nodes[1].total_messages().await > 0,
-        "Node 2 should have messages"
-    );
-    assert!(
-        network.nodes[2].num_blocks().await >= 3,
-        "Node 3 should have confirmed blocks"
-    );
-    assert!(
-        network.nodes[2].total_messages().await > 0,
-        "Node 3 should have messages"
-    );
+    for i in 0..network.nodes.len() {
+        assert!(
+            network.nodes[i].num_blocks().await >= 3,
+            "Node {} should have confirmed blocks",
+            i
+        );
+
+        assert!(
+            network.nodes[i].num_shard_chunks().await >= 3,
+            "Node {} should have confirmed blocks",
+            i
+        );
+
+        assert!(
+            network.nodes[i].total_messages().await > 0,
+            "Node {} should have messages",
+            i
+        );
+    }
 }
 
 #[tokio::test]
-async fn test_basic_block_sync() {
+async fn test_basic_sync() {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(env_filter)
@@ -366,6 +370,12 @@ async fn test_basic_block_sync() {
         network.nodes[0].keypair.public().clone(),
         Some(network.nodes[0].grpc_addr.clone()),
         network.nodes[0].num_blocks().await as u64,
+    )));
+    node4.cast(ConsensusMsg::RegisterValidator(SnapchainValidator::new(
+        SnapchainShard::new(1),
+        network.nodes[0].keypair.public().clone(),
+        Some(network.nodes[0].grpc_addr.clone()),
+        network.nodes[0].num_shard_chunks().await as u64,
     )));
 
     let timeout = tokio::time::Duration::from_secs(5);
@@ -396,5 +406,9 @@ async fn test_basic_block_sync() {
     assert!(
         node4.num_blocks().await >= network.nodes[0].num_blocks().await,
         "Node 4 should have confirmed blocks"
+    );
+    assert!(
+        node4.num_shard_chunks().await >= network.nodes[0].num_shard_chunks().await,
+        "Node 4 should have confirmed shard chunks"
     );
 }
