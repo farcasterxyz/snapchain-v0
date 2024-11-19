@@ -1,3 +1,4 @@
+use crate::core::types::FARCASTER_EPOCH;
 use crate::proto::message;
 use crate::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 use crate::proto::{rpc, snapchain::Block};
@@ -11,7 +12,6 @@ use tokio::sync::mpsc;
 use tokio::time;
 use tonic::transport::Channel;
 
-const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
 const FETCH_SIZE: u64 = 100;
 
 // compose_message is a proof-of-concept script, is not guaranteed to be correct,

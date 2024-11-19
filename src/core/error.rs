@@ -72,3 +72,12 @@ impl From<std::io::Error> for HubError {
         }
     }
 }
+
+impl From<prost::DecodeError> for HubError {
+    fn from(e: prost::DecodeError) -> HubError {
+        HubError {
+            code: "bad_request.decode_error".to_string(),
+            message: e.to_string(),
+        }
+    }
+}

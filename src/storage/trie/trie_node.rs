@@ -1,13 +1,13 @@
 use super::super::{
+    constants::RootPrefix,
     db::{RocksDB, RocksDbTransactionBatch},
-    hub_error::HubError,
-    util::{blake3_20, bytes_compare, RootPrefix},
+    util::{blake3_20, bytes_compare},
 };
+use super::merkle_trie::TrieSnapshot;
+use crate::core::error::HubError;
 use crate::proto::sync_trie::DbTrieNode;
 use prost::Message as _;
 use std::collections::HashMap;
-
-use super::merkle_trie::TrieSnapshot;
 
 pub const TIMESTAMP_LENGTH: usize = 10;
 

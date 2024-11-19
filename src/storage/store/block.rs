@@ -1,18 +1,13 @@
+use super::super::constants::PAGE_SIZE_MAX;
+use crate::core::error::HubError;
 use crate::proto::snapchain::Block;
+use crate::storage::constants::RootPrefix;
 use crate::storage::db::{PageOptions, RocksDB, RocksdbError};
 use prost::Message;
 use std::sync::Arc;
 use thiserror::Error;
 
-use super::PAGE_SIZE_MAX;
-
 static PAGE_SIZE: usize = 100;
-
-// All keys should be prefixed with an element in [RootPrefix] so there's no chance of duplicate keys across different stores
-pub enum RootPrefix {
-    Block = 1,
-    Shard = 2,
-}
 
 // TODO(aditi): This code definitely needs unit tests
 #[derive(Error, Debug)]
@@ -57,7 +52,7 @@ fn get_block_page_by_prefix(
     let mut last_key = vec![];
 
     db.for_each_iterator_by_prefix_paged(start_prefix, stop_prefix, page_options, |key, value| {
-        let block = Block::decode(value)?;
+        let block = Block::decode(value).map_err(|e| HubError::from(e))?;
         blocks.push(block);
 
         if blocks.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
@@ -66,7 +61,8 @@ fn get_block_page_by_prefix(
         }
 
         Ok(false) // Continue iterating
-    })?;
+    })
+    .map_err(|e| BlockStorageError::TooManyBlocksInResult)?; // TODO: Return the right error
 
     let next_page_token = if last_key.len() > 0 {
         Some(last_key)

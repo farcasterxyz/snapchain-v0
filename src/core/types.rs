@@ -18,6 +18,8 @@ use crate::proto::snapchain::{Block, FullProposal, ShardChunk};
 pub use proto::Height;
 pub use proto::ShardHash;
 
+pub const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
+
 pub trait ShardId
 where
     Self: Sized + Clone + Send + Sync + 'static,

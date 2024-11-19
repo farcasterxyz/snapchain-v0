@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::storage::hub_error::HubError;
+    use crate::core::error::HubError;
     use crate::storage::trie::merkle_trie::MerkleTrie;
     use hex;
     use rand::{seq::SliceRandom, thread_rng};

@@ -1,28 +1,21 @@
 use super::{
-    bytes_compare, deferred_settle_messages, hub_error_to_js_throw, make_cast_id_key, make_fid_key,
-    make_user_key, message,
+    get_many_messages_as_bytes, make_cast_id_key, make_fid_key, make_message_primary_key,
+    make_user_key,
     store::{Store, StoreDef},
-    utils::{encode_messages_to_js_object, get_page_options, get_store},
-    HubError, MessagesPage, PageOptions, RootPrefix, StoreEventHandler, UserPostfix, HASH_LENGTH,
-    PAGE_SIZE_MAX, TRUE_VALUE, TS_HASH_LENGTH,
+    MessagesPage, HASH_LENGTH, PAGE_SIZE_MAX, TRUE_VALUE, TS_HASH_LENGTH,
 };
+use crate::core::error::HubError;
+use crate::storage::constants::{RootPrefix, UserPostfix};
+use crate::storage::db::PageOptions;
+use crate::storage::util::bytes_compare;
 use crate::{
-    db::{RocksDB, RocksDbTransactionBatch},
-    protos::{self, Message, MessageType},
-};
-use crate::{
-    protos::{message_data, CastRemoveBody},
-    THREAD_POOL,
-};
-use neon::{
-    context::{Context, FunctionContext},
-    result::JsResult,
-    types::{buffer::TypedArray, JsBox, JsBuffer, JsNumber, JsPromise, JsString},
+    proto::message::{self, Message, MessageType},
+    storage::db::{RocksDB, RocksDbTransactionBatch},
 };
 use prost::Message as _;
 use std::{borrow::Borrow, convert::TryInto, sync::Arc};
 
-type Parent = protos::cast_add_body::Parent;
+type Parent = message::cast_add_body::Parent;
 
 /**
  * CastStore persists Cast messages in RocksDB using a two-phase CRDT set to guarantee eventual
@@ -69,15 +62,15 @@ impl StoreDef for CastStoreDef {
         MessageType::CastRemove as u8
     }
 
-    fn is_add_type(&self, message: &protos::Message) -> bool {
-        message.signature_scheme == protos::SignatureScheme::Ed25519 as i32
+    fn is_add_type(&self, message: &Message) -> bool {
+        message.signature_scheme == message::SignatureScheme::Ed25519 as i32
             && message.data.is_some()
             && message.data.as_ref().unwrap().r#type == MessageType::CastAdd as i32
             && message.data.as_ref().unwrap().body.is_some()
     }
 
-    fn is_remove_type(&self, message: &protos::Message) -> bool {
-        message.signature_scheme == protos::SignatureScheme::Ed25519 as i32
+    fn is_remove_type(&self, message: &Message) -> bool {
+        message.signature_scheme == message::SignatureScheme::Ed25519 as i32
             && message.data.is_some()
             && message.data.as_ref().unwrap().r#type == MessageType::CastRemove as i32
             && message.data.as_ref().unwrap().body.is_some()
@@ -91,11 +84,7 @@ impl StoreDef for CastStoreDef {
         false
     }
 
-    fn find_merge_add_conflicts(
-        &self,
-        _db: &RocksDB,
-        _message: &protos::Message,
-    ) -> Result<(), super::store::HubError> {
+    fn find_merge_add_conflicts(&self, _db: &RocksDB, _message: &Message) -> Result<(), HubError> {
         // No conflicts
         Ok(())
     }
@@ -103,8 +92,8 @@ impl StoreDef for CastStoreDef {
     fn find_merge_remove_conflicts(
         &self,
         _db: &RocksDB,
-        _message: &protos::Message,
-    ) -> Result<(), super::store::HubError> {
+        _message: &Message,
+    ) -> Result<(), HubError> {
         Ok(())
     }
 
@@ -181,10 +170,10 @@ impl StoreDef for CastStoreDef {
         Ok(())
     }
 
-    fn make_add_key(&self, message: &protos::Message) -> Result<Vec<u8>, HubError> {
+    fn make_add_key(&self, message: &Message) -> Result<Vec<u8>, HubError> {
         let hash = match message.data.as_ref().unwrap().body.as_ref() {
-            Some(message_data::Body::CastAddBody(_)) => message.hash.as_ref(),
-            Some(message_data::Body::CastRemoveBody(cast_remove_body)) => {
+            Some(message::message_data::Body::CastAddBody(_)) => message.hash.as_ref(),
+            Some(message::message_data::Body::CastRemoveBody(cast_remove_body)) => {
                 cast_remove_body.target_hash.as_ref()
             }
             _ => {
@@ -200,10 +189,10 @@ impl StoreDef for CastStoreDef {
         ))
     }
 
-    fn make_remove_key(&self, message: &protos::Message) -> Result<Vec<u8>, HubError> {
+    fn make_remove_key(&self, message: &Message) -> Result<Vec<u8>, HubError> {
         let hash = match message.data.as_ref().unwrap().body.as_ref() {
-            Some(message_data::Body::CastAddBody(_)) => message.hash.as_ref(),
-            Some(message_data::Body::CastRemoveBody(cast_remove_body)) => {
+            Some(message::message_data::Body::CastAddBody(_)) => message.hash.as_ref(),
+            Some(message::message_data::Body::CastRemoveBody(cast_remove_body)) => {
                 cast_remove_body.target_hash.as_ref()
             }
             _ => {
@@ -243,12 +232,12 @@ impl CastStoreDef {
     fn by_parent_secondary_index_key(
         &self,
         ts_hash: &[u8; TS_HASH_LENGTH],
-        message: &protos::Message,
+        message: &Message,
     ) -> Result<Option<Vec<u8>>, HubError> {
         // For cast add, make sure at least one of parentCastId or parentUrl is set
         let cast_body = match message.data.as_ref().unwrap().body.as_ref().unwrap() {
-            message_data::Body::CastAddBody(cast_add_body) => cast_add_body,
-            message_data::Body::CastRemoveBody(_) => return Ok(None),
+            message::message_data::Body::CastAddBody(cast_add_body) => cast_add_body,
+            message::message_data::Body::CastRemoveBody(_) => return Ok(None),
             _ => Err(HubError {
                 code: "bad_request.validation_failure".to_string(),
                 message: "Invalid cast body".to_string(),
@@ -298,12 +287,12 @@ impl CastStoreDef {
     fn by_mention_secondary_index_key(
         &self,
         ts_hash: &[u8; TS_HASH_LENGTH],
-        message: &protos::Message,
+        message: &Message,
     ) -> Result<Option<Vec<Vec<u8>>>, HubError> {
         // For cast add, make sure at least one of parentCastId or parentUrl is set
         let cast_body = match message.data.as_ref().unwrap().body.as_ref().unwrap() {
-            message_data::Body::CastAddBody(cast_add_body) => cast_add_body,
-            message_data::Body::CastRemoveBody(_) => return Ok(None),
+            message::message_data::Body::CastAddBody(cast_add_body) => cast_add_body,
+            message::message_data::Body::CastRemoveBody(_) => return Ok(None),
             _ => Err(HubError {
                 code: "bad_request.validation_failure".to_string(),
                 message: "Invalid cast body".to_string(),
@@ -375,12 +364,12 @@ pub struct CastStore {}
 impl CastStore {
     pub fn new(
         db: Arc<RocksDB>,
-        store_event_handler: Arc<StoreEventHandler>,
+        // store_event_handler: Arc<StoreEventHandler>,
         prune_size_limit: u32,
     ) -> Store {
         Store::new_with_store_def(
             db,
-            store_event_handler,
+            // store_event_handler,
             Box::new(CastStoreDef { prune_size_limit }),
         )
     }
@@ -389,13 +378,13 @@ impl CastStore {
         store: &Store,
         fid: u32,
         hash: Vec<u8>,
-    ) -> Result<Option<protos::Message>, HubError> {
-        let partial_message = protos::Message {
-            data: Some(protos::MessageData {
+    ) -> Result<Option<Message>, HubError> {
+        let partial_message = Message {
+            data: Some(message::MessageData {
                 fid: fid as u64,
                 r#type: MessageType::CastAdd.into(),
-                body: Some(protos::message_data::Body::CastAddBody(
-                    protos::CastAddBody {
+                body: Some(message::message_data::Body::CastAddBody(
+                    message::CastAddBody {
                         ..Default::default()
                     },
                 )),
@@ -408,46 +397,20 @@ impl CastStore {
         store.get_add(&partial_message)
     }
 
-    pub fn js_get_cast_add(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let channel = cx.channel();
-
-        let store = get_store(&mut cx)?;
-
-        let fid = cx.argument::<JsNumber>(0).unwrap().value(&mut cx) as u32;
-        let hash_buffer = cx.argument::<JsBuffer>(1)?;
-        let hash_bytes = hash_buffer.as_slice(&cx);
-
-        let result = match Self::get_cast_add(&store, fid, hash_bytes.to_vec()) {
-            Ok(Some(message)) => message.encode_to_vec(),
-            Ok(None) => cx.throw_error(format!(
-                "{}/{} for {}",
-                "not_found", "castAddMessage not found", fid
-            ))?,
-            Err(e) => return hub_error_to_js_throw(&mut cx, e),
-        };
-
-        let (deferred, promise) = cx.promise();
-        deferred.settle_with(&channel, move |mut cx| {
-            let mut js_buffer = cx.buffer(result.len())?;
-            js_buffer.as_mut_slice(&mut cx).copy_from_slice(&result);
-            Ok(js_buffer)
-        });
-
-        Ok(promise)
-    }
-
     pub fn get_cast_remove(
         store: &Store,
         fid: u32,
         hash: Vec<u8>,
-    ) -> Result<Option<protos::Message>, HubError> {
-        let partial_message = protos::Message {
-            data: Some(protos::MessageData {
+    ) -> Result<Option<Message>, HubError> {
+        let partial_message = Message {
+            data: Some(message::MessageData {
                 fid: fid as u64,
                 r#type: MessageType::CastRemove.into(),
-                body: Some(protos::message_data::Body::CastRemoveBody(CastRemoveBody {
-                    target_hash: hash.clone(),
-                })),
+                body: Some(message::message_data::Body::CastRemoveBody(
+                    message::CastRemoveBody {
+                        target_hash: hash.clone(),
+                    },
+                )),
                 ..Default::default()
             }),
             ..Default::default()
@@ -456,77 +419,12 @@ impl CastStore {
         store.get_remove(&partial_message)
     }
 
-    pub fn js_get_cast_remove(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let store = get_store(&mut cx)?;
-
-        let fid = cx.argument::<JsNumber>(0).unwrap().value(&mut cx) as u32;
-        let hash_buffer = cx.argument::<JsBuffer>(1)?;
-        let hash_bytes = hash_buffer.as_slice(&cx).to_vec();
-
-        let result = match Self::get_cast_remove(&store, fid, hash_bytes) {
-            Ok(Some(message)) => message.encode_to_vec(),
-            Ok(None) => cx.throw_error(format!(
-                "{}/{} for {}",
-                "not_found", "CastRemoveMessage not found", fid
-            ))?,
-            Err(e) => return hub_error_to_js_throw(&mut cx, e),
-        };
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-        deferred.settle_with(&channel, move |mut cx| {
-            let mut js_buffer = cx.buffer(result.len())?;
-            js_buffer.as_mut_slice(&mut cx).copy_from_slice(&result);
-            Ok(js_buffer)
-        });
-
-        Ok(promise)
-    }
-
     pub fn get_cast_adds_by_fid(
         store: &Store,
         fid: u32,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
-        store.get_adds_by_fid::<fn(&protos::Message) -> bool>(fid, page_options, None)
-    }
-
-    pub fn js_create_cast_store(mut cx: FunctionContext) -> JsResult<JsBox<Arc<Store>>> {
-        let db_js_box = cx.argument::<JsBox<Arc<RocksDB>>>(0)?;
-        let db = (**db_js_box.borrow()).clone();
-
-        // Read the StoreEventHandler
-        let store_event_handler_js_box = cx.argument::<JsBox<Arc<StoreEventHandler>>>(1)?;
-        let store_event_handler = (**store_event_handler_js_box.borrow()).clone();
-
-        // Read the prune size limit and prune time limit from the options
-        let prune_size_limit = cx
-            .argument::<JsNumber>(2)
-            .map(|n| n.value(&mut cx) as u32)?;
-
-        Ok(cx.boxed(Arc::new(Self::new(
-            db,
-            store_event_handler,
-            prune_size_limit,
-        ))))
-    }
-
-    pub fn js_get_cast_adds_by_fid(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let store = get_store(&mut cx)?;
-
-        let fid = cx.argument::<JsNumber>(0).unwrap().value(&mut cx) as u32;
-        let page_options = get_page_options(&mut cx, 1)?;
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        THREAD_POOL.lock().unwrap().execute(move || {
-            let messages = Self::get_cast_adds_by_fid(&store, fid, &page_options);
-
-            deferred_settle_messages(deferred, &channel, messages);
-        });
-
-        Ok(promise)
+        store.get_adds_by_fid::<fn(&Message) -> bool>(fid, page_options, None)
     }
 
     pub fn get_cast_removes_by_fid(
@@ -534,24 +432,7 @@ impl CastStore {
         fid: u32,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
-        store.get_removes_by_fid::<fn(&protos::Message) -> bool>(fid, page_options, None)
-    }
-
-    pub fn js_get_cast_removes_by_fid(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let store = get_store(&mut cx)?;
-
-        let fid = cx.argument::<JsNumber>(0).unwrap().value(&mut cx) as u32;
-        let page_options = get_page_options(&mut cx, 1)?;
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        THREAD_POOL.lock().unwrap().execute(move || {
-            let messages = Self::get_cast_removes_by_fid(&store, fid, &page_options);
-            deferred_settle_messages(deferred, &channel, messages);
-        });
-
-        Ok(promise)
+        store.get_removes_by_fid::<fn(&Message) -> bool>(fid, page_options, None)
     }
 
     pub fn get_casts_by_parent(
@@ -564,9 +445,11 @@ impl CastStore {
         let mut message_keys = vec![];
         let mut last_key = vec![];
 
-        store
-            .db()
-            .for_each_iterator_by_prefix(&prefix, page_options, |key, _| {
+        store.db().for_each_iterator_by_prefix(
+            Some(prefix.to_vec()),
+            None,
+            page_options,
+            |key, _| {
                 let ts_hash_offset = prefix.len();
                 let fid_offset = ts_hash_offset + TS_HASH_LENGTH;
 
@@ -575,7 +458,7 @@ impl CastStore {
                     .try_into()
                     .unwrap();
                 let message_primary_key =
-                    message::make_message_primary_key(fid, store.postfix(), Some(&ts_hash));
+                    make_message_primary_key(fid, store.postfix(), Some(&ts_hash));
 
                 message_keys.push(message_primary_key.to_vec());
                 if message_keys.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
@@ -584,10 +467,10 @@ impl CastStore {
                 }
 
                 Ok(false) // Continue iterating
-            })?;
+            },
+        )?;
 
-        let messages_bytes =
-            message::get_many_messages_as_bytes(store.db().borrow(), message_keys)?;
+        let messages_bytes = get_many_messages_as_bytes(store.db().borrow(), message_keys)?;
         let next_page_token = if last_key.len() > 0 {
             Some(last_key[prefix.len()..].to_vec())
         } else {
@@ -598,49 +481,6 @@ impl CastStore {
             messages_bytes,
             next_page_token,
         })
-    }
-
-    pub fn js_get_casts_by_parent(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let store = get_store(&mut cx)?;
-
-        let parent_cast_id_buffer = cx.argument::<JsBuffer>(0)?;
-        let parent_cast_id_bytes = parent_cast_id_buffer.as_slice(&cx);
-        let parent_cast_id = if parent_cast_id_bytes.len() > 0 {
-            match protos::CastId::decode(parent_cast_id_bytes) {
-                Ok(cast_id) => Some(cast_id),
-                Err(e) => return cx.throw_error(e.to_string()),
-            }
-        } else {
-            None
-        };
-
-        let parent_url = cx.argument::<JsString>(1).map(|s| s.value(&mut cx))?;
-
-        // We need at least one of target_cast_id or target_url
-        if parent_cast_id.is_none() && parent_url.is_empty() {
-            return cx.throw_error("parent_cast_id or parent_url is required");
-        }
-
-        let target = if parent_cast_id.is_some() {
-            Parent::ParentCastId(parent_cast_id.unwrap())
-        } else {
-            Parent::ParentUrl(parent_url)
-        };
-
-        let page_options = get_page_options(&mut cx, 2)?;
-
-        let messages = match Self::get_casts_by_parent(&store, &target, &page_options) {
-            Ok(messages) => messages,
-            Err(e) => return hub_error_to_js_throw(&mut cx, e),
-        };
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-        deferred.settle_with(&channel, move |mut cx| {
-            encode_messages_to_js_object(&mut cx, messages)
-        });
-
-        Ok(promise)
     }
 
     pub fn get_casts_by_mention(
@@ -653,9 +493,11 @@ impl CastStore {
         let mut message_keys = vec![];
         let mut last_key = vec![];
 
-        store
-            .db()
-            .for_each_iterator_by_prefix(&prefix, page_options, |key, _| {
+        store.db().for_each_iterator_by_prefix(
+            Some(prefix.to_vec()),
+            None,
+            page_options,
+            |key, _| {
                 let ts_hash_offset = prefix.len();
                 let fid_offset = ts_hash_offset + TS_HASH_LENGTH;
 
@@ -663,11 +505,8 @@ impl CastStore {
                 let ts_hash = key[ts_hash_offset..ts_hash_offset + TS_HASH_LENGTH]
                     .try_into()
                     .unwrap();
-                let message_primary_key = crate::store::message::make_message_primary_key(
-                    fid,
-                    store.postfix(),
-                    Some(&ts_hash),
-                );
+                let message_primary_key =
+                    make_message_primary_key(fid, store.postfix(), Some(&ts_hash));
 
                 message_keys.push(message_primary_key.to_vec());
                 if message_keys.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
@@ -676,10 +515,10 @@ impl CastStore {
                 }
 
                 Ok(false) // Continue iterating
-            })?;
+            },
+        )?;
 
-        let messages_bytes =
-            message::get_many_messages_as_bytes(store.db().borrow(), message_keys)?;
+        let messages_bytes = get_many_messages_as_bytes(store.db().borrow(), message_keys)?;
         let next_page_token = if last_key.len() > 0 {
             Some(last_key[prefix.len()..].to_vec())
         } else {
@@ -690,24 +529,5 @@ impl CastStore {
             messages_bytes,
             next_page_token,
         })
-    }
-
-    pub fn js_get_casts_by_mention(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let store = get_store(&mut cx)?;
-
-        let mention = cx.argument::<JsNumber>(0)?;
-        let mention = mention.value(&mut cx) as u32;
-        let page_options = get_page_options(&mut cx, 1)?;
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        THREAD_POOL.lock().unwrap().execute(move || {
-            let messages = Self::get_casts_by_mention(&store, mention, &page_options);
-
-            deferred_settle_messages(deferred, &channel, messages);
-        });
-
-        Ok(promise)
     }
 }
