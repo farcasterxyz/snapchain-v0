@@ -69,6 +69,7 @@ impl SnapchainService for MySnapchainService {
         &self,
         request: Request<ShardChunksRequest>,
     ) -> Result<Response<ShardChunksResponse>, Status> {
+        // TODO(aditi): Write unit tests for these functions.
         let shard_index = request.get_ref().shard_id;
         let start_block_number = request.get_ref().start_block_number;
         let stop_block_number = request.get_ref().stop_block_number;
