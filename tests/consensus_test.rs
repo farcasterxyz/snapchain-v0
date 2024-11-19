@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tempfile::TempDir;  // Import TempDir for better temporary directory management
 
 use hex;
 use libp2p::identity::ed25519::Keypair;
@@ -34,7 +35,6 @@ struct NodeForTest {
 
 impl Drop for NodeForTest {
     fn drop(&mut self) {
-        self.db.destroy().unwrap();
         self.node.stop();
     }
 }
@@ -56,7 +56,10 @@ impl NodeForTest {
         let (gossip_tx, gossip_rx) = mpsc::channel::<GossipEvent<SnapchainValidatorContext>>(100);
 
         let (block_tx, mut block_rx) = mpsc::channel::<Block>(100);
-        let db = Arc::new(RocksDB::new(&make_tmp_path()));
+        // Using the make_tmp_path function to get a temporary directory path
+        let tmp_path = make_tmp_path();
+
+        let db = Arc::new(RocksDB::new(&tmp_path));
         db.open().unwrap();
         let block_store = BlockStore::new(db.clone());
         let node = SnapchainNode::create(
