@@ -61,7 +61,6 @@ impl NodeForTest {
         let (block_tx, mut block_rx) = mpsc::channel::<Block>(100);
         let db = Arc::new(RocksDB::new(&make_tmp_path()));
         db.open().unwrap();
-        db.clear().unwrap();
         let block_store = BlockStore::new(db.clone());
         let node = SnapchainNode::create(
             keypair.clone(),

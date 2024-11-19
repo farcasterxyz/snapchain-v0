@@ -243,7 +243,6 @@ impl BlockEngine {
 
     pub fn get_confirmed_height(&self) -> Height {
         let shard_index = 0;
-        // TODO(aditi): There's no reason we need to provide a shard id here anymore
         match self.block_store.max_block_number() {
             Ok(block_num) => Height::new(shard_index, block_num),
             Err(_) => Height::new(shard_index, 0),
