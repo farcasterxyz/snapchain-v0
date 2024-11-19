@@ -34,17 +34,19 @@ fn encode_vec(data: &[Vec<u8>]) -> String {
 
 impl ShardEngine {
     pub fn new(shard_id: u32, shard_store: ShardStore) -> ShardEngine {
+        let db = &*shard_store.db;
+
         // TODO: adding the trie here introduces many calls that want to return errors. Rethink unwrap strategy.
 
         // TODO: refactor trie code to work with transactions only instead of having its own reference to the db (probably).
-        let mut trie = merkle_trie::MerkleTrie::new_with_db(shard_store.db.clone()).unwrap();
-        trie.initialize().unwrap();
+        let mut trie = merkle_trie::MerkleTrie::new_with_db().unwrap();
+        trie.initialize(db).unwrap();
 
         // TODO: The empty trie currently has some issues with the newly added commit/rollback code. Remove when we can.
-        trie.insert(vec![vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]])
+        trie.insert(db, vec![vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]])
             .unwrap();
-        trie.commit().unwrap();
-        trie.reload().unwrap();
+        trie.commit(db).unwrap();
+        trie.reload(db).unwrap();
 
         let (messages_tx, messages_rx) = mpsc::channel::<message::Message>(10_000);
         ShardEngine {
@@ -87,7 +89,9 @@ impl ShardEngine {
             "propose – before insert",
         );
 
-        self.trie.insert(hashes);
+        let db = &*self.shard_store.db;
+
+        self.trie.insert(db, hashes);
         let new_root_hash = self.trie.root_hash().unwrap();
         let count = self.trie.items().unwrap();
 
@@ -105,7 +109,7 @@ impl ShardEngine {
         };
 
         // TODO: this should probably operate automatically via drop trait
-        self.trie.reload().unwrap();
+        self.trie.reload(db).unwrap();
 
         warn!(
             shard,
@@ -153,7 +157,9 @@ impl ShardEngine {
             "commit insert"
         );
 
-        self.trie.insert(hashes.clone()).unwrap();
+        let db = &*self.shard_store.db;
+
+        self.trie.insert(db, hashes.clone()).unwrap();
         let root1 = self.trie.root_hash().unwrap();
 
         let hashes_match = &root1 == &shard_root;
@@ -167,10 +173,10 @@ impl ShardEngine {
         );
 
         if hashes_match {
-            self.trie.commit().unwrap();
+            self.trie.commit(db).unwrap();
             let committed_root = self.trie.root_hash().unwrap();
 
-            self.trie.reload().unwrap();
+            self.trie.reload(db).unwrap();
             let reloaded_root = self.trie.root_hash().unwrap();
 
             error!(

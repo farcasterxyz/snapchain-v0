@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::core::error::HubError;
+    use crate::storage::db::RocksDB;
     use crate::storage::trie::merkle_trie::MerkleTrie;
     use hex;
     use rand::{seq::SliceRandom, thread_rng};
@@ -24,33 +25,39 @@ mod tests {
         let dir = TempDir::new()?;
         let db_path = dir.path().join("a.db");
         let mut t = MerkleTrie::new(db_path.to_str().unwrap())?;
-        t.initialize()?;
+        let db = &RocksDB::new(db_path.to_str().unwrap());
+        db.open().unwrap();
 
-        t.insert(vec![
-            vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            vec![2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        ])?;
+        t.initialize(db)?;
 
-        t.commit();
+        t.insert(
+            db,
+            vec![
+                vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                vec![2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            ],
+        )?;
+
+        t.commit(db);
 
         println!(
             "After commit: root_hash = {}, values = {:?}",
             hex::encode(t.root_hash()?),
-            t.get_all_values(&[])?
+            t.get_all_values(db, &[])?
         );
 
-        t.insert(vec![vec![3, 0, 0, 0, 0, 0, 0, 0, 0, 0]])?;
+        t.insert(db, vec![vec![3, 0, 0, 0, 0, 0, 0, 0, 0, 0]])?;
         println!(
             "After insert: root_hash = {}, values = {:?}",
             hex::encode(t.root_hash()?),
-            t.get_all_values(&[])?
+            t.get_all_values(db, &[])?
         );
 
-        t.reload()?;
+        t.reload(db)?;
         println!(
             "After reload: root_hash = {}, values = {:?}",
             hex::encode(t.root_hash()?),
-            t.get_all_values(&[])?
+            t.get_all_values(db, &[])?
         );
 
         Ok(())
@@ -70,9 +77,13 @@ mod tests {
 
         {
             let db_path = dir.path().join("t1.db");
+            let db = &RocksDB::new(db_path.to_str().unwrap());
+            db.open().unwrap();
+
             let mut t1 = MerkleTrie::new(db_path.to_str().unwrap())?;
-            t1.initialize()?;
-            t1.insert(hashes1.clone())?;
+
+            t1.initialize(db)?;
+            t1.insert(db, hashes1.clone())?;
             let items = t1.items()?;
             println!(
                 "t1: items = {:?}, root_hash = {}",
@@ -84,8 +95,10 @@ mod tests {
         {
             let db_path = dir.path().join("t2.db");
             let mut t2 = MerkleTrie::new(db_path.to_str().unwrap())?;
-            t2.initialize()?;
-            t2.insert(hashes1)?;
+            let db = &RocksDB::new(db_path.to_str().unwrap());
+            db.open().unwrap();
+            t2.initialize(db)?;
+            t2.insert(db, hashes1)?;
             let items = t2.items()?;
             println!(
                 "t2: items = {:?}, root_hash = {}",
