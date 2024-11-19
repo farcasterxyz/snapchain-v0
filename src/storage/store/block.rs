@@ -31,11 +31,9 @@ pub struct BlockPage {
     pub next_page_token: Option<Vec<u8>>,
 }
 
-fn make_block_key(shard_index: u32, block_number: u64) -> Vec<u8> {
+fn make_block_key(block_number: u64) -> Vec<u8> {
     // Store the prefix in the first byte so there's no overlap across different stores
     let mut key = vec![RootPrefix::Block as u8];
-    // Store the shard index in the next 4 bytes
-    key.extend_from_slice(&shard_index.to_be_bytes());
     // Store the block number in the next 8 bytes
     key.extend_from_slice(&block_number.to_be_bytes());
 
@@ -51,17 +49,35 @@ fn get_block_page_by_prefix(
     let mut blocks = Vec::new();
     let mut last_key = vec![];
 
-    db.for_each_iterator_by_prefix_paged(start_prefix, stop_prefix, page_options, |key, value| {
-        let block = Block::decode(value).map_err(|e| HubError::from(e))?;
-        blocks.push(block);
+    let start_prefix = match start_prefix {
+        None => make_block_key(0),
+        Some(key) => key,
+    };
 
-        if blocks.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
-            last_key = key.to_vec();
-            return Ok(true); // Stop iterating
+    let stop_prefix = match stop_prefix {
+        None => {
+            // Covers everything up to the end of the shard keys
+            vec![RootPrefix::Block as u8 + 1]
         }
+        Some(key) => key,
+    };
 
-        Ok(false) // Continue iterating
-    })
+    db.for_each_iterator_by_prefix_paged(
+        Some(start_prefix),
+        Some(stop_prefix),
+        page_options,
+        |key, value| {
+            let block = Block::decode(value).map_err(|e| HubError::from(e))?;
+            blocks.push(block);
+
+            if blocks.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
+                last_key = key.to_vec();
+                return Ok(true); // Stop iterating
+            }
+
+            Ok(false) // Continue iterating
+        },
+    )
     .map_err(|e| BlockStorageError::TooManyBlocksInResult)?; // TODO: Return the right error
 
     let next_page_token = if last_key.len() > 0 {
@@ -76,11 +92,8 @@ fn get_block_page_by_prefix(
     })
 }
 
-pub fn get_current_height(
-    db: &RocksDB,
-    shard_index: u32,
-) -> Result<Option<u64>, BlockStorageError> {
-    let start_block_key = make_block_key(shard_index, 0);
+pub fn get_last_block(db: &RocksDB) -> Result<Option<Block>, BlockStorageError> {
+    let start_block_key = make_block_key(0);
     let block_page = get_block_page_by_prefix(
         db,
         &PageOptions {
@@ -96,7 +109,12 @@ pub fn get_current_height(
         return Err(BlockStorageError::TooManyBlocksInResult);
     }
 
-    match block_page.blocks.get(0).cloned() {
+    Ok(block_page.blocks.get(0).cloned())
+}
+
+pub fn get_current_height(db: &RocksDB) -> Result<Option<u64>, BlockStorageError> {
+    let last_block = get_last_block(db)?;
+    match last_block {
         None => Ok(None),
         Some(block) => match block.header {
             None => Ok(None),
@@ -111,13 +129,11 @@ pub fn get_current_height(
 pub fn get_blocks_in_range(
     db: &RocksDB,
     page_options: &PageOptions,
-    shard_index: u32,
     start_block_number: u64,
     stop_block_number: Option<u64>,
 ) -> Result<BlockPage, BlockStorageError> {
-    let start_primary_key = make_block_key(shard_index, start_block_number);
-    let stop_prefix =
-        stop_block_number.map(|block_number| make_block_key(shard_index, block_number));
+    let start_primary_key = make_block_key(start_block_number);
+    let stop_prefix = stop_block_number.map(|block_number| make_block_key(block_number));
 
     get_block_page_by_prefix(db, page_options, Some(start_primary_key), stop_prefix)
 }
@@ -133,7 +149,7 @@ pub fn put_block(db: &RocksDB, block: Block) -> Result<(), BlockStorageError> {
         .height
         .as_ref()
         .ok_or(BlockStorageError::BlockMissingHeight)?;
-    let primary_key = make_block_key(height.shard_index, height.block_number);
+    let primary_key = make_block_key(height.block_number);
     txn.put(primary_key, block.encode_to_vec());
     db.commit(txn)?;
     Ok(())
@@ -141,7 +157,7 @@ pub fn put_block(db: &RocksDB, block: Block) -> Result<(), BlockStorageError> {
 
 #[derive(Default, Clone)]
 pub struct BlockStore {
-    db: Arc<RocksDB>,
+    pub db: Arc<RocksDB>,
 }
 
 impl BlockStore {
@@ -153,8 +169,12 @@ impl BlockStore {
         put_block(&self.db, block)
     }
 
-    pub fn max_block_number(&self, shard_index: u32) -> Result<u64, BlockStorageError> {
-        let current_height = get_current_height(&self.db, shard_index)?;
+    pub fn get_last_block(&self) -> Result<Option<Block>, BlockStorageError> {
+        get_last_block(&self.db)
+    }
+
+    pub fn max_block_number(&self) -> Result<u64, BlockStorageError> {
+        let current_height = get_current_height(&self.db)?;
         match current_height {
             None => Ok(0),
             Some(height) => Ok(height),
@@ -165,7 +185,6 @@ impl BlockStore {
         &self,
         start_block_number: u64,
         stop_block_number: Option<u64>,
-        shard_index: u32,
     ) -> Result<Vec<Block>, BlockStorageError> {
         let mut blocks = vec![];
         let mut next_page_token = None;
@@ -177,7 +196,6 @@ impl BlockStore {
                     page_token: next_page_token,
                     reverse: false,
                 },
-                shard_index,
                 start_block_number,
                 stop_block_number,
             )?;

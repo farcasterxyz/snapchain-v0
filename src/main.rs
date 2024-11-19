@@ -1,6 +1,7 @@
 use malachite_metrics::{Metrics, SharedRegistry};
 use snapchain::proto::snapchain::Block;
 use snapchain::storage::store::BlockStore;
+use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -118,19 +119,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Use the new non-global metrics registry when we upgrade to newer version of malachite
     let _ = Metrics::register(registry);
 
-    let (block_tx, mut block_rx) = mpsc::channel::<Block>(100);
-
-    let write_block_store = block_store.clone();
-    tokio::spawn(async move {
-        while let Some(block) = block_rx.recv().await {
-            match write_block_store.put_block(block) {
-                Err(err) => {
-                    error!("Unable to put block in db {:#?}", err)
-                }
-                Ok(()) => {}
-            }
-        }
-    });
+    let (block_tx, _block_rx) = mpsc::channel::<Block>(100);
 
     let node = SnapchainNode::create(
         keypair.clone(),
@@ -146,10 +135,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //TODO: don't assume shard
     //TODO: remove/redo unwrap
     let messages_tx = node.messages_tx_by_shard.get(&1u32).unwrap().clone();
+    let rpc_shard_stores = node.shard_stores.clone();
 
     let rpc_block_store = block_store.clone();
     tokio::spawn(async move {
-        let service = MySnapchainService::new(rpc_block_store, messages_tx);
+        let service = MySnapchainService::new(rpc_block_store, rpc_shard_stores, messages_tx);
 
         let resp = Server::builder()
             .add_service(SnapchainServiceServer::new(service))
@@ -189,7 +179,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if tick_count % 5 == 0 {
                     let nonce = tick_count as u64;
                     for i in 0..=app_config.consensus.num_shards() {
-                        let current_height = block_store.max_block_number(i).unwrap_or_else(|_| 0);
+                        let current_height =
+                        if i == 0 {
+                            block_store.max_block_number().unwrap_or_else(|_| 0)
+                        } else {
+                            let shard_store = node.shard_stores.get(&i);
+                            match shard_store {
+                                None => 0,
+                                Some(shard_store) => shard_store.max_block_number().unwrap_or_else(|_| 0)
+                            }
+                        };
 
                         let register_validator = proto::RegisterValidator {
                             validator: Some(proto::Validator {

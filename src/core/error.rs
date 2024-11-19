@@ -1,7 +1,8 @@
 use crate::storage::db;
+use std::error::Error;
 use std::fmt::Display;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct HubError {
     pub code: String,
     pub message: String,
@@ -35,7 +36,16 @@ impl HubError {
             message: error_message.to_string(),
         }
     }
+
+    pub fn invalid_internal_state(error_message: &str) -> HubError {
+        HubError {
+            code: "invalid_internal_state".to_string(),
+            message: error_message.to_string(),
+        }
+    }
 }
+
+impl Error for HubError {}
 
 impl Display for HubError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -203,6 +203,16 @@ impl ShardEngine {
             Err(_) => Height::new(self.shard_id, 0),
         }
     }
+
+    pub fn get_last_shard_chunk(&self) -> Option<ShardChunk> {
+        match self.shard_store.get_last_shard_chunk() {
+            Ok(shard_chunk) => shard_chunk,
+            Err(err) => {
+                error!("Unable to obtain last shard chunk {:#?}", err);
+                None
+            }
+        }
+    }
 }
 
 pub struct BlockEngine {
@@ -221,10 +231,19 @@ impl BlockEngine {
         }
     }
 
+    pub fn get_last_block(&self) -> Option<Block> {
+        match self.block_store.get_last_block() {
+            Ok(block) => block,
+            Err(err) => {
+                error!("Unable to obtain last block {:#?}", err);
+                None
+            }
+        }
+    }
+
     pub fn get_confirmed_height(&self) -> Height {
         let shard_index = 0;
-        // TODO(aditi): There's no reason we need to provide a shard id here anymore
-        match self.block_store.max_block_number(shard_index) {
+        match self.block_store.max_block_number() {
             Ok(block_num) => Height::new(shard_index, block_num),
             Err(_) => Height::new(shard_index, 0),
         }

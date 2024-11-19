@@ -7,7 +7,7 @@ use crate::core::types::{
 };
 use crate::network::gossip::GossipEvent;
 use crate::proto::message;
-use crate::proto::snapchain::Block;
+use crate::proto::snapchain::{Block, ShardChunk};
 use crate::storage::db::RocksDB;
 use crate::storage::store::engine::{BlockEngine, ShardEngine};
 use crate::storage::store::shard::ShardStore;
@@ -18,13 +18,14 @@ use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::{BTreeMap, HashMap};
 use tokio::sync::mpsc;
-use tracing::warn;
+use tracing::{error, warn};
 
 const MAX_SHARDS: u32 = 3;
 
 pub struct SnapchainNode {
     pub consensus_actors: BTreeMap<u32, ActorRef<ConsensusMsg<SnapchainValidatorContext>>>,
     pub messages_tx_by_shard: HashMap<u32, mpsc::Sender<message::Message>>,
+    pub shard_stores: HashMap<u32, ShardStore>,
     pub address: Address,
 }
 
@@ -42,9 +43,11 @@ impl SnapchainNode {
 
         let mut consensus_actors = BTreeMap::new();
 
-        let (shard_decision_tx, shard_decision_rx) = mpsc::channel::<Decision>(100);
+        let (shard_decision_tx, shard_decision_rx) = mpsc::channel::<ShardChunk>(100);
 
         let mut shard_messages: HashMap<u32, mpsc::Sender<message::Message>> = HashMap::new();
+
+        let mut shard_stores: HashMap<u32, ShardStore> = HashMap::new();
 
         // Create the shard validators
         for shard_id in config.shard_ids() {
@@ -54,7 +57,7 @@ impl SnapchainNode {
                 panic!("Shard ID must be between 1 and 3");
             }
 
-            let current_height = match block_store.max_block_number(shard_id) {
+            let current_height = match block_store.max_block_number() {
                 Err(_) => 0,
                 Ok(height) => height,
             };
@@ -76,6 +79,7 @@ impl SnapchainNode {
             let db = RocksDB::new(format!("{}/shard{}", rocksdb_dir, shard_id).as_str());
             db.open().unwrap();
             let shard_store = ShardStore::new(db);
+            shard_stores.insert(shard_id, shard_store.clone());
             let engine = ShardEngine::new(shard_id, shard_store);
 
             let messages_tx = engine.messages_tx();
@@ -84,7 +88,7 @@ impl SnapchainNode {
                 validator_address.clone(),
                 shard.clone(),
                 engine,
-                Some(shard_decision_tx.clone()),
+                shard_decision_tx.clone(),
                 config.propose_value_delay,
             );
 
@@ -114,7 +118,7 @@ impl SnapchainNode {
         // Now create the block validator
         let block_shard = SnapchainShard::new(0);
 
-        let current_height = match block_store.max_block_number(0) {
+        let current_height = match block_store.max_block_number() {
             Err(_) => 0,
             Ok(height) => height,
         };
@@ -168,6 +172,7 @@ impl SnapchainNode {
             consensus_actors,
             messages_tx_by_shard: shard_messages,
             address: validator_address,
+            shard_stores,
         }
     }
 
