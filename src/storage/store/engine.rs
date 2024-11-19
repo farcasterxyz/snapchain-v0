@@ -3,7 +3,6 @@ use crate::proto::snapchain::{Block, ShardChunk};
 use crate::proto::{message, snapchain};
 use crate::storage::store::BlockStore;
 use crate::storage::trie::merkle_trie;
-use crate::storage::trie::trie_node::TrieNode;
 use std::iter;
 use tokio::sync::mpsc;
 use tracing::{error, warn};

@@ -143,8 +143,7 @@ pub fn put_shard_chunk(db: &RocksDB, shard_chunk: ShardChunk) -> Result<(), Shar
         .as_ref()
         .ok_or(ShardStorageError::ShardMissingHeight)?;
     let primary_key = make_shard_key(height.block_number);
-    let data = shard_chunk.encode_to_vec();
-    db.put(&primary_key, data.as_slice())?;
+    db.put(&primary_key, shard_chunk.encode_to_vec().as_slice())?;
     Ok(())
 }
 
