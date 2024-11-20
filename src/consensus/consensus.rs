@@ -325,10 +325,12 @@ impl Consensus {
                 // let total_peers = state.consensus.driver.validator_set().count() - 1;
 
                 // println!("Connected to {connected_peers}/{total_peers} peers");
-                state
-                    .shard_validator
-                    .sync_against_validator(&validator)
-                    .await;
+                if validator.current_height > state.shard_validator.get_current_height() {
+                    state
+                        .shard_validator
+                        .sync_against_validator(&validator)
+                        .await;
+                }
 
                 self.metrics.connected_peers.inc();
 
@@ -363,26 +365,25 @@ impl Consensus {
                     panic!("Node is too far behind to join consensus. Try restarting. Current block number {}. Expected block number {}", current_height, height.block_number )
                 }
 
-                // TODO(aditi): Remove, for debugging
-                error!(
-                    "Received full proposal proposal height {}, current height {}",
-                    height.block_number, current_height
-                );
-                if state.shard_validator.first_proposal && height.block_number > current_height + 1
+                if state.shard_validator.first_proposal
+                    && (height.block_number > current_height + 1)
                 {
-                    // TODO(aditi): Remove, for debugging
-                    error!("Need to sync");
                     let validator_set = state.shard_validator.get_validator_set();
                     match validator_set.get_by_address(&full_proposal.proposer_address()) {
                         None => {
-                            // TODO(aditi): Fix message
-                            error!("Missing validator");
+                            error!("Missing validator {}", full_proposal.proposer_address());
                         }
                         Some(validator) => {
                             state
                                 .shard_validator
                                 .sync_against_validator(&validator)
                                 .await
+                        }
+                    };
+                    match self.start_height(&myself, state, height).await {
+                        Ok(()) => {}
+                        Err(err) => {
+                            error!("Error starting consensus at height {}. {}", height, err);
                         }
                     }
                 }

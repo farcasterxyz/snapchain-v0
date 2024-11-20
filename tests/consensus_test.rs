@@ -212,9 +212,17 @@ impl TestNetwork {
         Self { nodes }
     }
 
+    pub fn add_node(&mut self, new_node: NodeForTest) {
+        for node in self.nodes.iter() {
+            new_node.register_keypair(node.keypair.clone(), node.grpc_addr.clone());
+            node.register_keypair(new_node.keypair.clone(), new_node.grpc_addr.clone());
+        }
+        self.nodes.push(new_node)
+    }
+
     pub async fn produce_blocks(&mut self, num_blocks: u64) {
         for node in self.nodes.iter_mut() {
-            node.start_height(1);
+            node.start_height(node.num_blocks().await as u64 + 1);
         }
 
         let timeout = tokio::time::Duration::from_secs(5);
@@ -406,6 +414,7 @@ async fn test_basic_sync() {
         "Node 4 should have confirmed shard chunks"
     );
 }
+
 async fn wait_for_blocks(new_node: &NodeForTest, old_node: &NodeForTest) {
     let timeout = tokio::time::Duration::from_secs(5);
     let start = tokio::time::Instant::now();
@@ -472,7 +481,12 @@ async fn test_sync_on_proposal() {
 
     wait_for_blocks(&node4, &network.nodes[0]).await;
 
+    // This is a block that shows up in between initial sync and the first proposal node 4 sees.
     network.produce_blocks(1).await;
 
-    wait_for_blocks(&node4, &network.nodes[0]).await;
+    network.add_node(node4);
+
+    network.produce_blocks(1).await;
+
+    wait_for_blocks(&network.nodes[3], &network.nodes[0]).await;
 }
