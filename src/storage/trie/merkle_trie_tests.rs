@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
+    use crate::storage::trie::errors::TrieError;
     use crate::storage::trie::merkle_trie::MerkleTrie;
 
     #[test]
@@ -19,6 +20,14 @@ mod tests {
 
         let mut trie = MerkleTrie::new();
         trie.initialize(db, &mut txn_batch).unwrap();
+
+        let result = trie.insert(db, &mut txn_batch, vec![vec![1, 2, 3, 4, 5, 6, 7, 8, 9]]);
+        assert!(result.is_err());
+        if let Err(TrieError::KeyLengthTooShort) = result {
+            //ok
+        } else {
+            panic!("Unexpected error type");
+        }
 
         let key1: Vec<_> = "0000482712".bytes().collect();
         println!("{:?}", key1);

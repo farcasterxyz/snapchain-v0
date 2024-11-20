@@ -45,10 +45,10 @@ mod tests {
         let key = (0..9).collect::<Vec<_>>();
         let r = node.insert(&db, &mut txn, vec![key], 0);
         assert_eq!(r.is_err(), true);
-
-        match r.unwrap_err() {
-            TrieError::KeyLengthExceeded => {} //TODO: this looks incorrect, double check
-            _ => panic!("Unexpected error type"),
+        if let Err(TrieError::KeyLengthExceeded) = r {
+            // ok
+        } else {
+            panic!("Unexpected error type");
         }
 
         assert_eq!(node.items(), 0);

@@ -464,7 +464,7 @@ impl TrieNode {
         }
     }
 
-    pub fn update_hash(&mut self, db: &RocksDB, prefix: &[u8]) -> Result<(), TrieError> {
+    fn update_hash(&mut self, db: &RocksDB, prefix: &[u8]) -> Result<(), TrieError> {
         if self.is_leaf() {
             self.hash = blake3_20(&self.key.as_ref().unwrap_or(&vec![]));
         } else {
