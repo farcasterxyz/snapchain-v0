@@ -30,7 +30,7 @@ async fn main() {
     let base_gossip_port = 50050;
     for i in 1..=nodes {
         let id = i;
-        let db_dir = format!("nodes/{id}/.rocks");
+        let db_dir = format!(".rocks");
 
         if !std::path::Path::new(format!("nodes/{id}").as_str()).exists() {
             std::fs::create_dir(format!("nodes/{id}")).expect("Failed to create node directory");

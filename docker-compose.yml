@@ -14,8 +14,10 @@ services:
       - "50051:50051/udp"
       - "3383:3383/tcp"
     networks:
-      snapchain_subnet:
+      snapchain-subnet:
         ipv4_address: 172.100.0.11
+    volumes:
+      - node1-data:/app/.rocks
   node2:
     <<: *common
     command: ["./snapchain", "--config-path", "./nodes/2/snapchain.toml"]
@@ -23,8 +25,10 @@ services:
       - "50052:50052/udp"
       - "3384:3384/tcp"
     networks:
-      snapchain_subnet:
+      snapchain-subnet:
         ipv4_address: 172.100.0.12
+    volumes:
+      - node2-data:/app/.rocks
   node3:
     <<: *common
     command: ["./snapchain", "--config-path", "./nodes/3/snapchain.toml"]
@@ -32,20 +36,27 @@ services:
       - "50053:50053/udp"
       - "3385:3385/tcp"
     networks:
-      snapchain_subnet:
+      snapchain-subnet:
         ipv4_address: 172.100.0.13
+    volumes:
+      - node3-data:/app/.rocks
   node4:
     <<: *common
     command: ["./snapchain", "--config-path", "./nodes/4/snapchain.toml"]
     ports:
       - "50054:50054/udp"
       - "3386:3386/tcp"
-    networks:
-      snapchain_subnet:
-        ipv4_address: 172.100.0.14
+    volumes:
+      - node4-data:/app/.rocks
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
+  node4-data:
 
 networks:
-  snapchain_subnet:
+  snapchain-subnet:
     driver: bridge
     ipam:
       config:
