@@ -2,15 +2,17 @@ use super::{
     super::super::util::{bytes_compare, vec_to_u8_24},
     delete_message_transaction, get_message, get_messages_page_by_prefix, is_message_in_time_range,
     make_message_primary_key, make_ts_hash, message_decode, message_encode,
-    put_message_transaction, MessagesPage, TS_HASH_LENGTH,
+    put_message_transaction, MessagesPage, StoreEventHandler, TS_HASH_LENGTH,
 };
 use crate::core::error::HubError;
+use crate::proto::hub_event::{hub_event, HubEvent, HubEventType, MergeMessageBody};
 use crate::storage::db::PageOptions;
 use crate::storage::util::increment_vec_u8;
 use crate::{
     proto::msg::{link_body::Target, message_data::Body, Message, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
+use prost::Message as _;
 use std::clone::Clone;
 use std::string::ToString;
 use std::sync::{Arc, Mutex};
@@ -244,27 +246,27 @@ pub trait StoreDef: Send + Sync {
     //     }
     // }
 
-    // fn merge_event_args(&self, message: &Message, merge_conflicts: Vec<Message>) -> HubEvent {
-    //     HubEvent {
-    //         r#type: HubEventType::MergeMessage as i32,
-    //         body: Some(hub_event::Body::MergeMessageBody(MergeMessageBody {
-    //             message: Some(message.clone()),
-    //             deleted_messages: match &message.data {
-    //                 Some(data) => {
-    //                     if data.r#type == self.compact_state_message_type() as i32 {
-    //                         // In the case of merging compact state, we omit the deleted messages as this would
-    //                         // result in an unbounded message size:
-    //                         Vec::<Message>::new()
-    //                     } else {
-    //                         merge_conflicts
-    //                     }
-    //                 }
-    //                 None => Vec::<Message>::new(),
-    //             },
-    //         })),
-    //         id: 0,
-    //     }
-    // }
+    fn merge_event_args(&self, message: &Message, merge_conflicts: Vec<Message>) -> HubEvent {
+        HubEvent {
+            r#type: HubEventType::MergeMessage as i32,
+            body: Some(hub_event::Body::MergeMessageBody(MergeMessageBody {
+                message: Some(message.clone()),
+                deleted_messages: match &message.data {
+                    Some(data) => {
+                        if data.r#type == self.compact_state_message_type() as i32 {
+                            // In the case of merging compact state, we omit the deleted messages as this would
+                            // result in an unbounded message size:
+                            Vec::<Message>::new()
+                        } else {
+                            merge_conflicts
+                        }
+                    }
+                    None => Vec::<Message>::new(),
+                },
+            })),
+            id: 0,
+        }
+    }
 
     // fn prune_event_args(&self, message: &Message) -> HubEvent {
     //     HubEvent {
@@ -281,7 +283,7 @@ pub trait StoreDef: Send + Sync {
 
 pub struct Store {
     store_def: Box<dyn StoreDef>,
-    // store_event_handler: Arc<StoreEventHandler>,
+    store_event_handler: Arc<StoreEventHandler>,
     fid_locks: Arc<[Mutex<()>; 4]>,
     db: Arc<RocksDB>,
 }
@@ -289,12 +291,12 @@ pub struct Store {
 impl Store {
     pub fn new_with_store_def(
         db: Arc<RocksDB>,
-        // store_event_handler: Arc<StoreEventHandler>,
+        store_event_handler: Arc<StoreEventHandler>,
         store_def: Box<dyn StoreDef>,
     ) -> Store {
         Store {
             store_def,
-            // store_event_handler,
+            store_event_handler,
             fid_locks: Arc::new([
                 Mutex::new(()),
                 Mutex::new(()),
@@ -313,9 +315,9 @@ impl Store {
         self.db.clone()
     }
 
-    // pub fn event_handler(&self) -> Arc<StoreEventHandler> {
-    //     self.store_event_handler.clone()
-    // }
+    pub fn event_handler(&self) -> Arc<StoreEventHandler> {
+        self.store_event_handler.clone()
+    }
 
     pub fn postfix(&self) -> u8 {
         self.store_def.postfix()
@@ -556,7 +558,7 @@ impl Store {
         &self,
         message: &Message,
         txn: &mut RocksDbTransactionBatch,
-    ) -> Result<Vec<u8>, HubError> {
+    ) -> Result<HubEvent, HubError> {
         // Grab a merge lock. The typescript code does this by individual fid, but we don't have a
         // good way of doing that efficiently here. We'll just use an array of locks, with each fid
         // deterministically mapped to a lock.
@@ -655,7 +657,7 @@ impl Store {
         &self,
         message: &Message,
         txn: &mut RocksDbTransactionBatch,
-    ) -> Result<Vec<u8>, HubError> {
+    ) -> Result<HubEvent, HubError> {
         let mut merge_conflicts = vec![];
 
         // First, find if there's an existing compact state message, and if there is,
@@ -731,18 +733,15 @@ impl Store {
         self.put_add_compact_state_transaction(txn, message)?;
 
         // Event Handler
-        // let mut hub_event = self.store_def.merge_event_args(message, merge_conflicts);
+        let mut hub_event = self.store_def.merge_event_args(message, merge_conflicts);
 
-        // let id = self
-        //     .store_event_handler
-        //     .commit_transaction(&mut txn, &mut hub_event)?;
+        let id = self
+            .store_event_handler
+            .commit_transaction(txn, &mut hub_event)?;
 
-        // hub_event.id = id;
-        // Serialize the hub_event
-        // let hub_event_bytes = hub_event.encode_to_vec();
+        hub_event.id = id;
 
-        // Ok(hub_event_bytes)
-        Ok(vec![]) // TODO: Use actual event
+        Ok(hub_event)
     }
 
     pub fn merge_add(
@@ -750,7 +749,7 @@ impl Store {
         ts_hash: &[u8; TS_HASH_LENGTH],
         message: &Message,
         txn: &mut RocksDbTransactionBatch,
-    ) -> Result<Vec<u8>, HubError> {
+    ) -> Result<HubEvent, HubError> {
         // If the store supports compact state messages, we don't merge messages that don't exist in the compact state
         if self.store_def.compact_state_type_supported() {
             // Get the compact state message
@@ -792,18 +791,15 @@ impl Store {
         self.put_add_transaction(txn, &ts_hash, message)?;
 
         // Event handler
-        // let mut hub_event = self.store_def.merge_event_args(message, merge_conflicts);
+        let mut hub_event = self.store_def.merge_event_args(message, merge_conflicts);
 
-        // let id = self
-        //     .store_event_handler
-        //     .commit_transaction(&mut txn, &mut hub_event)?;
+        let id = self
+            .store_event_handler
+            .commit_transaction(txn, &mut hub_event)?;
 
-        // hub_event.id = id;
-        // Serialize the hub_event
-        // let hub_event_bytes = hub_event.encode_to_vec();
+        hub_event.id = id;
 
-        // Ok(hub_event_bytes)
-        Ok(vec![]) // TODO: Use actual event
+        Ok(hub_event)
     }
 
     pub fn merge_remove(
@@ -811,7 +807,7 @@ impl Store {
         ts_hash: &[u8; TS_HASH_LENGTH],
         message: &Message,
         txn: &mut RocksDbTransactionBatch,
-    ) -> Result<Vec<u8>, HubError> {
+    ) -> Result<HubEvent, HubError> {
         // If the store supports compact state messages, we don't merge remove messages before its timestamp
         // If the store supports compact state messages, we don't merge messages that don't exist in the compact state
         if self.store_def.compact_state_type_supported() {
@@ -847,18 +843,15 @@ impl Store {
         self.put_remove_transaction(txn, ts_hash, message)?;
 
         // Event handler
-        // let mut hub_event = self.store_def.merge_event_args(message, merge_conflicts);
+        let mut hub_event = self.store_def.merge_event_args(message, merge_conflicts);
 
-        // let id = self
-        //     .store_event_handler
-        //     .commit_transaction(&mut txn, &mut hub_event)?;
+        let id = self
+            .store_event_handler
+            .commit_transaction(txn, &mut hub_event)?;
 
-        // hub_event.id = id;
-        // Serialize the hub_event
-        // let hub_event_bytes = hub_event.encode_to_vec();
+        hub_event.id = id;
 
-        // Ok(hub_event_bytes)
-        Ok(vec![]) // TODO: Use actual event
+        Ok(hub_event)
     }
 
     fn prune_messages(
