@@ -1,22 +1,42 @@
 use super::shard::ShardStore;
 use crate::core::error::HubError;
 use crate::core::types::{proto, Height};
-use crate::proto::snapchain::{Block, ShardChunk};
 use crate::proto::{message, snapchain};
+use crate::storage::db;
 use crate::storage::db::{PageOptions, RocksDbTransactionBatch};
 use crate::storage::store::account::{CastStore, MessagesPage, Store};
 use crate::storage::store::BlockStore;
 use crate::storage::trie::merkle_trie;
+use snapchain::{Block, ShardChunk, Transaction};
 use std::iter;
+use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::{error, warn};
+
+#[derive(Error, Debug)]
+enum EngineError {
+    #[error("unable to insert message into trie: {source}")]
+    TrieInsertError {
+        #[from]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    #[error("unable to merge cast message during commit: {0}")]
+    MergeCastMessageError(String),
+
+    #[error("unsupported message type: {0}")]
+    UnsupportedMessageType(String),
+
+    #[error("failed to compute trie root hash")]
+    RootHashComputationError,
+}
 
 // Shard state root and the transactions
 #[derive(Clone)]
 pub struct ShardStateChange {
     pub shard_id: u32,
     pub new_state_root: Vec<u8>,
-    pub transactions: Vec<proto::Transaction>,
+    pub transactions: Vec<Transaction>,
 }
 
 pub struct ShardEngine {
@@ -162,8 +182,70 @@ impl ShardEngine {
         // Return the state change
     }
 
+    fn replay_proposal(
+        trie: &mut merkle_trie::MerkleTrie,
+        db: &db::RocksDB,
+        txn_batch: &mut RocksDbTransactionBatch,
+        cast_store: &Store,
+        transactions: &[Transaction],
+        shard_root: &[u8],
+    ) -> Result<bool, EngineError> {
+        let mut merged_messages: Vec<message::Message> = vec![];
+
+        for snap_txn in transactions {
+            for msg in &snap_txn.user_messages {
+                if msg.is_type(message::MessageType::CastAdd) {
+                    match cast_store.merge(msg, txn_batch) {
+                        Ok(_) => {
+                            merged_messages.push(msg.clone());
+                            let res = trie.insert(db, txn_batch, vec![msg.hash.clone()]);
+                            if res.is_err() {
+                                error!(
+                                    "Unable to insert message into trie: {}",
+                                    res.err().unwrap()
+                                );
+                                panic!("Unable to insert message into trie");
+                            }
+                            warn!(
+                                hash = hex::encode(&msg.hash),
+                                num_messages = merged_messages.len(),
+                                "propose - merged_message"
+                            );
+                        }
+                        Err(err) => {
+                            error!("Unable to merge cast message during commit: {}", err);
+                            // If we're unable to merge during a commmit, it's going to cause a consensus halt. This state change should've been validated before.
+                            panic!("Unable to merge cast message during commit");
+                        }
+                    }
+                } else {
+                    error!(msg_type = msg.msg_type(), "Unsupported message type");
+                }
+            }
+        }
+
+        let root1 = trie.root_hash().unwrap();
+
+        Ok(&root1 == shard_root)
+    }
+
     pub fn validate_state_change(&mut self, shard_state_change: &ShardStateChange) -> bool {
-        // TODO: actually validate
+        let mut txn = RocksDbTransactionBatch::new();
+
+        let transactions = &shard_state_change.transactions;
+        let shard_root = &shard_state_change.new_state_root;
+
+        let hashes_match = {
+            let db = &*self.shard_store.db;
+            Self::replay_proposal(
+                &mut self.trie,
+                db,
+                &mut txn,
+                &self.cast_store,
+                transactions,
+                shard_root,
+            )
+        };
 
         // Create a db transaction
         // Replay the state change

@@ -128,8 +128,6 @@ mod tests {
     }
 
     #[test]
-    // #[should_panic(expected = "abc123")]
-    // which mismatched hash?
     fn test_engine_commit_no_messages_happy_path() {
         let (mut engine, _tmpdir) = new_engine();
         let state_change = engine.propose_state_change(1);
@@ -171,7 +169,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_send_messages_one_by_one() {
-        // enable_logging();
+        enable_logging();
         let (msg1, msg2) = entities();
         let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
