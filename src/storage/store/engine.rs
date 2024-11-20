@@ -273,6 +273,7 @@ impl ShardEngine {
         }
 
         db.commit(txn).unwrap();
+        self.trie.reload(&*self.shard_store.db).unwrap();
 
         match self.shard_store.put_shard_chunk(shard_chunk) {
             Err(err) => {
