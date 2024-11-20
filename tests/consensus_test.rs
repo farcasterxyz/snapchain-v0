@@ -452,7 +452,7 @@ async fn test_sync_on_proposal() {
 
     let num_shards = 1;
 
-    let mut network = TestNetwork::create(3, num_shards, 3200).await;
+    let mut network = TestNetwork::create(3, num_shards, 3220).await;
 
     network.produce_blocks(3).await;
 
@@ -464,8 +464,8 @@ async fn test_sync_on_proposal() {
         );
     }
 
-    let node4 = NodeForTest::create(keypair4.clone(), num_shards, 3207).await;
-    node4.register_keypair(keypair4.clone(), format!("0.0.0.0:{}", 3207));
+    let node4 = NodeForTest::create(keypair4.clone(), num_shards, 3227).await;
+    node4.register_keypair(keypair4.clone(), format!("0.0.0.0:{}", 3227));
     node4.cast(ConsensusMsg::RegisterValidator(SnapchainValidator::new(
         SnapchainShard::new(0),
         network.nodes[0].keypair.public().clone(),
