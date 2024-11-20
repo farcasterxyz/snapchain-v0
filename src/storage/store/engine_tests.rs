@@ -121,11 +121,24 @@ mod tests {
     #[should_panic(expected = "State change commit failed: merkle trie root hash mismatch")]
     fn test_engine_commit_with_mismatched_hash() {
         let (mut engine, _tmpdir) = new_engine();
-        let state_change = engine.propose_state_change(1);
+        let mut state_change = engine.propose_state_change(1);
+        let invalid_hash = from_hex("ffffffffffffffffffffffffffffffffffffffff");
+
+        {
+            let valid = engine.validate_state_change(&state_change);
+            assert!(valid);
+        }
+
+        {
+            state_change.new_state_root = invalid_hash.clone();
+            let valid = engine.validate_state_change(&state_change);
+            assert!(!valid);
+        }
 
         let mut chunk = default_shard_chunk();
-        chunk.header.as_mut().unwrap().shard_root =
-            from_hex("ffffffffffffffffffffffffffffffffffffffff");
+
+        chunk.header.as_mut().unwrap().shard_root = invalid_hash;
+
         engine.commit_shard_chunk(chunk);
     }
 
