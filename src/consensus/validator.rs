@@ -6,6 +6,7 @@ use crate::core::types::{
 use crate::proto::snapchain::FullProposal;
 use malachite_common::{Round, ValidatorSet};
 use malachite_consensus::ProposedValue;
+use std::collections::HashSet;
 use std::time::Duration;
 use tracing::error;
 
@@ -22,6 +23,7 @@ pub struct ShardValidator {
     block_proposer: Option<BlockProposer>,
     shard_proposer: Option<ShardProposer>,
     pub started: bool,
+    pub saw_proposal_from_validator: HashSet<Address>,
 }
 
 impl ShardValidator {
@@ -42,6 +44,7 @@ impl ShardValidator {
             block_proposer,
             shard_proposer,
             started: false,
+            saw_proposal_from_validator: HashSet::new(),
         }
     }
 
@@ -70,14 +73,18 @@ impl ShardValidator {
         self.started = true;
     }
 
-    pub async fn sync_with_new_validator(&mut self, validator: &SnapchainValidator) {
+    pub fn saw_proposal_from_validator(&self, address: Address) -> bool {
+        self.saw_proposal_from_validator.contains(&address)
+    }
+
+    pub async fn sync_against_validator(&mut self, validator: &SnapchainValidator) {
         if let Some(p) = &mut self.block_proposer {
-            match p.register_validator(&validator).await {
+            match p.sync_against_validator(&validator).await {
                 Ok(()) => {}
                 Err(err) => error!("Error registering validator {:#?}", err),
             };
         } else if let Some(p) = &mut self.shard_proposer {
-            match p.register_validator(&validator).await {
+            match p.sync_against_validator(&validator).await {
                 Ok(()) => {}
                 Err(err) => error!("Error registering validator {:#?}", err),
             }
@@ -119,6 +126,8 @@ impl ShardValidator {
             panic!("No proposer set");
         };
 
+        self.saw_proposal_from_validator
+            .insert(full_proposal.proposer_address());
         ProposedValue {
             height: full_proposal.height(),
             round: full_proposal.round(),

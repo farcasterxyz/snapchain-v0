@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use alloy::network;
 use hex;
 use libp2p::identity::ed25519::Keypair;
 use snapchain::network::server::MySnapchainService;
@@ -211,9 +212,17 @@ impl TestNetwork {
         Self { nodes }
     }
 
+    pub fn add_node(&mut self, new_node: NodeForTest) {
+        for node in self.nodes.iter() {
+            new_node.register_keypair(node.keypair.clone(), node.grpc_addr.clone());
+            node.register_keypair(new_node.keypair.clone(), new_node.grpc_addr.clone());
+        }
+        self.nodes.push(new_node)
+    }
+
     pub async fn produce_blocks(&mut self, num_blocks: u64) {
         for node in self.nodes.iter_mut() {
-            node.start_height(1);
+            node.start_height(node.num_blocks().await as u64 + 1);
         }
 
         let timeout = tokio::time::Duration::from_secs(5);
@@ -339,6 +348,30 @@ async fn test_basic_consensus() {
     }
 }
 
+async fn wait_for_blocks(new_node: &NodeForTest, old_node: &NodeForTest) {
+    let timeout = tokio::time::Duration::from_secs(5);
+    let start = tokio::time::Instant::now();
+    let mut timer = time::interval(tokio::time::Duration::from_millis(10));
+    loop {
+        let _ = timer.tick().await;
+        if new_node.num_blocks().await >= old_node.num_blocks().await {
+            break;
+        }
+        if start.elapsed() > timeout {
+            break;
+        }
+    }
+
+    assert!(
+        new_node.num_blocks().await >= old_node.num_blocks().await,
+        "Node 4 should have confirmed blocks"
+    );
+    assert!(
+        new_node.num_shard_chunks().await >= old_node.num_shard_chunks().await,
+        "Node 4 should have confirmed shard chunks"
+    );
+}
+
 #[tokio::test]
 async fn test_basic_sync() {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
@@ -352,12 +385,20 @@ async fn test_basic_sync() {
 
     let num_shards = 1;
 
-    let mut network = TestNetwork::create(3, num_shards, 3200).await;
+    let mut network = TestNetwork::create(3, num_shards, 3220).await;
 
     network.produce_blocks(3).await;
 
-    let node4 = NodeForTest::create(keypair4.clone(), num_shards, 3207).await;
-    node4.register_keypair(keypair4.clone(), format!("0.0.0.0:{}", 3207));
+    for i in 0..network.nodes.len() {
+        assert!(
+            network.nodes[i].num_blocks().await >= 3,
+            "Node {} should have confirmed blocks",
+            i
+        );
+    }
+
+    let node4 = NodeForTest::create(keypair4.clone(), num_shards, 3227).await;
+    node4.register_keypair(keypair4.clone(), format!("0.0.0.0:{}", 3227));
     node4.cast(ConsensusMsg::RegisterValidator(SnapchainValidator::new(
         SnapchainShard::new(0),
         network.nodes[0].keypair.public().clone(),
@@ -371,37 +412,13 @@ async fn test_basic_sync() {
         network.nodes[0].num_shard_chunks().await as u64,
     )));
 
-    let timeout = tokio::time::Duration::from_secs(5);
-    let start = tokio::time::Instant::now();
-    let mut timer = time::interval(tokio::time::Duration::from_millis(10));
-    loop {
-        let _ = timer.tick().await;
-        if node4.num_blocks().await >= network.nodes[0].num_blocks().await {
-            break;
-        }
-        if start.elapsed() > timeout {
-            break;
-        }
-    }
+    // Node 4 won't see these blocks directly.
+    network.produce_blocks(3).await;
 
-    assert!(
-        network.nodes[0].num_blocks().await >= 3,
-        "Node 1 should have confirmed blocks"
-    );
-    assert!(
-        network.nodes[1].num_blocks().await >= 3,
-        "Node 2 should have confirmed blocks"
-    );
-    assert!(
-        network.nodes[2].num_blocks().await >= 3,
-        "Node 3 should have confirmed blocks"
-    );
-    assert!(
-        node4.num_blocks().await >= network.nodes[0].num_blocks().await,
-        "Node 4 should have confirmed blocks"
-    );
-    assert!(
-        node4.num_shard_chunks().await >= network.nodes[0].num_shard_chunks().await,
-        "Node 4 should have confirmed shard chunks"
-    );
+    network.add_node(node4);
+
+    // Node 4 picks up the blocks it missed on the first proposals from each validator.
+    network.produce_blocks(1).await;
+
+    wait_for_blocks(&network.nodes[3], &network.nodes[0]).await;
 }

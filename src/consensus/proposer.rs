@@ -43,7 +43,7 @@ pub trait Proposer {
 
     fn get_confirmed_height(&self) -> Height;
 
-    async fn register_validator(
+    async fn sync_against_validator(
         &mut self,
         validator: &SnapchainValidator,
     ) -> Result<(), Box<dyn std::error::Error>>;
@@ -166,27 +166,25 @@ impl Proposer for ShardProposer {
         self.engine.get_confirmed_height()
     }
 
-    async fn register_validator(
+    async fn sync_against_validator(
         &mut self,
         validator: &SnapchainValidator,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let prev_block_number = self.engine.get_confirmed_height().block_number;
 
-        if validator.current_height > prev_block_number {
-            match &validator.rpc_address {
-                None => return Ok(()),
-                Some(rpc_address) => {
-                    let destination_addr = format!("http://{}", rpc_address.clone());
-                    let mut rpc_client = SnapchainServiceClient::connect(destination_addr).await?;
-                    let request = Request::new(ShardChunksRequest {
-                        shard_id: self.shard_id.shard_id(),
-                        start_block_number: prev_block_number + 1,
-                        stop_block_number: None,
-                    });
-                    let missing_shard_chunks = rpc_client.get_shard_chunks(request).await?;
-                    for shard_chunk in missing_shard_chunks.get_ref().shard_chunks.clone() {
-                        self.engine.commit_shard_chunk(shard_chunk.clone());
-                    }
+        match &validator.rpc_address {
+            None => return Ok(()),
+            Some(rpc_address) => {
+                let destination_addr = format!("http://{}", rpc_address.clone());
+                let mut rpc_client = SnapchainServiceClient::connect(destination_addr).await?;
+                let request = Request::new(ShardChunksRequest {
+                    shard_id: self.shard_id.shard_id(),
+                    start_block_number: prev_block_number + 1,
+                    stop_block_number: None,
+                });
+                let missing_shard_chunks = rpc_client.get_shard_chunks(request).await?;
+                for shard_chunk in missing_shard_chunks.get_ref().shard_chunks.clone() {
+                    self.engine.commit_shard_chunk(shard_chunk.clone());
                 }
             }
         }
@@ -377,27 +375,25 @@ impl Proposer for BlockProposer {
         self.engine.get_confirmed_height()
     }
 
-    async fn register_validator(
+    async fn sync_against_validator(
         &mut self,
         validator: &SnapchainValidator,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let prev_block_number = self.engine.get_confirmed_height().block_number;
 
-        if validator.current_height > prev_block_number {
-            match &validator.rpc_address {
-                None => return Ok(()),
-                Some(rpc_address) => {
-                    let destination_addr = format!("http://{}", rpc_address.clone());
-                    let mut rpc_client = SnapchainServiceClient::connect(destination_addr).await?;
-                    let request = Request::new(BlocksRequest {
-                        shard_id: self.shard_id.shard_id(),
-                        start_block_number: prev_block_number + 1,
-                        stop_block_number: None,
-                    });
-                    let missing_blocks = rpc_client.get_blocks(request).await?;
-                    for block in missing_blocks.get_ref().blocks.clone() {
-                        self.engine.commit_block(block.clone());
-                    }
+        match &validator.rpc_address {
+            None => return Ok(()),
+            Some(rpc_address) => {
+                let destination_addr = format!("http://{}", rpc_address.clone());
+                let mut rpc_client = SnapchainServiceClient::connect(destination_addr).await?;
+                let request = Request::new(BlocksRequest {
+                    shard_id: self.shard_id.shard_id(),
+                    start_block_number: prev_block_number + 1,
+                    stop_block_number: None,
+                });
+                let missing_blocks = rpc_client.get_blocks(request).await?;
+                for block in missing_blocks.get_ref().blocks.clone() {
+                    self.engine.commit_block(block.clone());
                 }
             }
         }

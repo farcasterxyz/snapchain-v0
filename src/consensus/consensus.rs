@@ -14,7 +14,7 @@ use malachite_consensus::{Effect, ProposedValue, Resume, SignedConsensusMsg};
 use malachite_metrics::Metrics;
 
 use crate::consensus::timers::{TimeoutElapsed, TimerScheduler};
-use crate::consensus::validator::ShardValidator;
+use crate::consensus::validator::{self, ShardValidator};
 use crate::core::types::{
     Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator,
     SnapchainValidatorContext,
@@ -325,10 +325,6 @@ impl Consensus {
                 // let total_peers = state.consensus.driver.validator_set().count() - 1;
 
                 // println!("Connected to {connected_peers}/{total_peers} peers");
-                state
-                    .shard_validator
-                    .sync_with_new_validator(&validator)
-                    .await;
 
                 self.metrics.connected_peers.inc();
 
@@ -355,6 +351,35 @@ impl Consensus {
                     "Received proposed value: {:?} at {:?}",
                     height, self.params.address
                 );
+
+                let current_height = state.shard_validator.get_current_height();
+
+                // TODO(aditi): Add a check for the node being too far behind to start up via rpc sync once we have a way to pick up missed blocks in bulk
+                if !state
+                    .shard_validator
+                    .saw_proposal_from_validator(full_proposal.proposer_address())
+                    && (height.block_number > current_height + 1)
+                {
+                    let validator_set = state.shard_validator.get_validator_set();
+                    match validator_set.get_by_address(&full_proposal.proposer_address()) {
+                        None => {
+                            error!("Missing validator {}", full_proposal.proposer_address());
+                        }
+                        Some(validator) => {
+                            state
+                                .shard_validator
+                                .sync_against_validator(&validator)
+                                .await
+                        }
+                    };
+                    match self.start_height(&myself, state, height).await {
+                        Ok(()) => {}
+                        Err(err) => {
+                            error!("Error starting consensus at height {}. {}", height, err);
+                        }
+                    }
+                }
+
                 let proposed_value = state.shard_validator.add_proposed_value(full_proposal);
 
                 let result = self
