@@ -152,6 +152,9 @@ mod tests {
         engine.commit_shard_chunk(chunk);
 
         assert_eq!(expected_roots[0], to_hex(&engine.trie_root_hash()));
+
+        let valid = engine.validate_state_change(&state_change);
+        assert!(valid);
     }
 
     #[tokio::test]
@@ -168,6 +171,13 @@ mod tests {
         assert_eq!(1, state_change.transactions[0].user_messages.len());
 
         // propose does not write to the store
+        let casts_result = engine.get_casts_by_fid(msg1.fid());
+        assert_eq!(0, casts_result.unwrap().messages_bytes.len());
+
+        let valid = engine.validate_state_change(&state_change);
+        assert!(valid);
+
+        // validate does not write to the store
         let casts_result = engine.get_casts_by_fid(msg1.fid());
         assert_eq!(0, casts_result.unwrap().messages_bytes.len());
 
