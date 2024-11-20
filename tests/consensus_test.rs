@@ -7,7 +7,7 @@ use hex;
 use libp2p::identity::ed25519::Keypair;
 use snapchain::network::server::MySnapchainService;
 use snapchain::node::snapchain_node::SnapchainNode;
-use snapchain::proto::message;
+use snapchain::proto::msg as message;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::proto::snapchain::Block;
 use snapchain::storage::db::RocksDB;

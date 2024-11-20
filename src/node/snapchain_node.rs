@@ -6,7 +6,7 @@ use crate::core::types::{
     SnapchainValidatorSet,
 };
 use crate::network::gossip::GossipEvent;
-use crate::proto::message;
+use crate::proto::msg as message;
 use crate::proto::snapchain::{Block, ShardChunk};
 use crate::storage::db::RocksDB;
 use crate::storage::store::engine::{BlockEngine, ShardEngine};

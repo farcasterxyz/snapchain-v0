@@ -8,7 +8,7 @@ use crate::core::error::HubError;
 use crate::storage::db::PageOptions;
 use crate::storage::util::increment_vec_u8;
 use crate::{
-    proto::message::{link_body::Target, message_data::Body, Message, MessageType},
+    proto::msg::{link_body::Target, message_data::Body, Message, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
 use std::clone::Clone;

@@ -1,7 +1,7 @@
 use super::shard::ShardStore;
 use crate::core::error::HubError;
 use crate::core::types::{proto, Height};
-use crate::proto::{message, snapchain};
+use crate::proto::{msg as message, snapchain};
 use crate::storage::db;
 use crate::storage::db::{PageOptions, RocksDbTransactionBatch};
 use crate::storage::store::account::{CastStore, MessagesPage, Store};

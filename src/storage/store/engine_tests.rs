@@ -1,14 +1,12 @@
 #[cfg(test)]
 mod tests {
-    use crate::proto::message;
-    use crate::proto::message::Message;
+    use crate::proto::msg as message;
     use crate::proto::snapchain::{Height, ShardChunk, ShardHeader, Transaction};
     use crate::storage::db;
     use crate::storage::store::engine::{ShardEngine, ShardStateChange};
     use crate::storage::store::shard::ShardStore;
     use crate::utils::cli;
-    use ed25519_dalek::{SecretKey, SigningKey};
-    use hex::FromHex;
+    use message::Message;
     use prost::Message as _;
     use tempfile;
     use tracing_subscriber::EnvFilter;

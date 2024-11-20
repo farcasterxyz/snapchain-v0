@@ -1,7 +1,7 @@
-use crate::proto;
+use crate::proto::msg as message;
 
-impl proto::message::Message {
-    pub fn is_type(&self, message_type: proto::message::MessageType) -> bool {
+impl message::Message {
+    pub fn is_type(&self, message_type: message::MessageType) -> bool {
         self.data.is_some() && self.data.as_ref().unwrap().r#type == message_type as i32
     }
 
