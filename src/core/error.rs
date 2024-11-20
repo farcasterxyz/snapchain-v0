@@ -53,31 +53,11 @@ impl Display for HubError {
     }
 }
 
-/** Convert RocksDB errors  */
-impl From<rocksdb::Error> for HubError {
-    fn from(e: rocksdb::Error) -> HubError {
-        HubError {
-            code: "db.internal_error".to_string(),
-            message: e.to_string(),
-        }
-    }
-}
-
 // Convert RocksDB errors
 impl From<db::RocksdbError> for HubError {
     fn from(e: db::RocksdbError) -> HubError {
         HubError {
             code: "db.internal_error".to_string(),
-            message: e.to_string(),
-        }
-    }
-}
-
-/** Convert io::Result error type to HubError */
-impl From<std::io::Error> for HubError {
-    fn from(e: std::io::Error) -> HubError {
-        HubError {
-            code: "bad_request.io_error".to_string(),
             message: e.to_string(),
         }
     }
