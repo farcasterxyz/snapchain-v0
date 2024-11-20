@@ -159,7 +159,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_commit_with_single_message() {
-        enable_logging();
+        // enable_logging();
         let (msg1, _) = entities();
         let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
@@ -194,7 +194,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_send_messages_one_by_one() {
-        enable_logging();
+        // enable_logging();
         let (msg1, msg2) = entities();
         let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
