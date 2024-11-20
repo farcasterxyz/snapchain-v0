@@ -30,16 +30,18 @@ async fn main() {
     let base_gossip_port = 50050;
     for i in 1..=nodes {
         let id = i;
-        let db_dir = format!(".rocks");
+        let db_dir = ".rocks";
 
-        if !std::path::Path::new(format!("nodes/{id}").as_str()).exists() {
-            std::fs::create_dir(format!("nodes/{id}")).expect("Failed to create node directory");
+        let node_dir = format!("nodes/{id}");
+        if !std::path::Path::new(&node_dir).exists() {
+            std::fs::create_dir(&node_dir).expect("Failed to create node directory");
         } else {
-            if std::path::Path::new(db_dir.clone().as_str()).exists() {
-                std::fs::remove_dir_all(db_dir.clone()).expect("Failed to remove .rocks directory");
+            if std::path::Path::new(db_dir).exists() {
+                std::fs::remove_dir_all(db_dir).expect("Failed to remove .rocks directory");
             }
         }
-        let secret_key = hex::encode(SecretKey::generate());
+
+        let secret_key = hex::encode(SecretKey::generate().to_bytes());
         let rpc_port = base_rpc_port + i;
         let gossip_port = base_gossip_port + i;
         let host = format!("172.100.0.1{i}");
@@ -66,18 +68,18 @@ bootstrap_peers = "{other_nodes_addresses}"
 [consensus]
 private_key = "{secret_key}"
 propose_value_delay = "{propose_value_delay}"
-            "#
+            "#,
         );
 
         // clean up whitespace
         let config_file_content = config_file_content.trim().to_string() + "\n";
 
-        std::fs::write(
+        if let Err(e) = std::fs::write(
             format!("nodes/{id}/snapchain.toml", id = id),
             config_file_content,
-        )
-        .expect("Failed to write config file");
-        // Print a message
+        ) {
+            eprintln!("Failed to write config file for node {id}: {e}");
+        }
     }
     println!("Created configs for {nodes} nodes");
 }
