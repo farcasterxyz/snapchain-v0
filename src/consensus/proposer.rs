@@ -1,6 +1,4 @@
-use crate::core::types::{
-    proto, Address, Height, ShardHash, ShardId, SnapchainShard, SnapchainValidator,
-};
+use crate::core::types::{proto, Address, Height, ShardHash, SnapchainShard, SnapchainValidator};
 use crate::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 use crate::proto::rpc::{BlocksRequest, ShardChunksRequest};
 use crate::proto::snapchain::{Block, BlockHeader, FullProposal, ShardChunk, ShardHeader};
@@ -12,8 +10,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::mpsc;
-use tokio::time::Instant;
-use tokio::{select, time};
+use tokio::time::{Instant, interval};
 use tonic::Request;
 use tracing::{error, warn};
 
@@ -28,17 +25,15 @@ pub fn current_time() -> u64 {
 }
 
 pub trait Proposer {
-    // Create a new block/shard chunk for the given height that will be proposed for confirmation to the other validators
     async fn propose_value(
         &mut self,
         height: Height,
         round: Round,
         timeout: Duration,
     ) -> FullProposal;
-    // Receive a block/shard chunk proposed by another validator and return whether it is valid
+
     fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity;
 
-    // Consensus has confirmed the block/shard_chunk, apply it to the local state
     async fn decide(&mut self, height: Height, round: Round, value: ShardHash);
 
     fn get_confirmed_height(&self) -> Height;
@@ -77,7 +72,9 @@ impl ShardProposer {
     }
 
     async fn publish_new_shard_chunk(&self, shard_chunk: ShardChunk) {
-        &self.tx_decision.send(shard_chunk).await;
+        if let Err(err) = self.tx_decision.send(shard_chunk).await {
+            error!("Error publishing new shard chunk: {:?}", err);
+        }
     }
 }
 
@@ -88,15 +85,10 @@ impl Proposer for ShardProposer {
         round: Round,
         _timeout: Duration,
     ) -> FullProposal {
-        // Sleep before proposing the value so we don't produce blocks too fast
-        // TODO: rethink/reconsider
         tokio::time::sleep(self.propose_value_delay).await;
 
         let previous_chunk = self.engine.get_last_shard_chunk();
-        let parent_hash = match previous_chunk {
-            Some(chunk) => chunk.hash.clone(),
-            None => vec![0, 32],
-        };
+        let parent_hash = previous_chunk.map_or_else(|| vec![0, 32], |chunk| chunk.hash.clone());
 
         let state_change = self.engine.propose_state_change(self.shard_id.shard_id());
         let shard_header = ShardHeader {
@@ -105,9 +97,7 @@ impl Proposer for ShardProposer {
             height: Some(height.clone()),
             shard_root: state_change.new_state_root.clone(),
         };
-        let hash = blake3::hash(&shard_header.encode_to_vec())
-            .as_bytes()
-            .to_vec();
+        let hash = blake3::hash(&shard_header.encode_to_vec()).as_bytes().to_vec();
 
         let chunk = ShardChunk {
             header: Some(shard_header),
@@ -121,44 +111,44 @@ impl Proposer for ShardProposer {
             shard_index: height.shard_index as u32,
         };
         let proposal = FullProposal {
-            height: Some(height.clone()),
+            height: Some(height),
             round: round.as_i64(),
             proposed_value: Some(proto::full_proposal::ProposedValue::Shard(chunk)),
             proposer: self.address.to_vec(),
         };
+
         self.proposed_chunks.insert(shard_hash, proposal.clone());
         proposal
     }
 
     fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity {
-        if let Some(proto::full_proposal::ProposedValue::Shard(chunk)) =
-            full_proposal.proposed_value.clone()
-        {
-            self.proposed_chunks
-                .insert(full_proposal.shard_hash(), full_proposal.clone());
+        if let Some(proto::full_proposal::ProposedValue::Shard(chunk)) = &full_proposal.proposed_value {
+            self.proposed_chunks.insert(full_proposal.shard_hash(), full_proposal.clone());
+
             let state = ShardStateChange {
                 shard_id: chunk.header.clone().unwrap().height.unwrap().shard_index,
                 new_state_root: chunk.header.clone().unwrap().shard_root.clone(),
                 transactions: chunk.transactions.clone(),
             };
-            return if self.engine.validate_state_change(&state) {
+
+            if self.engine.validate_state_change(&state) {
                 Validity::Valid
             } else {
                 error!("Invalid state change for shard: {:?}", state.shard_id);
                 Validity::Invalid
-            };
+            }
+        } else {
+            error!("Invalid proposed value: {:?}", full_proposal.proposed_value);
+            Validity::Invalid
         }
-        error!("Invalid proposed value: {:?}", full_proposal.proposed_value);
-        Validity::Invalid // TODO: Validate proposer signature?
     }
 
     async fn decide(&mut self, _height: Height, _round: Round, value: ShardHash) {
-        if let Some(proposal) = self.proposed_chunks.get(&value) {
-            self.publish_new_shard_chunk(proposal.shard_chunk().unwrap())
-                .await;
-            self.engine
-                .commit_shard_chunk(proposal.shard_chunk().unwrap());
-            self.proposed_chunks.remove(&value);
+        if let Some(proposal) = self.proposed_chunks.remove(&value) {
+            if let Some(shard_chunk) = proposal.shard_chunk() {
+                self.publish_new_shard_chunk(shard_chunk).await;
+                self.engine.commit_shard_chunk(shard_chunk);
+            }
         }
     }
 
@@ -173,20 +163,18 @@ impl Proposer for ShardProposer {
         let prev_block_number = self.engine.get_confirmed_height().block_number;
 
         if validator.current_height > prev_block_number {
-            match &validator.rpc_address {
-                None => return Ok(()),
-                Some(rpc_address) => {
-                    let destination_addr = format!("http://{}", rpc_address.clone());
-                    let mut rpc_client = SnapchainServiceClient::connect(destination_addr).await?;
-                    let request = Request::new(ShardChunksRequest {
-                        shard_id: self.shard_id.shard_id(),
-                        start_block_number: prev_block_number + 1,
-                        stop_block_number: None,
-                    });
-                    let missing_shard_chunks = rpc_client.get_shard_chunks(request).await?;
-                    for shard_chunk in missing_shard_chunks.get_ref().shard_chunks.clone() {
-                        self.engine.commit_shard_chunk(shard_chunk.clone());
-                    }
+            if let Some(rpc_address) = &validator.rpc_address {
+                let destination_addr = format!("http://{}", rpc_address);
+                let mut rpc_client = SnapchainServiceClient::connect(destination_addr).await?;
+                let request = Request::new(ShardChunksRequest {
+                    shard_id: self.shard_id.shard_id(),
+                    start_block_number: prev_block_number + 1,
+                    stop_block_number: None,
+                });
+                let missing_shard_chunks = rpc_client.get_shard_chunks(request).await?;
+
+                for shard_chunk in missing_shard_chunks.get_ref().shard_chunks.clone() {
+                    self.engine.commit_shard_chunk(shard_chunk);
                 }
             }
         }
@@ -254,24 +242,16 @@ impl BlockProposer {
         timeout: Duration,
     ) -> Vec<ShardChunk> {
         let requested_height = height.block_number;
-
-        let mut poll_interval = time::interval(Duration::from_millis(10));
-
-        // convert to deadline
+        let mut poll_interval = interval(Duration::from_millis(10));
         let deadline = Instant::now() + timeout;
+
         loop {
             let timeout = time::sleep_until(deadline);
             select! {
                 _ = poll_interval.tick() => {
-                    // TODO(aditi): This breaks if syncd shard chunks show up in shard_decision_rx.
                     if let Ok(chunk) = self.shard_decision_rx.try_recv() {
-                        let chunk_height = chunk.header.clone().unwrap().height.unwrap();
-                        let chunk_block_number = chunk_height.block_number;
-                        if self.pending_chunks.contains_key(&chunk_block_number) {
-                            self.pending_chunks.get_mut(&chunk_block_number).unwrap().push(chunk);
-                        } else {
-                            self.pending_chunks.insert(chunk_block_number, vec![chunk]);
-                        }
+                        let chunk_height = chunk.header.clone().unwrap().height.unwrap().block_number;
+                        self.pending_chunks.entry(chunk_height).or_insert_with(Vec::new).push(chunk);
                     }
                     if let Some(chunks) = self.pending_chunks.get(&requested_height) {
                         if chunks.len() == self.num_shards as usize {
@@ -280,25 +260,18 @@ impl BlockProposer {
                     }
                 }
                 _ = timeout => {
-                    warn!("Block validator did not receive all shard chunks in time for height: {:?}", requested_height);
+                    warn!("Timeout: Block validator did not receive all shard chunks in time for height: {:?}", requested_height);
                     break;
                 }
             }
         }
 
-        if let Some(chunks) = self.pending_chunks.get(&requested_height) {
-            chunks.clone()
-        } else {
-            vec![]
-        }
+        self.pending_chunks.remove(&requested_height).unwrap_or_default()
     }
 
     async fn publish_new_block(&self, block: Block) {
-        match self.block_tx.send(block.clone()).await {
-            Err(err) => {
-                error!("Erorr publishing new block {:#?}", err)
-            }
-            Ok(_) => {}
+        if let Err(err) = self.block_tx.send(block.clone()).await {
+            error!("Error publishing new block {:#?}", err);
         }
     }
 }
@@ -313,10 +286,8 @@ impl Proposer for BlockProposer {
         let shard_chunks = self.collect_confirmed_shard_chunks(height, timeout).await;
 
         let previous_block = self.engine.get_last_block();
-        let parent_hash = match previous_block {
-            Some(block) => block.hash.clone(),
-            None => vec![0, 32],
-        };
+        let parent_hash = previous_block.map_or_else(|| vec![0, 32], |block| block.hash.clone());
+
         let block_header = BlockHeader {
             parent_hash,
             chain_id: 0,
@@ -326,9 +297,7 @@ impl Proposer for BlockProposer {
             timestamp: current_time(),
             height: Some(height.clone()),
         };
-        let hash = blake3::hash(&block_header.encode_to_vec())
-            .as_bytes()
-            .to_vec();
+        let hash = blake3::hash(&block_header.encode_to_vec()).as_bytes().to_vec();
 
         let block = Block {
             header: Some(block_header),
@@ -344,7 +313,7 @@ impl Proposer for BlockProposer {
         };
 
         let proposal = FullProposal {
-            height: Some(height.clone()),
+            height: Some(height),
             round: round.as_i64(),
             proposed_value: Some(proto::full_proposal::ProposedValue::Block(block)),
             proposer: self.address.to_vec(),
@@ -355,20 +324,16 @@ impl Proposer for BlockProposer {
     }
 
     fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity {
-        if let Some(proto::full_proposal::ProposedValue::Block(_block)) =
-            full_proposal.proposed_value.clone()
-        {
-            self.proposed_blocks
-                .insert(full_proposal.shard_hash(), full_proposal.clone());
+        if let Some(proto::full_proposal::ProposedValue::Block(_block)) = &full_proposal.proposed_value {
+            self.proposed_blocks.insert(full_proposal.shard_hash(), full_proposal.clone());
         }
         Validity::Valid // TODO: Validate proposer signature?
     }
 
     async fn decide(&mut self, height: Height, _round: Round, value: ShardHash) {
-        if let Some(proposal) = self.proposed_blocks.get(&value) {
+        if let Some(proposal) = self.proposed_blocks.remove(&value) {
             self.publish_new_block(proposal.block().unwrap()).await;
             self.engine.commit_block(proposal.block().unwrap());
-            self.proposed_blocks.remove(&value);
             self.pending_chunks.remove(&height.block_number);
         }
     }
@@ -384,20 +349,18 @@ impl Proposer for BlockProposer {
         let prev_block_number = self.engine.get_confirmed_height().block_number;
 
         if validator.current_height > prev_block_number {
-            match &validator.rpc_address {
-                None => return Ok(()),
-                Some(rpc_address) => {
-                    let destination_addr = format!("http://{}", rpc_address.clone());
-                    let mut rpc_client = SnapchainServiceClient::connect(destination_addr).await?;
-                    let request = Request::new(BlocksRequest {
-                        shard_id: self.shard_id.shard_id(),
-                        start_block_number: prev_block_number + 1,
-                        stop_block_number: None,
-                    });
-                    let missing_blocks = rpc_client.get_blocks(request).await?;
-                    for block in missing_blocks.get_ref().blocks.clone() {
-                        self.engine.commit_block(block.clone());
-                    }
+            if let Some(rpc_address) = &validator.rpc_address {
+                let destination_addr = format!("http://{}", rpc_address);
+                let mut rpc_client = SnapchainServiceClient::connect(destination_addr).await?;
+                let request = Request::new(BlocksRequest {
+                    shard_id: self.shard_id.shard_id(),
+                    start_block_number: prev_block_number + 1,
+                    stop_block_number: None,
+                });
+                let missing_blocks = rpc_client.get_blocks(request).await?;
+
+                for block in missing_blocks.get_ref().blocks.clone() {
+                    self.engine.commit_block(block);
                 }
             }
         }
