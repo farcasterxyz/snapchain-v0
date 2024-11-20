@@ -90,7 +90,7 @@ impl MerkleTrie {
             return Ok(Vec::new());
         }
 
-        for key in &keys {
+        for key in keys.iter() {
             if key.len() < TIMESTAMP_LENGTH {
                 return Err(TrieError::KeyLengthTooShort);
             }
@@ -117,7 +117,7 @@ impl MerkleTrie {
             return Ok(Vec::new());
         }
 
-        for key in &keys {
+        for key in keys.iter() {
             if key.len() < TIMESTAMP_LENGTH {
                 return Err(TrieError::KeyLengthTooShort);
             }
