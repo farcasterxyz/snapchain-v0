@@ -116,7 +116,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "hashes don't match")]
+    #[should_panic(expected = "State change commit failed: merkle trie root hash mismatch")]
     fn test_engine_commit_with_mismatched_hash() {
         let (mut engine, _tmpdir) = new_engine();
         let state_change = engine.propose_state_change(1);
