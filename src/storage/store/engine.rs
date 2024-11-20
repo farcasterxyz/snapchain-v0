@@ -234,24 +234,20 @@ impl ShardEngine {
         let transactions = &shard_state_change.transactions;
         let shard_root = &shard_state_change.new_state_root;
 
-        let hashes_match = {
-            let db = &*self.shard_store.db;
-            Self::replay_proposal(
-                &mut self.trie,
-                db,
-                &mut txn,
-                &self.cast_store,
-                transactions,
-                shard_root,
-            )
-        };
+        let db = &*self.shard_store.db;
+        if let Err(err) = Self::replay_proposal(
+            &mut self.trie,
+            db,
+            &mut txn,
+            &self.cast_store,
+            transactions,
+            shard_root,
+        ) {
+            error!("State change validation failed: {}", err);
+            return false;
+        }
 
-        // Create a db transaction
-        // Replay the state change
-        // If all messages merge successfully and the merkle trie root matches the stateroot in the state change, return true
-        // Else return false
-        // Rollback the transaction
-        true // TODO
+        true
     }
 
     pub fn commit_shard_chunk(&mut self, shard_chunk: ShardChunk) {
