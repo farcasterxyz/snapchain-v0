@@ -57,10 +57,10 @@ fn start_submit_messages(
                 let message = send_message(
                     &mut client,
                     &compose_message(
-                        private_key.clone(),
                         6833,
                         format!("For benchmarking {}", i).as_str(),
                         None,
+                        Some(private_key.clone()),
                     ),
                 )
                 .await

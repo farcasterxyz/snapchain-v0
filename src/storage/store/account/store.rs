@@ -551,7 +551,11 @@ impl Store {
         Ok(())
     }
 
-    pub fn merge(&self, message: &Message) -> Result<Vec<u8>, HubError> {
+    pub fn merge(
+        &self,
+        message: &Message,
+        txn: &mut RocksDbTransactionBatch,
+    ) -> Result<Vec<u8>, HubError> {
         // Grab a merge lock. The typescript code does this by individual fid, but we don't have a
         // good way of doing that efficiently here. We'll just use an array of locks, with each fid
         // deterministically mapped to a lock.
@@ -574,11 +578,11 @@ impl Store {
         let ts_hash = make_ts_hash(message.data.as_ref().unwrap().timestamp, &message.hash)?;
 
         if self.store_def().is_compact_state_type(message) {
-            self.merge_compact_state(message)
+            self.merge_compact_state(message, txn)
         } else if self.store_def.is_add_type(message) {
-            self.merge_add(&ts_hash, message)
+            self.merge_add(&ts_hash, message, txn)
         } else {
-            self.merge_remove(&ts_hash, message)
+            self.merge_remove(&ts_hash, message, txn)
         }
     }
 
@@ -646,7 +650,11 @@ impl Store {
         }
     }
 
-    pub fn merge_compact_state(&self, message: &Message) -> Result<Vec<u8>, HubError> {
+    pub fn merge_compact_state(
+        &self,
+        message: &Message,
+        txn: &mut RocksDbTransactionBatch,
+    ) -> Result<Vec<u8>, HubError> {
         let mut merge_conflicts = vec![];
 
         // First, find if there's an existing compact state message, and if there is,
@@ -715,12 +723,11 @@ impl Store {
             },
         )?;
 
-        let mut txn = self.db.txn();
         // Delete all the merge conflicts
-        self.delete_many_transaction(&mut txn, &merge_conflicts)?;
+        self.delete_many_transaction(txn, &merge_conflicts)?;
 
         // Add the Link compact state message
-        self.put_add_compact_state_transaction(&mut txn, message)?;
+        self.put_add_compact_state_transaction(txn, message)?;
 
         // Event Handler
         // let mut hub_event = self.store_def.merge_event_args(message, merge_conflicts);
@@ -728,9 +735,6 @@ impl Store {
         // let id = self
         //     .store_event_handler
         //     .commit_transaction(&mut txn, &mut hub_event)?;
-
-        // Commit the transaction
-        self.db.commit(txn)?;
 
         // hub_event.id = id;
         // Serialize the hub_event
@@ -744,6 +748,7 @@ impl Store {
         &self,
         ts_hash: &[u8; TS_HASH_LENGTH],
         message: &Message,
+        txn: &mut RocksDbTransactionBatch,
     ) -> Result<Vec<u8>, HubError> {
         // If the store supports compact state messages, we don't merge messages that don't exist in the compact state
         if self.store_def.compact_state_type_supported() {
@@ -779,13 +784,11 @@ impl Store {
             .store_def
             .get_merge_conflicts(&self.db, message, ts_hash)?;
 
-        // start a transaction
-        let mut txn = self.db.txn();
         // Delete all the merge conflicts
-        self.delete_many_transaction(&mut txn, &merge_conflicts)?;
+        self.delete_many_transaction(txn, &merge_conflicts)?;
 
         // Add ops to store the message by messageKey and index the messageKey by set and by target
-        self.put_add_transaction(&mut txn, &ts_hash, message)?;
+        self.put_add_transaction(txn, &ts_hash, message)?;
 
         // Event handler
         // let mut hub_event = self.store_def.merge_event_args(message, merge_conflicts);
@@ -793,9 +796,6 @@ impl Store {
         // let id = self
         //     .store_event_handler
         //     .commit_transaction(&mut txn, &mut hub_event)?;
-
-        // Commit the transaction
-        self.db.commit(txn)?;
 
         // hub_event.id = id;
         // Serialize the hub_event
@@ -809,6 +809,7 @@ impl Store {
         &self,
         ts_hash: &[u8; TS_HASH_LENGTH],
         message: &Message,
+        txn: &mut RocksDbTransactionBatch,
     ) -> Result<Vec<u8>, HubError> {
         // If the store supports compact state messages, we don't merge remove messages before its timestamp
         // If the store supports compact state messages, we don't merge messages that don't exist in the compact state
@@ -838,14 +839,11 @@ impl Store {
             .store_def
             .get_merge_conflicts(&self.db, message, ts_hash)?;
 
-        // start a transaction
-        let mut txn = self.db.txn();
-
         // Delete all the merge conflicts
-        self.delete_many_transaction(&mut txn, &merge_conflicts)?;
+        self.delete_many_transaction(txn, &merge_conflicts)?;
 
         // Add ops to store the message by messageKey and index the messageKey by set and by target
-        self.put_remove_transaction(&mut txn, ts_hash, message)?;
+        self.put_remove_transaction(txn, ts_hash, message)?;
 
         // Event handler
         // let mut hub_event = self.store_def.merge_event_args(message, merge_conflicts);
@@ -853,9 +851,6 @@ impl Store {
         // let id = self
         //     .store_event_handler
         //     .commit_transaction(&mut txn, &mut hub_event)?;
-
-        // Commit the transaction
-        self.db.commit(txn)?;
 
         // hub_event.id = id;
         // Serialize the hub_event

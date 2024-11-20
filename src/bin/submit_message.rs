@@ -19,7 +19,7 @@ async fn main() {
 
     send_message(
         &mut client,
-        &compose_message(private_key, 6833, "Welcome from Rust!", None),
+        &compose_message(6833, "Welcome from Rust!", None, Some(private_key)),
     )
     .await
     .unwrap();

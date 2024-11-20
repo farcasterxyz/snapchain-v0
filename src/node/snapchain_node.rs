@@ -1,4 +1,4 @@
-use crate::consensus::consensus::{Config, Consensus, ConsensusMsg, ConsensusParams, Decision};
+use crate::consensus::consensus::{Config, Consensus, ConsensusMsg, ConsensusParams};
 use crate::consensus::proposer::{BlockProposer, ShardProposer};
 use crate::consensus::validator::ShardValidator;
 use crate::core::types::{
@@ -18,7 +18,7 @@ use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::{BTreeMap, HashMap};
 use tokio::sync::mpsc;
-use tracing::{error, warn};
+use tracing::warn;
 
 const MAX_SHARDS: u32 = 3;
 

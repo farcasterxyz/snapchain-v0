@@ -1,5 +1,3 @@
-use prost::Message as _;
-
 use super::PAGE_SIZE_MAX;
 use crate::core::error::HubError;
 use crate::storage::constants::{RootPrefix, UserPostfix};
@@ -8,6 +6,8 @@ use crate::{
     proto::message::{CastId, Message as MessageProto, MessageData, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
+use prost::Message as _;
+use tracing::warn;
 
 pub const FID_BYTES: usize = 4;
 
@@ -199,6 +199,7 @@ where
     let mut last_key = vec![];
 
     db.for_each_iterator_by_prefix(Some(prefix.to_vec()), None, page_options, |key, value| {
+        warn!(key = ?key, value = ?value, "Found message");
         match message_decode(value) {
             Ok(message) => {
                 if filter(&message) {

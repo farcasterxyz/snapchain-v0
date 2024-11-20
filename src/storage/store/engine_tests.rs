@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::proto::message;
     use crate::proto::message::Message;
     use crate::proto::snapchain::{Height, ShardChunk, ShardHeader, Transaction};
     use crate::storage::db;
@@ -8,6 +9,7 @@ mod tests {
     use crate::utils::cli;
     use ed25519_dalek::{SecretKey, SigningKey};
     use hex::FromHex;
+    use prost::Message as _;
     use tempfile;
     use tracing_subscriber::EnvFilter;
 
@@ -75,14 +77,7 @@ mod tests {
     }
 
     fn default_message(text: &str) -> Message {
-        let private_key = SigningKey::from_bytes(
-            &SecretKey::from_hex(
-                "1000000000000000000000000000000000000000000000000000000000000000",
-            )
-            .unwrap(),
-        );
-
-        cli::compose_message(private_key, 1234, text, Some(0))
+        cli::compose_message(1234, text, Some(0), None)
     }
 
     fn entities() -> (Message, Message) {
@@ -144,6 +139,35 @@ mod tests {
         engine.commit_shard_chunk(chunk);
 
         assert_eq!(expected_roots[0], to_hex(&engine.trie_root_hash()));
+    }
+
+    // TODO: Needs fixing
+    // #[tokio::test]
+    async fn test_engine_commit_with_single_message() {
+        enable_logging();
+        let (msg1, _) = entities();
+        let (mut engine, _tmpdir) = new_engine();
+        let messages_tx = engine.messages_tx();
+
+        messages_tx.send(msg1.clone()).await.unwrap();
+        let state_change = engine.propose_state_change(1);
+
+        assert_eq!(1, state_change.transactions.len());
+        assert_eq!(1, state_change.transactions[0].user_messages.len());
+
+        // propose does not write to the store
+        let casts_result = engine.get_casts_by_fid(msg1.fid());
+        assert_eq!(0, casts_result.unwrap().messages_bytes.len());
+
+        let chunk = state_change_to_shard_chunk(1, 1, state_change);
+        engine.commit_shard_chunk(chunk);
+
+        // commit does write to the store
+        let casts_result = engine.get_casts_by_fid(msg1.fid());
+        let messages = casts_result.unwrap().messages_bytes;
+        assert_eq!(1, messages.len());
+        let decoded = Message::decode(&*messages[0]).unwrap();
+        assert_eq!(to_hex(&msg1.hash), to_hex(&decoded.hash));
     }
 
     #[tokio::test]
