@@ -15,8 +15,8 @@ use tracing::{error, warn};
 
 #[derive(Error, Debug)]
 enum EngineError {
-    #[error("unable to insert message into trie: {source}")]
-    TrieInsertError {
+    #[error("trie error: {source}")]
+    TrieError {
         #[from]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
@@ -27,8 +27,8 @@ enum EngineError {
     #[error("unsupported message type: {0}")]
     UnsupportedMessageType(String),
 
-    #[error("failed to compute trie root hash")]
-    RootHashComputationError,
+    #[error("merkle trie root hash mismatch")]
+    HashMismatch,
 }
 
 // Shard state root and the transactions
@@ -189,44 +189,43 @@ impl ShardEngine {
         cast_store: &Store,
         transactions: &[Transaction],
         shard_root: &[u8],
-    ) -> Result<bool, EngineError> {
+    ) -> Result<(), EngineError> {
         let mut merged_messages: Vec<message::Message> = vec![];
 
         for snap_txn in transactions {
             for msg in &snap_txn.user_messages {
                 if msg.is_type(message::MessageType::CastAdd) {
-                    match cast_store.merge(msg, txn_batch) {
-                        Ok(_) => {
-                            merged_messages.push(msg.clone());
-                            let res = trie.insert(db, txn_batch, vec![msg.hash.clone()]);
-                            if res.is_err() {
-                                error!(
-                                    "Unable to insert message into trie: {}",
-                                    res.err().unwrap()
-                                );
-                                panic!("Unable to insert message into trie");
-                            }
-                            warn!(
-                                hash = hex::encode(&msg.hash),
-                                num_messages = merged_messages.len(),
-                                "propose - merged_message"
-                            );
-                        }
-                        Err(err) => {
-                            error!("Unable to merge cast message during commit: {}", err);
-                            // If we're unable to merge during a commmit, it's going to cause a consensus halt. This state change should've been validated before.
-                            panic!("Unable to merge cast message during commit");
-                        }
-                    }
+                    cast_store.merge(msg, txn_batch).map_err(|err| {
+                        EngineError::MergeCastMessageError(format!(
+                            "Message hash: {}, Error: {}",
+                            hex::encode(&msg.hash),
+                            err
+                        ))
+                    })?;
+
+                    merged_messages.push(msg.clone());
+
+                    trie.insert(db, txn_batch, vec![msg.hash.clone()])
+                        .map_err(|e| EngineError::TrieError {
+                            source: Box::new(e),
+                        })?;
                 } else {
-                    error!(msg_type = msg.msg_type(), "Unsupported message type");
+                    return Err(EngineError::UnsupportedMessageType(
+                        msg.msg_type().to_string(),
+                    ));
                 }
             }
         }
 
-        let root1 = trie.root_hash().unwrap();
+        let root1 = trie.root_hash().map_err(|e| EngineError::TrieError {
+            source: Box::new(e),
+        })?;
 
-        Ok(&root1 == shard_root)
+        if &root1 != shard_root {
+            return Err(EngineError::HashMismatch);
+        }
+
+        Ok(())
     }
 
     pub fn validate_state_change(&mut self, shard_state_change: &ShardStateChange) -> bool {
