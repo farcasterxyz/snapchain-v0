@@ -141,8 +141,7 @@ mod tests {
         assert_eq!(expected_roots[0], to_hex(&engine.trie_root_hash()));
     }
 
-    // TODO: Needs fixing
-    // #[tokio::test]
+    #[tokio::test]
     async fn test_engine_commit_with_single_message() {
         enable_logging();
         let (msg1, _) = entities();

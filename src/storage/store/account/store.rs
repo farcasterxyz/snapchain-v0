@@ -6,6 +6,7 @@ use super::{
 };
 use crate::core::error::HubError;
 use crate::storage::db::PageOptions;
+use crate::storage::util::increment_vec_u8;
 use crate::{
     proto::message::{link_body::Target, message_data::Body, Message, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
@@ -693,7 +694,7 @@ impl Store {
         let prefix = &make_message_primary_key(fid, self.store_def.postfix(), None);
         self.db.for_each_iterator_by_prefix(
             Some(prefix.to_vec()),
-            None,
+            Some(increment_vec_u8(prefix)),
             &PageOptions::default(),
             |_key, value| {
                 let message = message_decode(value)?;
@@ -880,7 +881,7 @@ impl Store {
         let prefix = &make_message_primary_key(fid, self.store_def.postfix(), None);
         self.db.for_each_iterator_by_prefix(
             Some(prefix.to_vec()),
-            None,
+            Some(increment_vec_u8(prefix)),
             &PageOptions::default(),
             |_key, value| {
                 if count <= max_message_count {

@@ -2,12 +2,12 @@ use super::PAGE_SIZE_MAX;
 use crate::core::error::HubError;
 use crate::storage::constants::{RootPrefix, UserPostfix};
 use crate::storage::db::{PageOptions, RocksdbError};
+use crate::storage::util::increment_vec_u8;
 use crate::{
     proto::message::{CastId, Message as MessageProto, MessageData, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
 use prost::Message as _;
-use tracing::warn;
 
 pub const FID_BYTES: usize = 4;
 
@@ -198,24 +198,28 @@ where
     let mut messages_bytes = Vec::new();
     let mut last_key = vec![];
 
-    db.for_each_iterator_by_prefix(Some(prefix.to_vec()), None, page_options, |key, value| {
-        warn!(key = ?key, value = ?value, "Found message");
-        match message_decode(value) {
-            Ok(message) => {
-                if filter(&message) {
-                    messages_bytes.push(value.to_vec());
+    db.for_each_iterator_by_prefix(
+        Some(prefix.to_vec()),
+        Some(increment_vec_u8(&prefix.to_vec())),
+        page_options,
+        |key, value| {
+            match message_decode(value) {
+                Ok(message) => {
+                    if filter(&message) {
+                        messages_bytes.push(value.to_vec());
 
-                    if messages_bytes.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
-                        last_key = key.to_vec();
-                        return Ok(true); // Stop iterating
+                        if messages_bytes.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
+                            last_key = key.to_vec();
+                            return Ok(true); // Stop iterating
+                        }
                     }
-                }
 
-                Ok(false) // Continue iterating
+                    Ok(false) // Continue iterating
+                }
+                Err(e) => Err(HubError::from(e)),
             }
-            Err(e) => Err(HubError::from(e)),
-        }
-    })?;
+        },
+    )?;
 
     let next_page_token = if last_key.len() > 0 {
         Some(last_key[prefix.len()..].to_vec())
