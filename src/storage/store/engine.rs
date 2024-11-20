@@ -1,8 +1,10 @@
 use super::shard::ShardStore;
+use crate::core::error::HubError;
 use crate::core::types::{proto, Height};
 use crate::proto::snapchain::{Block, ShardChunk};
 use crate::proto::{message, snapchain};
-use crate::storage::db::RocksDbTransactionBatch;
+use crate::storage::db::{PageOptions, RocksDbTransactionBatch};
+use crate::storage::store::account::{CastStore, MessagesPage, Store};
 use crate::storage::store::BlockStore;
 use crate::storage::trie::merkle_trie;
 use std::iter;
@@ -23,6 +25,7 @@ pub struct ShardEngine {
     messages_rx: mpsc::Receiver<message::Message>,
     messages_tx: mpsc::Sender<message::Message>,
     trie: merkle_trie::MerkleTrie,
+    cast_store: Store,
 }
 
 fn encode_vec(data: &[Vec<u8>]) -> String {
@@ -47,6 +50,8 @@ impl ShardEngine {
         db.commit(txn_batch).unwrap();
         trie.reload(db).unwrap();
 
+        let cast_store = CastStore::new(shard_store.db.clone(), 100);
+
         let (messages_tx, messages_rx) = mpsc::channel::<message::Message>(10_000);
         ShardEngine {
             shard_id,
@@ -54,6 +59,7 @@ impl ShardEngine {
             messages_rx,
             messages_tx,
             trie,
+            cast_store,
         }
     }
 
@@ -70,28 +76,55 @@ impl ShardEngine {
         let it = iter::from_fn(|| self.messages_rx.try_recv().ok());
         let user_messages: Vec<message::Message> = it.collect();
 
-        let mut hashes: Vec<Vec<u8>> = vec![];
-        for msg in &user_messages {
-            hashes.push(msg.hash.clone());
-        }
-
-        let transactions = vec![snapchain::Transaction {
-            fid: 1234,                      //TODO
-            account_root: vec![5, 5, 6, 6], //TODO
-            system_messages: vec![],        //TODO
-            user_messages,
-        }];
-
         warn!(
             shard,
-            insert = encode_vec(&hashes.clone()),
+            items = self.trie.items().unwrap(),
             "propose – before insert",
         );
 
         let db = &*self.shard_store.db;
 
         let mut txn_batch = RocksDbTransactionBatch::new();
-        self.trie.insert(db, &mut txn_batch, hashes);
+
+        let mut merged_messages: Vec<message::Message> = vec![];
+
+        for msg in &user_messages {
+            if msg.is_type(message::MessageType::CastAdd) {
+                match self.cast_store.merge(msg, &mut txn_batch) {
+                    Ok(_) => {
+                        merged_messages.push(msg.clone());
+                        let res = self.trie.insert(db, &mut txn_batch, vec![msg.hash.clone()]);
+                        if res.is_err() {
+                            error!("Unable to insert message into trie: {}", res.err().unwrap());
+                            panic!("Unable to insert message into trie");
+                        }
+                        warn!(
+                            hash = hex::encode(&msg.hash),
+                            num_messages = merged_messages.len(),
+                            "propose - merged_message"
+                        );
+                    }
+                    Err(err) => {
+                        error!("Unable to merge cast message: {}", err);
+                    }
+                }
+            } else {
+                error!(
+                    msg_type = msg.msg_type(),
+                    "Unsupported message type during propose"
+                );
+            }
+        }
+        // TODO: Group by fid so we only have a single txn per block per fid
+        let mut transactions = vec![];
+        let snap_txn = snapchain::Transaction {
+            fid: 1234,                      //TODO
+            account_root: vec![5, 5, 6, 6], //TODO
+            system_messages: vec![],        //TODO
+            user_messages: merged_messages,
+        };
+        transactions.push(snap_txn);
+
         let new_root_hash = self.trie.root_hash().unwrap();
         let count = self.trie.items().unwrap();
 
@@ -143,29 +176,47 @@ impl ShardEngine {
     pub fn commit_shard_chunk(&mut self, shard_chunk: ShardChunk) {
         let shard_root = shard_chunk.clone().header.unwrap().shard_root; // TODO: without clone?
 
-        let mut hashes: Vec<Vec<u8>> = vec![];
-        // TODO! don't assume 1 transaction
-        for msg in &shard_chunk.transactions[0].user_messages {
-            hashes.push(msg.hash.clone());
-        }
-
+        let mut merged_messages: Vec<message::Message> = vec![];
         let root0 = self.trie.root_hash().unwrap();
 
-        warn!(
-            state_root_0 = hex::encode(&root0),
-            insert = encode_vec(&hashes),
-            "commit insert"
-        );
+        warn!(state_root_0 = hex::encode(&root0), "commit insert");
 
         let db = &*self.shard_store.db;
-
         let mut txn_batch = RocksDbTransactionBatch::new();
 
-        self.trie
-            .insert(db, &mut txn_batch, hashes.clone())
-            .unwrap();
-        let root1 = self.trie.root_hash().unwrap();
+        for snap_txn in &shard_chunk.transactions {
+            for msg in &snap_txn.user_messages {
+                if msg.is_type(message::MessageType::CastAdd) {
+                    match self.cast_store.merge(msg, &mut txn_batch) {
+                        Ok(_) => {
+                            merged_messages.push(msg.clone());
+                            let res = self.trie.insert(db, &mut txn_batch, vec![msg.hash.clone()]);
+                            if res.is_err() {
+                                error!(
+                                    "Unable to insert message into trie: {}",
+                                    res.err().unwrap()
+                                );
+                                panic!("Unable to insert message into trie");
+                            }
+                            warn!(
+                                hash = hex::encode(&msg.hash),
+                                num_messages = merged_messages.len(),
+                                "propose - merged_message"
+                            );
+                        }
+                        Err(err) => {
+                            error!("Unable to merge cast message during commit: {}", err);
+                            // If we're unable to merge during a commmit, it's going to cause a consensus halt. This state change should've been validated before.
+                            panic!("Unable to merge cast message during commit");
+                        }
+                    }
+                } else {
+                    error!(msg_type = msg.msg_type(), "Unsupported message type");
+                }
+            }
+        }
 
+        let root1 = self.trie.root_hash().unwrap();
         let hashes_match = &root1 == &shard_root;
 
         warn!(
@@ -216,6 +267,10 @@ impl ShardEngine {
                 None
             }
         }
+    }
+
+    pub fn get_casts_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
+        CastStore::get_cast_adds_by_fid(&self.cast_store, fid, &PageOptions::default())
     }
 }
 

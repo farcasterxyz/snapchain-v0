@@ -7,7 +7,7 @@ use super::{
 use crate::core::error::HubError;
 use crate::storage::constants::{RootPrefix, UserPostfix};
 use crate::storage::db::PageOptions;
-use crate::storage::util::bytes_compare;
+use crate::storage::util::{bytes_compare, increment_vec_u8};
 use crate::{
     proto::message::{self, Message, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
@@ -446,7 +446,7 @@ impl CastStore {
 
         store.db().for_each_iterator_by_prefix(
             Some(prefix.to_vec()),
-            None,
+            Some(increment_vec_u8(&prefix)),
             page_options,
             |key, _| {
                 let ts_hash_offset = prefix.len();
@@ -494,7 +494,7 @@ impl CastStore {
 
         store.db().for_each_iterator_by_prefix(
             Some(prefix.to_vec()),
-            None,
+            Some(increment_vec_u8(&prefix)),
             page_options,
             |key, _| {
                 let ts_hash_offset = prefix.len();

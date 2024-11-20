@@ -1,4 +1,3 @@
-use crate::consensus::consensus::{RxDecision, TxDecision};
 use crate::core::types::{
     proto, Address, Height, ShardHash, ShardId, SnapchainShard, SnapchainValidator,
 };

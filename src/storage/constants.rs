@@ -1,6 +1,5 @@
 pub const PAGE_SIZE_MAX: usize = 1_000;
 
-/** Copied from the JS code */
 #[allow(dead_code)]
 pub enum RootPrefix {
     Block = 1,

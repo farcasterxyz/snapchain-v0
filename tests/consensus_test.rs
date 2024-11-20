@@ -11,6 +11,7 @@ use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::proto::snapchain::Block;
 use snapchain::storage::db::RocksDB;
 use snapchain::storage::store::BlockStore;
+use snapchain::utils::cli;
 use snapchain::{
     consensus::consensus::ConsensusMsg,
     core::types::{ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext},
@@ -302,15 +303,12 @@ async fn test_basic_consensus() {
             hash.extend_from_slice(&i.to_be_bytes()); // just for now
 
             messages_tx1
-                .send(message::Message {
-                    hash: hash,
-                    data: None,
-                    data_bytes: None,
-                    hash_scheme: message::HashScheme::Blake3 as i32,
-                    signature: vec![],
-                    signature_scheme: 0,
-                    signer: vec![],
-                })
+                .send(cli::compose_message(
+                    321,
+                    format!("Cast {}", i).as_str(),
+                    None,
+                    None,
+                ))
                 .await
                 .unwrap();
             i += 1;
