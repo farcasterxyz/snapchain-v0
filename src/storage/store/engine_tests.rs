@@ -230,6 +230,9 @@ mod tests {
 
             assert_eq!(expected_roots[1], to_hex(&state_change.new_state_root));
 
+            let valid = engine.validate_state_change(&state_change);
+            assert!(valid);
+
             let chunk = state_change_to_shard_chunk(1, 1, &state_change);
             engine.commit_shard_chunk(chunk);
 
@@ -252,6 +255,9 @@ mod tests {
             assert_eq!(to_hex(&prop_msg.hash), to_hex(&msg2.hash));
 
             assert_eq!(expected_roots[2], to_hex(&state_change.new_state_root));
+
+            let valid = engine.validate_state_change(&state_change);
+            assert!(valid);
 
             let chunk = state_change_to_shard_chunk(1, 2, &state_change);
             engine.commit_shard_chunk(chunk);
@@ -291,6 +297,9 @@ mod tests {
             assert_eq!(to_hex(&prop_msg_2.hash), to_hex(&msg2.hash));
 
             assert_eq!(expected_roots[1], to_hex(&state_change.new_state_root));
+
+            let valid = engine.validate_state_change(&state_change);
+            assert!(valid);
 
             let chunk = state_change_to_shard_chunk(1, 1, &state_change);
             engine.commit_shard_chunk(chunk);
