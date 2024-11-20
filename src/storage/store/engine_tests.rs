@@ -41,22 +41,24 @@ mod tests {
     }
 
     fn state_change_to_shard_chunk(
-        shard_idx: u32,
+        shard_index: u32,
         block_number: u64,
-        change: ShardStateChange,
+        change: &ShardStateChange,
     ) -> ShardChunk {
         let mut chunk = default_shard_chunk();
 
-        chunk.header.as_mut().unwrap().shard_root = change.new_state_root;
+        chunk.header.as_mut().unwrap().shard_root = change.new_state_root.clone();
         chunk.header.as_mut().unwrap().height = Some(Height {
-            shard_index: shard_idx,
-            block_number: block_number,
+            shard_index,
+            block_number,
         });
 
         //TODO: don't assume 1 transaction
-        chunk.transactions[0]
+        chunk.transactions[0].user_messages = change.transactions[0]
             .user_messages
-            .extend(change.transactions[0].user_messages.iter().cloned());
+            .iter()
+            .cloned()
+            .collect();
 
         chunk
     }
@@ -133,7 +135,7 @@ mod tests {
         let state_change = engine.propose_state_change(1);
         let expected_roots = vec!["237b11d0dd9e78994ef2f141c7f170d48bb51d34"];
 
-        let chunk = state_change_to_shard_chunk(1, 1, state_change);
+        let chunk = state_change_to_shard_chunk(1, 1, &state_change);
         engine.commit_shard_chunk(chunk);
 
         assert_eq!(expected_roots[0], to_hex(&engine.trie_root_hash()));
@@ -156,7 +158,7 @@ mod tests {
         let casts_result = engine.get_casts_by_fid(msg1.fid());
         assert_eq!(0, casts_result.unwrap().messages_bytes.len());
 
-        let chunk = state_change_to_shard_chunk(1, 1, state_change);
+        let chunk = state_change_to_shard_chunk(1, 1, &state_change);
         engine.commit_shard_chunk(chunk);
 
         // commit does write to the store
@@ -205,7 +207,7 @@ mod tests {
 
             assert_eq!(expected_roots[1], to_hex(&state_change.new_state_root));
 
-            let chunk = state_change_to_shard_chunk(1, 1, state_change.clone());
+            let chunk = state_change_to_shard_chunk(1, 1, &state_change);
             engine.commit_shard_chunk(chunk);
 
             assert_eq!(expected_roots[1], to_hex(&engine.trie_root_hash()));
@@ -228,7 +230,7 @@ mod tests {
 
             assert_eq!(expected_roots[2], to_hex(&state_change.new_state_root));
 
-            let chunk = state_change_to_shard_chunk(1, 2, state_change.clone());
+            let chunk = state_change_to_shard_chunk(1, 2, &state_change);
             engine.commit_shard_chunk(chunk);
 
             assert_eq!(expected_roots[2], to_hex(&engine.trie_root_hash()));
@@ -267,7 +269,7 @@ mod tests {
 
             assert_eq!(expected_roots[1], to_hex(&state_change.new_state_root));
 
-            let chunk = state_change_to_shard_chunk(1, 1, state_change.clone());
+            let chunk = state_change_to_shard_chunk(1, 1, &state_change);
             engine.commit_shard_chunk(chunk);
 
             assert_eq!(expected_roots[1], to_hex(&engine.trie_root_hash()));
