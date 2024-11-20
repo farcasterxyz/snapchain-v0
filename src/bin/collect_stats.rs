@@ -11,10 +11,11 @@ use snapchain::utils::cli::{compose_message, follow_blocks, send_message};
 use std::collections::HashSet;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::time::Instant;
+use tokio::time::{Instant, timeout};
 use tokio::{select, time};
 const STATS_CALCULATION_INTERVAL: Duration = Duration::from_secs(10);
 const NUM_ITERATIONS: u64 = 5;
+const TIMEOUT_DURATION: Duration = Duration::from_secs(60); // Timeout duration
 
 #[derive(Debug, Clone)]
 struct Scenario {
@@ -78,15 +79,6 @@ fn start_submit_messages(
 #[tokio::main]
 async fn main() {
     let scenarios = [
-        // Scenario {
-        //     submit_message_rpc_addrs: vec![
-        //         "http://127.0.0.1:3383".to_string(),
-        //         "http://127.0.0.1:3384".to_string(),
-        //         "http://127.0.0.1:3385".to_string(),
-        //     ],
-        //     follow_blocks_rpc_addr: "http://127.0.0.1:3383".to_string(),
-        //     submit_message_interval: None, // Tight loop for submitting messages, no delay,
-        // },
         Scenario {
             submit_message_rpc_addrs: vec![
                 "http://127.0.0.1:3383".to_string(),
@@ -145,7 +137,7 @@ async fn main() {
                             }
                         }
                     }
-                }
+                },
                 time = stats_calculation_timer.tick() => {
                     let avg_time_to_confirmation = if time_to_confirmation.len() > 0 {time_to_confirmation.iter().sum::<u64>() as f64 / time_to_confirmation.len() as f64} else {0f64};
                     let max_time_to_confirmation = if time_to_confirmation.len() > 0 {time_to_confirmation.clone().into_iter().max().unwrap()} else {0};
@@ -168,6 +160,10 @@ async fn main() {
                         follow_blocks_handle.abort();
                         break;
                     }
+                },
+                _ = timeout(TIMEOUT_DURATION, async { () }).fuse() => {
+                    eprintln!("Timeout reached, breaking the loop.");
+                    break;
                 }
             }
         }
