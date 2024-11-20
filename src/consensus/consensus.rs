@@ -354,11 +354,7 @@ impl Consensus {
 
                 let current_height = state.shard_validator.get_current_height();
 
-                // TODO(aditi): Make 1000 configurable.
-                if height.block_number > current_height + 1000 {
-                    panic!("Node is too far behind to join consensus. Try restarting. Current block number {}. Expected block number {}", current_height, height.block_number )
-                }
-
+                // TODO(aditi): Add a check for the node being too far behind to start up via rpc sync once we have a way to pick up missed blocks in bulk
                 if !state
                     .shard_validator
                     .saw_proposal_from_validator(full_proposal.proposer_address())
