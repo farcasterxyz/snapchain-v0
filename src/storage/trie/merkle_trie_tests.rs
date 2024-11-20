@@ -17,7 +17,7 @@ mod tests {
 
         let mut txn_batch = RocksDbTransactionBatch::new();
 
-        let mut trie = MerkleTrie::new().unwrap();
+        let mut trie = MerkleTrie::new();
         trie.initialize(db, &mut txn_batch).unwrap();
 
         let key1: Vec<_> = "0000482712".bytes().collect();

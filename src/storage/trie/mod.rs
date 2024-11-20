@@ -1,3 +1,4 @@
+pub mod errors;
 pub mod merkle_trie;
 pub mod trie_node;
 

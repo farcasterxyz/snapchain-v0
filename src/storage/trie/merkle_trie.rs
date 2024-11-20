@@ -1,8 +1,7 @@
 use super::super::db::{RocksDB, RocksDbTransactionBatch};
+use super::errors::TrieError;
 use super::trie_node::{TrieNode, TIMESTAMP_LENGTH};
 use std::collections::HashMap;
-
-use crate::core::error::HubError;
 
 pub const TRIE_DBPATH_PREFIX: &str = "trieDb";
 
@@ -25,8 +24,8 @@ pub struct MerkleTrie {
 }
 
 impl MerkleTrie {
-    pub fn new() -> Result<Self, HubError> {
-        Ok(MerkleTrie { root: None })
+    pub fn new() -> Self {
+        MerkleTrie { root: None }
     }
 
     fn create_empty_root(&mut self, txn_batch: &mut RocksDbTransactionBatch) {
@@ -43,7 +42,7 @@ impl MerkleTrie {
         &mut self,
         db: &RocksDB,
         txn_batch: &mut RocksDbTransactionBatch,
-    ) -> Result<(), HubError> {
+    ) -> Result<(), TrieError> {
         // db must be "open" by now
 
         let loaded = self.load_root(db)?;
@@ -56,9 +55,10 @@ impl MerkleTrie {
         Ok(())
     }
 
-    fn load_root(&self, db: &RocksDB) -> Result<Option<TrieNode>, HubError> {
+    fn load_root(&self, db: &RocksDB) -> Result<Option<TrieNode>, TrieError> {
         let root_key = TrieNode::make_primary_key(&[], None);
-        if let Some(root_bytes) = db.get(&root_key)? {
+
+        if let Some(root_bytes) = db.get(&root_key).map_err(TrieError::wrap_database)? {
             let root_node = TrieNode::deserialize(&root_bytes.as_slice())?;
             Ok(Some(root_node))
         } else {
@@ -66,7 +66,7 @@ impl MerkleTrie {
         }
     }
 
-    pub fn reload(&mut self, db: &RocksDB) -> Result<(), HubError> {
+    pub fn reload(&mut self, db: &RocksDB) -> Result<(), TrieError> {
         // Load the root node using the provided database reference
         let loaded = self.load_root(db)?;
 
@@ -76,10 +76,7 @@ impl MerkleTrie {
                 self.root.replace(replacement_root);
                 Ok(())
             }
-            None => Err(HubError {
-                code: "bad_request.internal_error".to_string(),
-                message: "Unable to reload root".to_string(),
-            }),
+            None => Err(TrieError::UnableToReloadRoot),
         }
     }
 
@@ -88,17 +85,14 @@ impl MerkleTrie {
         db: &RocksDB,
         txn_batch: &mut RocksDbTransactionBatch,
         keys: Vec<Vec<u8>>,
-    ) -> Result<Vec<bool>, HubError> {
+    ) -> Result<Vec<bool>, TrieError> {
         if keys.is_empty() {
             return Ok(Vec::new());
         }
 
-        for key in keys.iter() {
+        for key in &keys {
             if key.len() < TIMESTAMP_LENGTH {
-                return Err(HubError {
-                    code: "bad_request.invalid_param".to_string(),
-                    message: "Key length is too short".to_string(),
-                });
+                return Err(TrieError::KeyLengthTooShort);
             }
         }
 
@@ -109,10 +103,7 @@ impl MerkleTrie {
             txn_batch.merge(txn);
             Ok(results)
         } else {
-            Err(HubError {
-                code: "bad_request.internal_error".to_string(),
-                message: format!("Merkle Trie not initialized for insert {:?}", keys),
-            })
+            Err(TrieError::TrieNotInitialized)
         }
     }
 
@@ -121,17 +112,14 @@ impl MerkleTrie {
         db: &RocksDB,
         txn_batch: &mut RocksDbTransactionBatch,
         keys: Vec<Vec<u8>>,
-    ) -> Result<Vec<bool>, HubError> {
+    ) -> Result<Vec<bool>, TrieError> {
         if keys.is_empty() {
             return Ok(Vec::new());
         }
 
-        for key in keys.iter() {
+        for key in &keys {
             if key.len() < TIMESTAMP_LENGTH {
-                return Err(HubError {
-                    code: "bad_request.invalid_param".to_string(),
-                    message: "Key length is too short".to_string(),
-                });
+                return Err(TrieError::KeyLengthTooShort);
             }
         }
 
@@ -142,32 +130,23 @@ impl MerkleTrie {
             txn_batch.merge(txn);
             Ok(results)
         } else {
-            Err(HubError {
-                code: "bad_request.internal_error".to_string(),
-                message: "Merkle Trie not initialized for delete".to_string(),
-            })
+            Err(TrieError::TrieNotInitialized)
         }
     }
 
-    pub fn exists(&mut self, db: &RocksDB, key: &Vec<u8>) -> Result<bool, HubError> {
+    pub fn exists(&mut self, db: &RocksDB, key: &Vec<u8>) -> Result<bool, TrieError> {
         if let Some(root) = self.root.as_mut() {
             root.exists(db, key, 0)
         } else {
-            Err(HubError {
-                code: "bad_request.internal_error".to_string(),
-                message: "Merkle Trie not initialized for exists".to_string(),
-            })
+            Err(TrieError::TrieNotInitialized)
         }
     }
 
-    pub fn items(&self) -> Result<usize, HubError> {
+    pub fn items(&self) -> Result<usize, TrieError> {
         if let Some(root) = self.root.as_ref() {
             Ok(root.items())
         } else {
-            Err(HubError {
-                code: "bad_request.internal_error".to_string(),
-                message: "Merkle Trie not initialized for items".to_string(),
-            })
+            Err(TrieError::TrieNotInitialized)
         }
     }
 
@@ -196,14 +175,11 @@ impl MerkleTrie {
         None
     }
 
-    pub fn root_hash(&self) -> Result<Vec<u8>, HubError> {
+    pub fn root_hash(&self) -> Result<Vec<u8>, TrieError> {
         if let Some(root) = self.root.as_ref() {
             Ok(root.hash())
         } else {
-            Err(HubError {
-                code: "bad_request.internal_error".to_string(),
-                message: "Merkle Trie not initialized for root_hash".to_string(),
-            })
+            Err(TrieError::TrieNotInitialized)
         }
     }
 
@@ -211,7 +187,7 @@ impl MerkleTrie {
         &mut self,
         db: &RocksDB,
         prefix: &[u8],
-    ) -> Result<Vec<Vec<u8>>, HubError> {
+    ) -> Result<Vec<Vec<u8>>, TrieError> {
         if let Some(root) = self.root.as_mut() {
             if let Some(node) = root.get_node_from_trie(db, prefix, 0) {
                 node.get_all_values(db, prefix)
@@ -219,21 +195,15 @@ impl MerkleTrie {
                 Ok(Vec::new())
             }
         } else {
-            Err(HubError {
-                code: "bad_request.internal_error".to_string(),
-                message: "Merkle Trie not initialized for get_all_values".to_string(),
-            })
+            Err(TrieError::TrieNotInitialized)
         }
     }
 
-    pub fn get_snapshot(&mut self, db: &RocksDB, prefix: &[u8]) -> Result<TrieSnapshot, HubError> {
+    pub fn get_snapshot(&mut self, db: &RocksDB, prefix: &[u8]) -> Result<TrieSnapshot, TrieError> {
         if let Some(root) = self.root.as_mut() {
             root.get_snapshot(db, prefix, 0)
         } else {
-            Err(HubError {
-                code: "bad_request.internal_error".to_string(),
-                message: "Merkle Trie not initialized for get_snapshot".to_string(),
-            })
+            Err(TrieError::TrieNotInitialized)
         }
     }
 
@@ -242,7 +212,7 @@ impl MerkleTrie {
         db: &RocksDB,
         txn_batch: &mut RocksDbTransactionBatch,
         prefix: &[u8],
-    ) -> Result<NodeMetadata, HubError> {
+    ) -> Result<NodeMetadata, TrieError> {
         if let Some(node) = self.get_node(db, txn_batch, prefix) {
             let mut children = HashMap::new();
 
@@ -250,12 +220,12 @@ impl MerkleTrie {
                 let mut child_prefix = prefix.to_vec();
                 child_prefix.push(*char);
 
-                let child_node = self
-                    .get_node(db, txn_batch, &child_prefix)
-                    .ok_or(HubError {
-                        code: "bad_request.internal_error".to_string(),
-                        message: "Child Node not found".to_string(),
-                    })?;
+                let child_node = self.get_node(db, txn_batch, &child_prefix).ok_or(
+                    TrieError::ChildNotFound {
+                        char: *char,
+                        prefix: prefix.to_vec(),
+                    },
+                )?;
 
                 children.insert(
                     *char,
@@ -275,9 +245,8 @@ impl MerkleTrie {
                 children,
             })
         } else {
-            Err(HubError {
-                code: "bad_request.invalid_param".to_string(),
-                message: "Node not found".to_string(),
+            Err(TrieError::NodeNotFound {
+                prefix: prefix.to_vec(),
             })
         }
     }
