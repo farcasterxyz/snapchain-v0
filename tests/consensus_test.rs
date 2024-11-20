@@ -348,73 +348,6 @@ async fn test_basic_consensus() {
     }
 }
 
-#[tokio::test]
-async fn test_basic_sync() {
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .try_init();
-
-    let keypair4 = Keypair::generate();
-
-    // Set up shard and validators
-
-    let num_shards = 1;
-
-    let mut network = TestNetwork::create(3, num_shards, 3200).await;
-
-    network.produce_blocks(3).await;
-
-    let node4 = NodeForTest::create(keypair4.clone(), num_shards, 3207).await;
-    node4.register_keypair(keypair4.clone(), format!("0.0.0.0:{}", 3207));
-    node4.cast(ConsensusMsg::RegisterValidator(SnapchainValidator::new(
-        SnapchainShard::new(0),
-        network.nodes[0].keypair.public().clone(),
-        Some(network.nodes[0].grpc_addr.clone()),
-        network.nodes[0].num_blocks().await as u64,
-    )));
-    node4.cast(ConsensusMsg::RegisterValidator(SnapchainValidator::new(
-        SnapchainShard::new(1),
-        network.nodes[0].keypair.public().clone(),
-        Some(network.nodes[0].grpc_addr.clone()),
-        network.nodes[0].num_shard_chunks().await as u64,
-    )));
-
-    let timeout = tokio::time::Duration::from_secs(5);
-    let start = tokio::time::Instant::now();
-    let mut timer = time::interval(tokio::time::Duration::from_millis(10));
-    loop {
-        let _ = timer.tick().await;
-        if node4.num_blocks().await >= network.nodes[0].num_blocks().await {
-            break;
-        }
-        if start.elapsed() > timeout {
-            break;
-        }
-    }
-
-    assert!(
-        network.nodes[0].num_blocks().await >= 3,
-        "Node 1 should have confirmed blocks"
-    );
-    assert!(
-        network.nodes[1].num_blocks().await >= 3,
-        "Node 2 should have confirmed blocks"
-    );
-    assert!(
-        network.nodes[2].num_blocks().await >= 3,
-        "Node 3 should have confirmed blocks"
-    );
-    assert!(
-        node4.num_blocks().await >= network.nodes[0].num_blocks().await,
-        "Node 4 should have confirmed blocks"
-    );
-    assert!(
-        node4.num_shard_chunks().await >= network.nodes[0].num_shard_chunks().await,
-        "Node 4 should have confirmed shard chunks"
-    );
-}
-
 async fn wait_for_blocks(new_node: &NodeForTest, old_node: &NodeForTest) {
     let timeout = tokio::time::Duration::from_secs(5);
     let start = tokio::time::Instant::now();
@@ -440,7 +373,7 @@ async fn wait_for_blocks(new_node: &NodeForTest, old_node: &NodeForTest) {
 }
 
 #[tokio::test]
-async fn test_sync_on_proposal() {
+async fn test_basic_sync() {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(env_filter)
@@ -479,13 +412,12 @@ async fn test_sync_on_proposal() {
         network.nodes[0].num_shard_chunks().await as u64,
     )));
 
-    wait_for_blocks(&node4, &network.nodes[0]).await;
-
-    // This is a block that shows up in between initial sync and the first proposal node 4 sees.
-    network.produce_blocks(1).await;
+    // Node 4 won't see these blocks directly.
+    network.produce_blocks(3).await;
 
     network.add_node(node4);
 
+    // Node 4 picks up the blocks it missed on the first proposals from each validator.
     network.produce_blocks(1).await;
 
     wait_for_blocks(&network.nodes[3], &network.nodes[0]).await;

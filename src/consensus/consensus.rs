@@ -325,12 +325,6 @@ impl Consensus {
                 // let total_peers = state.consensus.driver.validator_set().count() - 1;
 
                 // println!("Connected to {connected_peers}/{total_peers} peers");
-                if validator.current_height > state.shard_validator.get_current_height() {
-                    state
-                        .shard_validator
-                        .sync_against_validator(&validator)
-                        .await;
-                }
 
                 self.metrics.connected_peers.inc();
 
@@ -365,7 +359,9 @@ impl Consensus {
                     panic!("Node is too far behind to join consensus. Try restarting. Current block number {}. Expected block number {}", current_height, height.block_number )
                 }
 
-                if state.shard_validator.first_proposal
+                if !state
+                    .shard_validator
+                    .saw_proposal_from_validator(full_proposal.proposer_address())
                     && (height.block_number > current_height + 1)
                 {
                     let validator_set = state.shard_validator.get_validator_set();

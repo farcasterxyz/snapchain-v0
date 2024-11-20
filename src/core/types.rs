@@ -47,7 +47,7 @@ pub trait ShardedContext {
 pub trait SnapchainContext: malachite_common::Context + ShardedContext {}
 
 // TODO: Should validator keys be ECDSA?
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Address(pub [u8; 32]);
 
 impl Address {

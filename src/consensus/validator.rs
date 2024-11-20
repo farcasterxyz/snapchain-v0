@@ -6,6 +6,7 @@ use crate::core::types::{
 use crate::proto::snapchain::FullProposal;
 use malachite_common::{Round, ValidatorSet};
 use malachite_consensus::ProposedValue;
+use std::collections::HashSet;
 use std::time::Duration;
 use tracing::error;
 
@@ -22,7 +23,7 @@ pub struct ShardValidator {
     block_proposer: Option<BlockProposer>,
     shard_proposer: Option<ShardProposer>,
     pub started: bool,
-    pub first_proposal: bool,
+    pub saw_proposal_from_validator: HashSet<Address>,
 }
 
 impl ShardValidator {
@@ -43,7 +44,7 @@ impl ShardValidator {
             block_proposer,
             shard_proposer,
             started: false,
-            first_proposal: true,
+            saw_proposal_from_validator: HashSet::new(),
         }
     }
 
@@ -70,6 +71,10 @@ impl ShardValidator {
 
     pub fn start(&mut self) {
         self.started = true;
+    }
+
+    pub fn saw_proposal_from_validator(&self, address: Address) -> bool {
+        self.saw_proposal_from_validator.contains(&address)
     }
 
     pub async fn sync_against_validator(&mut self, validator: &SnapchainValidator) {
@@ -112,7 +117,6 @@ impl ShardValidator {
         &mut self,
         full_proposal: FullProposal,
     ) -> ProposedValue<SnapchainValidatorContext> {
-        self.first_proposal = false;
         let value = full_proposal.shard_hash();
         let validity = if let Some(block_proposer) = &mut self.block_proposer {
             block_proposer.add_proposed_value(&full_proposal)
@@ -122,6 +126,8 @@ impl ShardValidator {
             panic!("No proposer set");
         };
 
+        self.saw_proposal_from_validator
+            .insert(full_proposal.proposer_address());
         ProposedValue {
             height: full_proposal.height(),
             round: full_proposal.round(),
