@@ -34,3 +34,9 @@ docker compose up --build
 ```
 
 These will be configured to communicate with each other.
+
+To query a node, you can run `grpcurl` from within the container:
+
+```
+docker compose exec node1 grpcurl -import-path proto -proto proto/rpc.proto list
+```

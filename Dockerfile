@@ -35,7 +35,21 @@ RUN target/debug/setup --propose-value-delay=250ms
 #################################################################################
 
 FROM ubuntu:24.04
+
+# Easier debugging within container
+ARG GRPCURL_VERSION=1.9.1
+RUN <<EOF
+  set -eu
+  apt-get update && apt-get install -y curl
+  curl -L https://github.com/fullstorydev/grpcurl/releases/download/v${GRPCURL_VERSION}/grpcurl_${GRPCURL_VERSION}_linux_arm64.deb > grpcurl.deb
+  dpkg -i grpcurl.deb
+  rm grpcurl.deb
+  apt-get remove -y curl
+  apt clean -y
+EOF
+
 WORKDIR /app
+COPY --from=builder /usr/src/app/src/proto /app/proto
 COPY --from=builder /usr/src/app/nodes /app/nodes
 COPY --from=builder /usr/src/app/target/debug/snapchain /app/
 
