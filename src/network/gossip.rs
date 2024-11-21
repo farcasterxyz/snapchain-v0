@@ -50,7 +50,7 @@ impl Config {
     pub fn bootstrap_addrs(&self) -> Vec<String> {
         self.bootstrap_peers
             .split(',')
-            .map(|s| s.to_string().trim())
+            .map(|s| s.trim().to_string())
             .collect()
     }
 }
