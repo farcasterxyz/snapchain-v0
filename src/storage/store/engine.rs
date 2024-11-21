@@ -99,8 +99,9 @@ impl ShardEngine {
 
         let event_handler = StoreEventHandler::new(None, None, None);
         let db = shard_store.db.clone();
-        let cast_store = CastStore::new(shard_store.db.clone(), event_handler, 100);
-        let onchain_event_store = OnchainEventStore::new(shard_store.db.clone());
+        let cast_store = CastStore::new(shard_store.db.clone(), event_handler.clone(), 100);
+        let onchain_event_store =
+            OnchainEventStore::new(shard_store.db.clone(), event_handler.clone());
 
         let (messages_tx, messages_rx) = mpsc::channel::<message::Message>(10_000);
         let (validator_message_tx, validator_message_rx) =
@@ -230,7 +231,7 @@ impl ShardEngine {
             for msg in &snap_txn.system_messages {
                 if let Some(onchain_event) = &msg.on_chain_event {
                     self.onchain_event_store
-                        .merge_onchain_event(onchain_event.clone())
+                        .merge_onchain_event(onchain_event.clone(), txn_batch)
                         .map_err(|err| EngineError::MergeOnchainEventError(err.to_string()))?;
 
                     // TODO(aditi): Insert into the trie
