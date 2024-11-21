@@ -2,6 +2,7 @@ syntax = "proto3";
 package snapchain;
 
 import "message.proto";
+import "onchain_event.proto";
 
 // Common types
 
@@ -119,11 +120,6 @@ message Transaction {
   bytes account_root = 4; // State root for the account after applying the transaction for the fid
 }
 
-// OnChain events
-message OnChainEvent {
-
-}
-
 // Fname transfers
 message FnameTransfer {
 
@@ -131,7 +127,7 @@ message FnameTransfer {
 
 // Validator initiated prunes/revokes etc
 message ValidatorMessage {
-  OnChainEvent on_chain_event = 1;
+  onchain_event.OnChainEvent on_chain_event = 1;
   FnameTransfer fname_transfer = 2;
 }
 

@@ -2,7 +2,7 @@ syntax = "proto3";
 package hub_event;
 
 import "message.proto";
-//import "onchain_event.proto";
+import "onchain_event.proto";
 import "username_proof.proto";
 
 enum HubEventType {
@@ -33,10 +33,9 @@ message RevokeMessageBody {
   msg.Message message = 1;
 }
 
-// TODO: Include once we have onchain events
-//message MergeOnChainEventBody {
-//  OnChainEvent on_chain_event = 1;
-//}
+message MergeOnChainEventBody {
+  onchain_event.OnChainEvent on_chain_event = 1;
+}
 
 message MergeUserNameProofBody {
   username_proof.UserNameProof username_proof = 1;
@@ -59,6 +58,6 @@ message HubEvent {
     //    Deprecated
     //    MergeRentRegistryEventBody merge_rent_registry_event_body = 9;
     //    MergeStorageAdminRegistryEventBody merge_storage_admin_registry_event_body = 10;
-//    MergeOnChainEventBody merge_on_chain_event_body = 11;
+    MergeOnChainEventBody merge_on_chain_event_body = 11;
   };
 }

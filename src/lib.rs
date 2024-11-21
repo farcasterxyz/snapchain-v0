@@ -33,4 +33,8 @@ pub mod proto {
     pub mod sync_trie {
         tonic::include_proto!("sync_trie");
     }
+
+    pub mod onchain_event {
+        tonic::include_proto!("onchain_event");
+    }
 }

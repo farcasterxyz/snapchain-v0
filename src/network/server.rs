@@ -4,6 +4,7 @@ use crate::core::error::HubError;
 use crate::proto::msg as message;
 use crate::proto::rpc::snapchain_service_server::SnapchainService;
 use crate::proto::rpc::{BlocksRequest, BlocksResponse, ShardChunksRequest, ShardChunksResponse};
+use crate::storage::store::engine::Message;
 use crate::storage::store::shard::ShardStore;
 use crate::storage::store::BlockStore;
 use hex::ToHex;
@@ -12,7 +13,7 @@ use tonic::{Request, Response, Status};
 use tracing::info;
 
 pub struct MySnapchainService {
-    message_tx: mpsc::Sender<message::Message>,
+    message_tx: mpsc::Sender<Message>,
     block_store: BlockStore,
     shard_stores: HashMap<u32, ShardStore>,
 }
@@ -21,7 +22,7 @@ impl MySnapchainService {
     pub fn new(
         block_store: BlockStore,
         shard_stores: HashMap<u32, ShardStore>,
-        message_tx: mpsc::Sender<message::Message>,
+        message_tx: mpsc::Sender<Message>,
     ) -> Self {
         Self {
             block_store,
@@ -41,7 +42,10 @@ impl SnapchainService for MySnapchainService {
         info!(hash, "Received a message");
 
         let message = request.into_inner();
-        self.message_tx.send(message.clone()).await.unwrap(); // Do we need clone here? I think yes?
+        self.message_tx
+            .send(Message::UserMessage(message.clone()))
+            .await
+            .unwrap(); // Do we need clone here? I think yes?
 
         let response = Response::new(message);
         Ok(response)

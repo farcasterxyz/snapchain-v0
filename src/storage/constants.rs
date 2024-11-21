@@ -27,8 +27,7 @@ pub enum RootPrefix {
     // FNameUserNameProof = 11,
 
     // /* Used to store on chain events */
-    // OnChainEvent = 12,
-
+    OnChainEvent = 12,
     // /** DB Schema version */
     // DBSchemaVersion = 13,
 
@@ -90,4 +89,12 @@ impl UserPostfix {
     pub fn as_u8(self) -> u8 {
         self as u8
     }
+}
+pub enum OnChainEventPostfix {
+    OnChainEvents = 1,
+
+    // Secondary indexes
+    SignerByFid = 51,
+    IdRegisterByFid = 52,
+    IdRegisterByCustodyAddress = 53,
 }
