@@ -13,7 +13,7 @@ async fn main() {
             .unwrap(),
     );
 
-    let mut client = SnapchainServiceClient::connect("http://127.0.0.1:3383".to_string())
+    let mut client = SnapchainServiceClient::connect("https://52.73.172.10:13383".to_string())
         .await
         .unwrap();
 

@@ -92,6 +92,7 @@ async fn main() {
                 "https://52.73.172.10:13383".to_string(),
                 "https://3.219.203.198:13383".to_string(),
                 "https://98.85.82.165:13383".to_string(),
+                "https://52.21.4.237:13383".to_string(),
             ],
             follow_blocks_rpc_addr: "https://52.73.172.10:13383".to_string(),
             submit_message_interval: Some(Duration::from_micros(500)),

@@ -7,7 +7,7 @@ use tokio::time;
 
 #[tokio::main]
 async fn main() {
-    let addr = "http://127.0.0.1:3383".to_string();
+    let addr = "https://52.73.172.10:13383".to_string();
     let (block_tx, mut block_rx) = mpsc::channel(1000);
     tokio::spawn(async move {
         follow_blocks(addr, block_tx).await.unwrap();
