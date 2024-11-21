@@ -13,7 +13,7 @@ pub enum OnchainEventStorageError {
     RocksdbError(#[from] RocksdbError),
 }
 
-pub fn put_onchain_event(
+pub fn merge_onchain_event(
     db: &RocksDB,
     onchain_event: OnChainEvent,
 ) -> Result<(), OnchainEventStorageError> {
@@ -31,10 +31,10 @@ impl OnchainEventStore {
         OnchainEventStore { db }
     }
 
-    pub fn put_onchain_event(
-        &mut self,
+    pub fn merge_onchain_event(
+        &self,
         onchain_event: OnChainEvent,
     ) -> Result<(), OnchainEventStorageError> {
-        put_onchain_event(&self.db, onchain_event)
+        merge_onchain_event(&self.db, onchain_event)
     }
 }

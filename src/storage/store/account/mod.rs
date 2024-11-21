@@ -1,6 +1,7 @@
 pub use self::cast_store::*;
 pub use self::event::*;
 pub use self::message::*;
+pub use self::onchain_event_store::*;
 pub use self::store::*;
 // pub use self::link_store::*;
 

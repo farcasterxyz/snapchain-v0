@@ -43,6 +43,9 @@ enum EngineError {
 
     #[error("message receive error")]
     MessageReceiveError(#[from] mpsc::error::TryRecvError),
+
+    #[error("unable to merge onchain events during commit: {0}")]
+    MergeOnchainEventError(String),
 }
 
 impl EngineError {
@@ -64,8 +67,8 @@ pub struct ShardEngine {
     shard_store: ShardStore,
     messages_rx: mpsc::Receiver<message::Message>,
     messages_tx: mpsc::Sender<message::Message>,
-    onchain_events_rx: mpsc::Receiver<snapchain::OnChainEvent>,
-    onchain_events_tx: mpsc::Sender<snapchain::OnChainEvent>,
+    validator_message_rx: mpsc::Receiver<snapchain::ValidatorMessage>,
+    validator_message_tx: mpsc::Sender<snapchain::ValidatorMessage>,
     trie: merkle_trie::MerkleTrie,
     cast_store: Store,
     pub db: Arc<RocksDB>,
@@ -100,15 +103,15 @@ impl ShardEngine {
         let onchain_event_store = OnchainEventStore::new(shard_store.db.clone());
 
         let (messages_tx, messages_rx) = mpsc::channel::<message::Message>(10_000);
-        let (onchain_events_tx, onchain_events_rx) =
-            mpsc::channel::<snapchain::OnChainEvent>(10_000);
+        let (validator_message_tx, validator_message_rx) =
+            mpsc::channel::<snapchain::ValidatorMessage>(10_000);
         ShardEngine {
             shard_id,
             shard_store,
             messages_rx,
             messages_tx,
-            onchain_events_rx,
-            onchain_events_tx,
+            validator_message_tx,
+            validator_message_rx,
             trie,
             cast_store,
             db,
@@ -164,9 +167,9 @@ impl ShardEngine {
         // TODO: Group by fid so we only have a single txn per block per fid
         let mut transactions = vec![];
         let snap_txn = snapchain::Transaction {
-            fid: 1234,                      //TODO
-            account_root: vec![5, 5, 6, 6], //TODO
-            system_messages: vec![],        //TODO
+            fid: 1234,                               //TODO
+            account_root: vec![5, 5, 6, 6],          //TODO
+            system_messages: merged_system_messages, //TODO
             user_messages: merged_messages,
         };
         transactions.push(snap_txn);
@@ -221,6 +224,16 @@ impl ShardEngine {
                     unhandled_type => {
                         return Err(EngineError::UnsupportedMessageType(unhandled_type));
                     }
+                }
+            }
+
+            for msg in &snap_txn.system_messages {
+                if let Some(onchain_event) = &msg.on_chain_event {
+                    self.onchain_event_store
+                        .merge_onchain_event(onchain_event.clone())
+                        .map_err(|err| EngineError::MergeOnchainEventError(err.to_string()))?;
+
+                    // TODO(aditi): Insert into the trie
                 }
             }
         }
