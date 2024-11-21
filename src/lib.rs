@@ -19,7 +19,7 @@ pub mod proto {
     }
 
     pub mod msg {
-        tonic::include_proto!("message");
+        tonic::include_proto!("msg");
     }
 
     pub mod hub_event {
