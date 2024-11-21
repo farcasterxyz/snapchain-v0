@@ -89,11 +89,11 @@ async fn main() {
         // },
         Scenario {
             submit_message_rpc_addrs: vec![
-                "http://127.0.0.1:3383".to_string(),
-                "http://127.0.0.1:3384".to_string(),
-                "http://127.0.0.1:3385".to_string(),
+                "https://52.73.172.10:13383".to_string(),
+                "https://3.219.203.198:13383".to_string(),
+                "https://98.85.82.165:13383".to_string(),
             ],
-            follow_blocks_rpc_addr: "http://127.0.0.1:3383".to_string(),
+            follow_blocks_rpc_addr: "https://52.73.172.10:13383".to_string(),
             submit_message_interval: Some(Duration::from_micros(500)),
         },
     ];
