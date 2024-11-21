@@ -3,8 +3,8 @@ use super::super::{
     db::{RocksDB, RocksDbTransactionBatch},
     util::{blake3_20, bytes_compare},
 };
+use super::errors::TrieError;
 use super::merkle_trie::TrieSnapshot;
-use crate::core::error::HubError;
 use crate::proto::sync_trie::DbTrieNode;
 use prost::Message as _;
 use std::collections::HashMap;
@@ -75,11 +75,8 @@ impl TrieNode {
         db_trie_node.encode_to_vec()
     }
 
-    pub(crate) fn deserialize(serialized: &[u8]) -> Result<TrieNode, HubError> {
-        let db_trie_node = DbTrieNode::decode(serialized).map_err(|e| HubError {
-            code: "bad_request.invalid_param".to_string(),
-            message: format!("Failed to decode trie node: {}", e),
-        })?;
+    pub(crate) fn deserialize(serialized: &[u8]) -> Result<TrieNode, TrieError> {
+        let db_trie_node = DbTrieNode::decode(serialized).map_err(TrieError::wrap_deserialize)?;
 
         let mut children = HashMap::new();
         for char in db_trie_node.child_chars {
@@ -162,12 +159,9 @@ impl TrieNode {
         txn: &mut RocksDbTransactionBatch,
         mut keys: Vec<Vec<u8>>,
         current_index: usize,
-    ) -> Result<Vec<bool>, HubError> {
+    ) -> Result<Vec<bool>, TrieError> {
         if keys.len() == 0 {
-            return Err(HubError {
-                code: "bad_request.invalid_param".to_string(),
-                message: "No keys to insert".to_string(),
-            });
+            return Err(TrieError::NoKeysToInsert);
         }
 
         // Note that all the keys will have the same prefix, so we can get the [0]th one
@@ -231,10 +225,7 @@ impl TrieNode {
             .iter()
             .any(|(_, key)| current_index >= key.len())
         {
-            return Err(HubError {
-                code: "bad_request.invalid_param".to_string(),
-                message: "Key length exceeded".to_string(),
-            });
+            return Err(TrieError::KeyLengthExceeded);
         }
 
         // For the remaining keys, group them by the key[current_index] and insert them in bulk
@@ -283,7 +274,7 @@ impl TrieNode {
         txn: &mut RocksDbTransactionBatch,
         keys: Vec<Vec<u8>>,
         current_index: usize,
-    ) -> Result<Vec<bool>, HubError> {
+    ) -> Result<Vec<bool>, TrieError> {
         let prefix = keys[0][..current_index].to_vec();
         let mut results = keys.iter().map(|_| false).collect::<Vec<bool>>();
 
@@ -307,10 +298,7 @@ impl TrieNode {
 
         // Check if any of the remaining keys are invalid
         if keys.iter().any(|key| current_index >= key.len()) {
-            return Err(HubError {
-                code: "bad_request.invalid_param".to_string(),
-                message: "Key length exceeded".to_string(),
-            });
+            return Err(TrieError::KeyLengthExceeded);
         }
 
         // For the remaining keys, we group them by the key[current_index] and delete them in bulk
@@ -398,7 +386,7 @@ impl TrieNode {
         db: &RocksDB,
         key: &[u8],
         current_index: usize,
-    ) -> Result<bool, HubError> {
+    ) -> Result<bool, TrieError> {
         if self.is_leaf() {
             return Ok(bytes_compare(self.key.as_ref().unwrap_or(&vec![]), key) == 0);
         }
@@ -425,7 +413,7 @@ impl TrieNode {
         db: &RocksDB,
         txn: &mut RocksDbTransactionBatch,
         current_index: usize,
-    ) -> Result<(), HubError> {
+    ) -> Result<(), TrieError> {
         let key = self.key.take().unwrap();
         let prefix = key[..current_index].to_vec();
 
@@ -449,16 +437,16 @@ impl TrieNode {
         db: &RocksDB,
         prefix: &[u8],
         char: u8,
-    ) -> Result<&mut TrieNode, HubError> {
+    ) -> Result<&mut TrieNode, TrieError> {
         use std::collections::hash_map::Entry;
 
         match self.children.entry(char) {
             Entry::Occupied(mut entry) => {
                 if let TrieNodeType::Serialized(_) = entry.get_mut() {
                     let child_prefix = Self::make_primary_key(prefix, Some(char));
-
                     let child_node = db
-                        .get(&child_prefix)?
+                        .get(&child_prefix)
+                        .map_err(TrieError::wrap_database)?
                         .map(|b| TrieNode::deserialize(&b).unwrap())
                         .unwrap_or_default();
 
@@ -466,20 +454,17 @@ impl TrieNode {
                 }
                 match entry.into_mut() {
                     TrieNodeType::Node(node) => Ok(node),
-                    _ => Err(HubError {
-                        code: "bad_request.invalid_param".to_string(),
-                        message: format!("Child {} is not a node", char),
-                    }),
+                    _ => Err(TrieError::InvalidChildNode { child_char: char }),
                 }
             }
-            Entry::Vacant(_) => Err(HubError {
-                code: "bad_request.invalid_param".to_string(),
-                message: format!("Child {} at prefix {:?} not found", char, prefix),
+            Entry::Vacant(_) => Err(TrieError::ChildNotFound {
+                char,
+                prefix: prefix.to_vec(),
             }),
         }
     }
 
-    fn update_hash(&mut self, db: &RocksDB, prefix: &[u8]) -> Result<(), HubError> {
+    fn update_hash(&mut self, db: &RocksDB, prefix: &[u8]) -> Result<(), TrieError> {
         if self.is_leaf() {
             self.hash = blake3_20(&self.key.as_ref().unwrap_or(&vec![]));
         } else {
@@ -516,16 +501,14 @@ impl TrieNode {
 
             self.hash = blake3_20(&concat_hashes);
         }
-
         Ok(())
     }
-
     fn excluded_hash(
         &mut self,
         db: &RocksDB,
         prefix: &[u8],
         prefix_char: u8,
-    ) -> Result<(usize, String), HubError> {
+    ) -> Result<(usize, String), TrieError> {
         let mut excluded_items = 0;
         let mut child_hashes = vec![];
 
@@ -573,7 +556,7 @@ impl TrieNode {
         &mut self,
         db: &RocksDB,
         prefix: &[u8],
-    ) -> Result<Vec<Vec<u8>>, HubError> {
+    ) -> Result<Vec<Vec<u8>>, TrieError> {
         if self.is_leaf() {
             return Ok(vec![self.key.clone().unwrap_or(vec![])]);
         }
@@ -602,7 +585,7 @@ impl TrieNode {
         db: &RocksDB,
         prefix: &[u8],
         current_index: usize,
-    ) -> Result<TrieSnapshot, HubError> {
+    ) -> Result<TrieSnapshot, TrieError> {
         let mut excluded_hashes = vec![];
         let mut num_messages = 0;
 
@@ -637,7 +620,7 @@ impl TrieNode {
     }
 
     // Keeping this around since it is useful for debugging
-    // pub fn print(&self, prefix: u8, depth: usize) -> Result<(), HubError> {
+    // pub fn print(&self, prefix: u8, depth: usize) -> Result<(), TrieError> {
     //     let indent = "  ".repeat(depth);
     //     let key = self
     //         .key

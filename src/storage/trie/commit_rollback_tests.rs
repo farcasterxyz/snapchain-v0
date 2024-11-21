@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use crate::core::error::HubError;
     use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
+    use crate::storage::trie::errors::TrieError;
     use crate::storage::trie::merkle_trie::MerkleTrie;
     use hex;
     use rand::{seq::SliceRandom, thread_rng};
@@ -21,10 +21,10 @@ mod tests {
     }
 
     #[test]
-    fn test_merkle_trie_basic_operations() -> Result<(), HubError> {
-        let dir = TempDir::new()?;
+    fn test_merkle_trie_basic_operations() -> Result<(), TrieError> {
+        let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("a.db");
-        let mut t = MerkleTrie::new()?;
+        let mut t = MerkleTrie::new();
         let db = &RocksDB::new(db_path.to_str().unwrap());
         db.open().unwrap();
 
@@ -40,7 +40,7 @@ mod tests {
             ],
         )?;
 
-        db.commit(txn_batch)?;
+        db.commit(txn_batch).unwrap();
         t.reload(db).unwrap();
 
         let mut txn_batch = RocksDbTransactionBatch::new();
@@ -69,8 +69,8 @@ mod tests {
     }
 
     #[test]
-    fn test_merkle_trie_with_large_data() -> Result<(), HubError> {
-        let dir = TempDir::new()?;
+    fn test_merkle_trie_with_large_data() -> Result<(), TrieError> {
+        let dir = TempDir::new().unwrap();
         let hashes1 = generate_hashes(vec![1], 10_000);
 
         let hashes2 = {
@@ -85,7 +85,7 @@ mod tests {
             let db = &RocksDB::new(db_path.to_str().unwrap());
             db.open().unwrap();
 
-            let mut t1 = MerkleTrie::new()?;
+            let mut t1 = MerkleTrie::new();
             let mut txn_batch = RocksDbTransactionBatch::new();
 
             t1.initialize(db, &mut txn_batch)?;
@@ -103,7 +103,7 @@ mod tests {
             let db = &RocksDB::new(db_path.to_str().unwrap());
             db.open().unwrap();
 
-            let mut t2 = MerkleTrie::new()?;
+            let mut t2 = MerkleTrie::new();
             let mut txn_batch = RocksDbTransactionBatch::new();
 
             t2.initialize(db, &mut txn_batch)?;

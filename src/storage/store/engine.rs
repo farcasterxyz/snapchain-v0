@@ -61,7 +61,7 @@ impl ShardEngine {
 
         // TODO: adding the trie here introduces many calls that want to return errors. Rethink unwrap strategy.
         let mut txn_batch = RocksDbTransactionBatch::new();
-        let mut trie = merkle_trie::MerkleTrie::new().unwrap();
+        let mut trie = merkle_trie::MerkleTrie::new();
         trie.initialize(db, &mut txn_batch).unwrap();
 
         // TODO: The empty trie currently has some issues with the newly added commit/rollback code. Remove when we can.
