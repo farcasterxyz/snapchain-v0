@@ -91,7 +91,7 @@ impl ShardEngine {
 
         let event_handler = StoreEventHandler::new(None, None, None);
         let db = shard_store.db.clone();
-        let cast_store = CastStore::new(db.clone(), event_handler, 100);
+        let cast_store = CastStore::new(shard_store.db.clone(), event_handler, 100);
 
         let (messages_tx, messages_rx) = mpsc::channel::<message::Message>(10_000);
         ShardEngine {
@@ -113,7 +113,11 @@ impl ShardEngine {
         self.trie.root_hash().unwrap()
     }
 
-    fn prepare_proposal(&mut self, shard_id: u32) -> Result<ShardStateChange, EngineError> {
+    fn prepare_proposal(
+        &mut self,
+        txn_batch: &mut RocksDbTransactionBatch,
+        shard_id: u32,
+    ) -> Result<ShardStateChange, EngineError> {
         let mut user_messages = Vec::new();
 
         loop {
@@ -124,8 +128,6 @@ impl ShardEngine {
             }
         }
 
-        let db = &*self.shard_store.db;
-        let mut txn_batch = RocksDbTransactionBatch::new();
         let mut merged_messages: Vec<message::Message> = vec![];
 
         for msg in &user_messages {
@@ -136,11 +138,11 @@ impl ShardEngine {
             match msg_type {
                 MessageType::CastAdd => {
                     self.cast_store
-                        .merge(msg, &mut txn_batch)
+                        .merge(msg, txn_batch)
                         .map_err(EngineError::new_store_error(msg.hash.clone()))?;
                     merged_messages.push(msg.clone());
                     self.trie
-                        .insert(db, &mut txn_batch, vec![msg.hash.clone()])?;
+                        .insert(&*self.db, txn_batch, vec![msg.hash.clone()])?;
                 }
                 unhandled_type => {
                     return Err(EngineError::UnsupportedMessageType(unhandled_type));
@@ -166,22 +168,22 @@ impl ShardEngine {
             transactions,
         };
 
-        // TODO: use drop trait?
-        self.trie.reload(db)?;
-
         Ok(result)
     }
 
     pub fn propose_state_change(&mut self, shard: u32) -> ShardStateChange {
-        let result = self.prepare_proposal(shard).unwrap(); //TODO: don't unwrap()
+        let mut txn = RocksDbTransactionBatch::new();
+        let result = self.prepare_proposal(&mut txn, shard).unwrap(); //TODO: don't unwrap()
+
+        // TODO: use drop trait?
+        self.trie.reload(&*self.db).unwrap();
+
         result
     }
 
     fn replay_proposal(
-        trie: &mut merkle_trie::MerkleTrie,
-        db: &db::RocksDB,
+        &mut self,
         txn_batch: &mut RocksDbTransactionBatch,
-        cast_store: &Store,
         transactions: &[Transaction],
         shard_root: &[u8],
     ) -> Result<(), EngineError> {
@@ -195,13 +197,14 @@ impl ShardEngine {
 
                 match msg_type {
                     MessageType::CastAdd => {
-                        cast_store
+                        self.cast_store
                             .merge(msg, txn_batch)
                             .map_err(EngineError::new_store_error(msg.hash.clone()))?;
 
                         merged_messages.push(msg.clone());
 
-                        trie.insert(db, txn_batch, vec![msg.hash.clone()])?;
+                        self.trie
+                            .insert(&*self.db, txn_batch, vec![msg.hash.clone()])?;
                     }
 
                     unhandled_type => {
@@ -211,7 +214,7 @@ impl ShardEngine {
             }
         }
 
-        let root1 = trie.root_hash()?;
+        let root1 = self.trie.root_hash()?;
 
         if &root1 != shard_root {
             return Err(EngineError::HashMismatch);
@@ -228,15 +231,7 @@ impl ShardEngine {
 
         let mut result = true;
 
-        let db = &*self.shard_store.db;
-        if let Err(err) = Self::replay_proposal(
-            &mut self.trie,
-            db,
-            &mut txn,
-            &self.cast_store,
-            transactions,
-            shard_root,
-        ) {
+        if let Err(err) = self.replay_proposal(&mut txn, transactions, shard_root) {
             error!("State change validation failed: {}", err);
             result = false;
         }
@@ -251,20 +246,12 @@ impl ShardEngine {
         let shard_root = &shard_chunk.header.as_ref().unwrap().shard_root;
         let transactions = &shard_chunk.transactions;
 
-        let db = &*self.shard_store.db;
-        if let Err(err) = Self::replay_proposal(
-            &mut self.trie,
-            db,
-            &mut txn,
-            &self.cast_store,
-            transactions,
-            shard_root,
-        ) {
+        if let Err(err) = self.replay_proposal(&mut txn, transactions, shard_root) {
             error!("State change commit failed: {}", err);
             panic!("State change commit failed: {}", err);
         }
 
-        db.commit(txn).unwrap();
+        self.db.commit(txn).unwrap();
         self.trie.reload(&*self.shard_store.db).unwrap();
 
         match self.shard_store.put_shard_chunk(shard_chunk) {
