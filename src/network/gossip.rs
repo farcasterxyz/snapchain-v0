@@ -116,6 +116,7 @@ impl SnapchainGossip {
             .build();
 
         for addr in config.bootstrap_addrs() {
+            info!("Processing bootstrap peer: {:?}", addr);
             let parsed_addr: libp2p::Multiaddr = addr.parse()?;
             let opts = DialOpts::unknown_peer_id()
                 .address(parsed_addr.clone())
