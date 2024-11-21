@@ -4,7 +4,9 @@ use crate::core::types::{proto, Height};
 use crate::proto::{msg as message, snapchain};
 use crate::storage::db;
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch};
-use crate::storage::store::account::{CastStore, MessagesPage, Store, StoreEventHandler};
+use crate::storage::store::account::{
+    CastStore, MessagesPage, OnchainEventStore, Store, StoreEventHandler,
+};
 use crate::storage::store::BlockStore;
 use crate::storage::trie;
 use crate::storage::trie::merkle_trie;
@@ -62,9 +64,12 @@ pub struct ShardEngine {
     shard_store: ShardStore,
     messages_rx: mpsc::Receiver<message::Message>,
     messages_tx: mpsc::Sender<message::Message>,
+    onchain_events_rx: mpsc::Receiver<snapchain::OnChainEvent>,
+    onchain_events_tx: mpsc::Sender<snapchain::OnChainEvent>,
     trie: merkle_trie::MerkleTrie,
     cast_store: Store,
     pub db: Arc<RocksDB>,
+    onchain_event_store: OnchainEventStore,
 }
 
 fn encode_vec(data: &[Vec<u8>]) -> String {
@@ -92,16 +97,22 @@ impl ShardEngine {
         let event_handler = StoreEventHandler::new(None, None, None);
         let db = shard_store.db.clone();
         let cast_store = CastStore::new(shard_store.db.clone(), event_handler, 100);
+        let onchain_event_store = OnchainEventStore::new(shard_store.db.clone());
 
         let (messages_tx, messages_rx) = mpsc::channel::<message::Message>(10_000);
+        let (onchain_events_tx, onchain_events_rx) =
+            mpsc::channel::<snapchain::OnChainEvent>(10_000);
         ShardEngine {
             shard_id,
             shard_store,
             messages_rx,
             messages_tx,
+            onchain_events_rx,
+            onchain_events_tx,
             trie,
             cast_store,
             db,
+            onchain_event_store,
         }
     }
 

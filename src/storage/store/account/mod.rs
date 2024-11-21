@@ -12,6 +12,7 @@ pub use self::store::*;
 mod cast_store;
 mod event;
 mod message;
+mod onchain_event_store;
 mod store;
 // mod link_store;
 
