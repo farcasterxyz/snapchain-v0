@@ -2,6 +2,7 @@
 mod tests {
     use crate::proto::hub_event::{HubEvent, MergeMessageBody};
     use crate::proto::msg as message;
+    use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
     use crate::proto::snapchain::{Height, ShardChunk, ShardHeader, Transaction};
     use crate::storage::db;
     use crate::storage::store::engine::{Message, ShardEngine, ShardStateChange};
@@ -78,6 +79,22 @@ mod tests {
 
     fn default_message(text: &str) -> message::Message {
         cli::compose_message(1234, text, Some(0), None)
+    }
+
+    fn default_onchain_event() -> OnChainEvent {
+        OnChainEvent {
+            r#type: OnChainEventType::EventTypeIdRegister as i32,
+            chain_id: 0,
+            block_number: 0,
+            block_hash: vec![],
+            block_timestamp: 0,
+            transaction_hash: vec![],
+            log_index: 0,
+            fid: 1,
+            tx_index: 0,
+            version: 1,
+            body: None,
+        }
     }
 
     fn entities() -> (message::Message, message::Message) {
@@ -339,5 +356,39 @@ mod tests {
             assert_eq!(height.shard_index, 1);
             // assert_eq!(height.block_number, 1); // TODO
         }
+    }
+
+    #[tokio::test]
+    async fn test_engine_send_onchain_event() {
+        let onchain_event = default_onchain_event();
+        let (mut engine, _tmpdir) = new_engine();
+        let messages_tx = engine.messages_tx();
+        messages_tx
+            .send(Message::ValidatorMessage(
+                crate::proto::snapchain::ValidatorMessage {
+                    on_chain_event: Some(onchain_event),
+                    fname_transfer: None,
+                },
+            ))
+            .await
+            .unwrap();
+        let state_change = engine.propose_state_change(1);
+        assert_eq!(1, state_change.shard_id);
+        assert_eq!(state_change.transactions.len(), 1);
+        assert_eq!(1, state_change.transactions[0].system_messages.len());
+
+        let valid = engine.validate_state_change(&state_change);
+        assert!(valid);
+
+        let chunk = state_change_to_shard_chunk(1, 1, &state_change);
+        engine.commit_shard_chunk(chunk);
+
+        let height = engine.get_confirmed_height();
+        assert_eq!(height.shard_index, 1);
+
+        let stored_onchain_events = engine
+            .get_onchain_events(OnChainEventType::EventTypeIdRegister, 1)
+            .unwrap();
+        assert_eq!(stored_onchain_events.len(), 1);
     }
 }

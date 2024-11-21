@@ -1,6 +1,8 @@
+use super::account::{OnchainEventStorageError, OnchainEventsPage};
 use super::shard::ShardStore;
 use crate::core::error::HubError;
 use crate::core::types::{proto, Height};
+use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
 use crate::proto::{msg as message, snapchain};
 use crate::storage::db;
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch};
@@ -326,6 +328,14 @@ impl ShardEngine {
 
     pub fn get_casts_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
         CastStore::get_cast_adds_by_fid(&self.cast_store, fid, &PageOptions::default())
+    }
+
+    pub fn get_onchain_events(
+        &self,
+        event_type: OnChainEventType,
+        fid: u32,
+    ) -> Result<Vec<OnChainEvent>, OnchainEventStorageError> {
+        self.onchain_event_store.get_onchain_events(event_type, fid)
     }
 }
 
