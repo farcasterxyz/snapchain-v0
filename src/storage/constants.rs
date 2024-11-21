@@ -90,3 +90,11 @@ impl UserPostfix {
         self as u8
     }
 }
+pub enum OnChainEventPostfix {
+    OnChainEvents = 1,
+
+    // Secondary indexes
+    SignerByFid = 51,
+    IdRegisterByFid = 52,
+    IdRegisterByCustodyAddress = 53,
+}
