@@ -4,10 +4,9 @@ mod tests {
     use crate::proto::msg as message;
     use crate::proto::snapchain::{Height, ShardChunk, ShardHeader, Transaction};
     use crate::storage::db;
-    use crate::storage::store::engine::{ShardEngine, ShardStateChange};
+    use crate::storage::store::engine::{Message, ShardEngine, ShardStateChange};
     use crate::storage::store::shard::ShardStore;
     use crate::utils::cli;
-    use message::Message;
     use prost::Message as _;
     use tempfile;
     use tracing_subscriber::EnvFilter;
@@ -77,11 +76,11 @@ mod tests {
         }
     }
 
-    fn default_message(text: &str) -> Message {
+    fn default_message(text: &str) -> message::Message {
         cli::compose_message(1234, text, Some(0), None)
     }
 
-    fn entities() -> (Message, Message) {
+    fn entities() -> (message::Message, message::Message) {
         let msg1 = default_message("msg1");
         let msg2 = default_message("msg2");
 
@@ -163,7 +162,10 @@ mod tests {
         let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
 
-        messages_tx.send(msg1.clone()).await.unwrap();
+        messages_tx
+            .send(Message::UserMessage(msg1.clone()))
+            .await
+            .unwrap();
         let state_change = engine.propose_state_change(1);
 
         assert_eq!(1, state_change.transactions.len());
@@ -191,7 +193,7 @@ mod tests {
         let casts_result = engine.get_casts_by_fid(msg1.fid());
         let messages = casts_result.unwrap().messages_bytes;
         assert_eq!(1, messages.len());
-        let decoded = Message::decode(&*messages[0]).unwrap();
+        let decoded = message::Message::decode(&*messages[0]).unwrap();
         assert_eq!(to_hex(&msg1.hash), to_hex(&decoded.hash));
 
         // And events are generated
@@ -233,7 +235,10 @@ mod tests {
         assert_eq!(height.block_number, 0);
 
         {
-            messages_tx.send(msg1.clone()).await.unwrap();
+            messages_tx
+                .send(Message::UserMessage(msg1.clone()))
+                .await
+                .unwrap();
             let state_change = engine.propose_state_change(1);
 
             assert_eq!(1, state_change.shard_id);
@@ -259,7 +264,10 @@ mod tests {
         }
 
         {
-            messages_tx.send(msg2.clone()).await.unwrap();
+            messages_tx
+                .send(Message::UserMessage(msg2.clone()))
+                .await
+                .unwrap();
             let state_change = engine.propose_state_change(1);
 
             assert_eq!(1, state_change.shard_id);
@@ -297,8 +305,14 @@ mod tests {
         ];
 
         {
-            messages_tx.send(msg1.clone()).await.unwrap();
-            messages_tx.send(msg2.clone()).await.unwrap();
+            messages_tx
+                .send(Message::UserMessage(msg1.clone()))
+                .await
+                .unwrap();
+            messages_tx
+                .send(Message::UserMessage(msg2.clone()))
+                .await
+                .unwrap();
             let state_change = engine.propose_state_change(1);
 
             assert_eq!(1, state_change.shard_id);

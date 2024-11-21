@@ -9,7 +9,7 @@ use crate::network::gossip::GossipEvent;
 use crate::proto::msg as message;
 use crate::proto::snapchain::{Block, ShardChunk};
 use crate::storage::db::RocksDB;
-use crate::storage::store::engine::{BlockEngine, ShardEngine};
+use crate::storage::store::engine::{BlockEngine, Message, ShardEngine};
 use crate::storage::store::shard::ShardStore;
 use crate::storage::store::BlockStore;
 use libp2p::identity::ed25519::Keypair;
@@ -24,7 +24,7 @@ const MAX_SHARDS: u32 = 3;
 
 pub struct SnapchainNode {
     pub consensus_actors: BTreeMap<u32, ActorRef<ConsensusMsg<SnapchainValidatorContext>>>,
-    pub messages_tx_by_shard: HashMap<u32, mpsc::Sender<message::Message>>,
+    pub messages_tx_by_shard: HashMap<u32, mpsc::Sender<Message>>,
     pub shard_stores: HashMap<u32, ShardStore>,
     pub address: Address,
 }
@@ -45,7 +45,7 @@ impl SnapchainNode {
 
         let (shard_decision_tx, shard_decision_rx) = mpsc::channel::<ShardChunk>(100);
 
-        let mut shard_messages: HashMap<u32, mpsc::Sender<message::Message>> = HashMap::new();
+        let mut shard_messages: HashMap<u32, mpsc::Sender<Message>> = HashMap::new();
 
         let mut shard_stores: HashMap<u32, ShardStore> = HashMap::new();
 

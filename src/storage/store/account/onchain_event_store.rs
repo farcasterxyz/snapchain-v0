@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use prost::Message;
 
-use super::{make_fid_key, Store, StoreEventHandler};
+use super::{make_fid_key, StoreEventHandler};
 use crate::core::error::HubError;
 use crate::proto::hub_event::hub_event::Body;
 use crate::proto::hub_event::{HubEvent, HubEventType, MergeOnChainEventBody};
