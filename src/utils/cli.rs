@@ -1,5 +1,5 @@
 use crate::core::types::FARCASTER_EPOCH;
-use crate::proto::message;
+use crate::proto::msg as message;
 use crate::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 use crate::proto::{rpc, snapchain::Block};
 use ed25519_dalek::{SecretKey, Signer, SigningKey};

@@ -18,8 +18,12 @@ pub mod proto {
         tonic::include_proto!("rpc");
     }
 
-    pub mod message {
+    pub mod msg {
         tonic::include_proto!("message");
+    }
+
+    pub mod hub_event {
+        tonic::include_proto!("hub_event");
     }
 
     pub mod username_proof {

@@ -4,7 +4,7 @@ use crate::storage::constants::{RootPrefix, UserPostfix};
 use crate::storage::db::{PageOptions, RocksdbError};
 use crate::storage::util::increment_vec_u8;
 use crate::{
-    proto::message::{CastId, Message as MessageProto, MessageData, MessageType},
+    proto::msg::{CastId, Message as MessageProto, MessageData, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
 use prost::Message as _;

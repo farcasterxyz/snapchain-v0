@@ -1,14 +1,13 @@
 #[cfg(test)]
 mod tests {
-    use crate::proto::message;
-    use crate::proto::message::Message;
+    use crate::proto::hub_event::{HubEvent, MergeMessageBody};
+    use crate::proto::msg as message;
     use crate::proto::snapchain::{Height, ShardChunk, ShardHeader, Transaction};
     use crate::storage::db;
     use crate::storage::store::engine::{ShardEngine, ShardStateChange};
     use crate::storage::store::shard::ShardStore;
     use crate::utils::cli;
-    use ed25519_dalek::{SecretKey, SigningKey};
-    use hex::FromHex;
+    use message::Message;
     use prost::Message as _;
     use tempfile;
     use tracing_subscriber::EnvFilter;
@@ -174,6 +173,10 @@ mod tests {
         let casts_result = engine.get_casts_by_fid(msg1.fid());
         assert_eq!(0, casts_result.unwrap().messages_bytes.len());
 
+        // No events are generated either
+        let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
+        assert_eq!(0, events.events.len());
+
         let valid = engine.validate_state_change(&state_change);
         assert!(valid);
 
@@ -190,6 +193,18 @@ mod tests {
         assert_eq!(1, messages.len());
         let decoded = Message::decode(&*messages[0]).unwrap();
         assert_eq!(to_hex(&msg1.hash), to_hex(&decoded.hash));
+
+        // And events are generated
+        let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
+        assert_eq!(1, events.events.len());
+        let generated_event = match events.events[0].clone().body {
+            Some(crate::proto::hub_event::hub_event::Body::MergeMessageBody(msg)) => msg,
+            _ => panic!("Unexpected event type"),
+        };
+        assert_eq!(
+            to_hex(&msg1.hash),
+            to_hex(&generated_event.message.unwrap().hash)
+        );
     }
 
     #[tokio::test]

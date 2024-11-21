@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::core::error::HubError;
-use crate::proto::message;
+use crate::proto::msg as message;
 use crate::proto::rpc::snapchain_service_server::SnapchainService;
 use crate::proto::rpc::{BlocksRequest, BlocksResponse, ShardChunksRequest, ShardChunksResponse};
 use crate::storage::store::shard::ShardStore;

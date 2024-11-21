@@ -2,14 +2,14 @@ use super::{
     get_many_messages_as_bytes, make_cast_id_key, make_fid_key, make_message_primary_key,
     make_user_key,
     store::{Store, StoreDef},
-    MessagesPage, HASH_LENGTH, PAGE_SIZE_MAX, TRUE_VALUE, TS_HASH_LENGTH,
+    MessagesPage, StoreEventHandler, HASH_LENGTH, PAGE_SIZE_MAX, TRUE_VALUE, TS_HASH_LENGTH,
 };
 use crate::core::error::HubError;
 use crate::storage::constants::{RootPrefix, UserPostfix};
 use crate::storage::db::PageOptions;
 use crate::storage::util::{bytes_compare, increment_vec_u8};
 use crate::{
-    proto::message::{self, Message, MessageType},
+    proto::msg::{self as message, Message, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
 use std::{borrow::Borrow, convert::TryInto, sync::Arc};
@@ -363,12 +363,12 @@ pub struct CastStore {}
 impl CastStore {
     pub fn new(
         db: Arc<RocksDB>,
-        // store_event_handler: Arc<StoreEventHandler>,
+        store_event_handler: Arc<StoreEventHandler>,
         prune_size_limit: u32,
     ) -> Store {
         Store::new_with_store_def(
             db,
-            // store_event_handler,
+            store_event_handler,
             Box::new(CastStoreDef { prune_size_limit }),
         )
     }

@@ -1,8 +1,9 @@
-use super::{hub_error_to_js_throw, HubError, RootPrefix};
-use crate::{db::RocksDbTransactionBatch, protos::HubEvent};
-use neon::context::{Context, FunctionContext};
-use neon::result::JsResult;
-use neon::types::{Finalize, JsBox, JsNumber};
+use crate::core::error::HubError;
+use crate::proto::hub_event::HubEvent;
+use crate::storage::constants::{RootPrefix, PAGE_SIZE_MAX};
+use crate::storage::db::RocksDbTransactionBatch;
+use crate::storage::db::{PageOptions, RocksDB};
+use crate::storage::util::increment_vec_u8;
 use prost::Message as _;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -15,6 +16,11 @@ fn make_event_id(timestamp: u64, seq: u64) -> u64 {
     let shifted_timestamp = timestamp << SEQUENCE_BITS;
     let padded_seq = seq & ((1 << SEQUENCE_BITS) - 1); // Ensures seq fits in SEQUENCE_BITS
     shifted_timestamp | padded_seq
+}
+
+pub struct EventsPage {
+    pub events: Vec<HubEvent>,
+    pub next_page_token: Option<Vec<u8>>,
 }
 
 struct HubEventIdGenerator {
@@ -69,9 +75,6 @@ pub struct StoreEventHandler {
     generator: Arc<Mutex<HubEventIdGenerator>>,
 }
 
-// Needed to let the StoreEventHandler be owned by the JS runtime
-impl Finalize for StoreEventHandler {}
-
 impl StoreEventHandler {
     pub fn new(
         epoch: Option<u64>,
@@ -99,7 +102,7 @@ impl StoreEventHandler {
         let event_id = generator.generate_id(None)?;
         raw_event.id = event_id;
 
-        self.put_event_transaction(txn, &raw_event)?;
+        HubEvent::put_event_transaction(txn, &raw_event)?;
 
         // These two calls are made in the JS code
         // this._storageCache.processEvent(event);
@@ -107,8 +110,10 @@ impl StoreEventHandler {
 
         Ok(event_id)
     }
+}
 
-    fn make_event_key(&self, event_id: u64) -> Vec<u8> {
+impl HubEvent {
+    fn make_event_key(event_id: u64) -> Vec<u8> {
         let mut key = Vec::with_capacity(1 + 8);
 
         key.push(RootPrefix::HubEvents as u8); // HubEvents prefix, 1 byte
@@ -117,69 +122,56 @@ impl StoreEventHandler {
         key
     }
 
-    fn put_event_transaction(
-        &self,
+    pub fn put_event_transaction(
         txn: &mut RocksDbTransactionBatch,
         event: &HubEvent,
     ) -> Result<(), HubError> {
-        let key = self.make_event_key(event.id);
+        let key = Self::make_event_key(event.id);
         let value = event.encode_to_vec();
 
         txn.put(key, value);
 
         Ok(())
     }
-}
 
-impl StoreEventHandler {
-    pub fn js_create_store_event_handler(
-        mut cx: FunctionContext,
-    ) -> JsResult<JsBox<Arc<StoreEventHandler>>> {
-        // Read 3 optional arguments (u64)
-        let epoch = match cx.argument_opt(0) {
-            Some(arg) => match arg.downcast::<JsNumber, _>(&mut cx) {
-                Ok(v) => Some(v.value(&mut cx) as u64),
-                _ => None,
+    pub fn get_events(
+        db: Arc<RocksDB>,
+        start_id: u64,
+        stop_id: Option<u64>,
+        page_options: Option<PageOptions>,
+    ) -> Result<EventsPage, HubError> {
+        let start_prefix = Self::make_event_key(start_id);
+        let stop_prefix = match stop_id {
+            Some(id) => Self::make_event_key(id),
+            None => increment_vec_u8(&vec![RootPrefix::HubEvents as u8 + 1]),
+        };
+
+        let mut events = Vec::new();
+        let mut last_key = vec![];
+        let page_options = page_options.unwrap_or_else(|| PageOptions::default());
+
+        db.for_each_iterator_by_prefix_paged(
+            Some(start_prefix),
+            Some(stop_prefix),
+            &page_options,
+            |key, value| {
+                let event = HubEvent::decode(value).map_err(|e| HubError::from(e))?;
+                events.push(event);
+                if events.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
+                    last_key = key.to_vec();
+                    return Ok(true); // Stop iterating
+                }
+                Ok(false) // Continue iterating
             },
-            None => None,
-        };
+        )?;
 
-        let last_timestamp = match cx.argument_opt(1) {
-            Some(arg) => match arg.downcast::<JsNumber, _>(&mut cx) {
-                Ok(v) => Some(v.value(&mut cx) as u64),
-                _ => None,
+        Ok(EventsPage {
+            events,
+            next_page_token: if last_key.len() > 0 {
+                Some(last_key)
+            } else {
+                None
             },
-            None => None,
-        };
-
-        let last_seq = match cx.argument_opt(2) {
-            Some(arg) => match arg.downcast::<JsNumber, _>(&mut cx) {
-                Ok(v) => Some(v.value(&mut cx) as u64),
-                _ => None,
-            },
-            None => None,
-        };
-
-        Ok(cx.boxed(StoreEventHandler::new(epoch, last_timestamp, last_seq)))
-    }
-
-    pub fn js_get_next_event_id(mut cx: FunctionContext) -> JsResult<JsNumber> {
-        let this = cx.this::<JsBox<Arc<StoreEventHandler>>>()?;
-
-        // Read an optional timestamp (number) from the arguments
-        let timestamp = match cx.argument_opt(0) {
-            Some(arg) => match arg.downcast::<JsNumber, _>(&mut cx) {
-                Ok(v) => Some(v.value(&mut cx) as u64),
-                _ => None,
-            },
-            None => None,
-        };
-
-        let mut generator = this.generator.lock().unwrap();
-        let event_id = match generator.generate_id(timestamp) {
-            Ok(id) => id,
-            Err(e) => return hub_error_to_js_throw(&mut cx, e),
-        };
-        Ok(cx.number(event_id as f64))
+        })
     }
 }
