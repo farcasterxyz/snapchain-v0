@@ -4,49 +4,49 @@ on:
   pull_request:
     branches: [main]
   workflow_call:
-    inputs:
-      malachite_git_ref:
-        required: true
-        type: string
-        default: "8a9f3702eb41199bc8a7f45139adba233a04744a"
+    secrets:
+      MALACHITE_PRIVATE_REPO_SSH_KEY:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  MALACHITE_GIT_REF: "8a9f3702eb41199bc8a7f45139adba233a04744a"
+
 jobs:
-  test:
-    timeout-minutes: 5
+  build:
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/cache/restore@v4
-        id: malachite-cache
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
         with:
-          path: malachite
-          key: ${{ runner.os }}-${{ runner.arch }}-${{ inputs.malachite_git_ref }}
-      - if: ${{ steps.malachite-cache.outputs.cache-hit != 'true' }}
-        uses: actions/checkout@v4
-        with:
-          repository: farcasterxyz/malachite
-          ref: ${{ inputs.malachite_git_ref }}
-          path: malachite
-      - if: ${{ steps.malachite-cache.outputs.cache-hit != 'true' }}
-        working-directory: malachite/code
-        run: cargo build
-      - if: ${{ steps.malachite-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
-        id: malachite-cache
-        with:
-          path: malachite
-          key: ${{ runner.os }}-${{ runner.arch }}-${{ inputs.malachite_git_ref }}
+          ssh-private-key: ${{ secrets.MALACHITE_PRIVATE_REPO_SSH_KEY }}
+      - name: Build via Docker Compose, exposing SSH agent to build container
+        run: docker compose build --ssh default
+
+  test:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
 
       - uses: actions/checkout@v4
         with:
-          path: snapchain
-      - working-directory: snapchain
-        run: cargo build
-      - working-directory: snapchain
-        run: cargo test
-      - working-directory: snapchain
-        run: cargo fmt --all --check
+          repository: farcasterxyz/malachite
+          ref: ${{ env.MALACHITE_GIT_REF }}
+          path: ./malachite
+          ssh-key: ${{ secrets.MALACHITE_PRIVATE_REPO_SSH_KEY }}
 
+      - uses: actions/checkout@v4
+        with:
+          path: ./snapchain
+      - working-directory: ./snapchain
+        run: cargo test
+      - working-directory: ./snapchain
+        run: cargo fmt --all --check
