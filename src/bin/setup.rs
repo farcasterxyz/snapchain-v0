@@ -58,6 +58,7 @@ async fn main() {
 id = {id}
 rpc_address="{rpc_address}"
 rocksdb_dir="{db_dir}"
+clear_db=true
 
 [gossip]
 address="{gossip_multi_addr}"
