@@ -46,8 +46,8 @@ enum EngineError {
     #[error("message receive error")]
     MessageReceiveError(#[from] mpsc::error::TryRecvError),
 
-    #[error("unable to merge onchain events during commit: {0}")]
-    MergeOnchainEventError(String),
+    #[error(transparent)]
+    MergeOnchainEventError(#[from] OnchainEventStorageError),
 }
 
 impl EngineError {
@@ -253,8 +253,7 @@ impl ShardEngine {
             for msg in &snap_txn.system_messages {
                 if let Some(onchain_event) = &msg.on_chain_event {
                     self.onchain_event_store
-                        .merge_onchain_event(onchain_event.clone(), txn_batch)
-                        .map_err(|err| EngineError::MergeOnchainEventError(err.to_string()))?;
+                        .merge_onchain_event(onchain_event.clone(), txn_batch)?;
 
                     // TODO(aditi): Insert into the trie
                 }
