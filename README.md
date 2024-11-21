@@ -2,6 +2,17 @@
 
 Prototype for the snapchain proposal
 
+## Development Notes
+
+🚨 **We are not accepting external PRs at this time** 🚨
+
+Presently, due to our current development velocity, we don't have time to review or discuss external PRs. Any PRs opened
+against the repo will be closed.
+
+We may accept external PRs at a later date, at which point this note will be removed.
+
+Thank you for your interest in the project!
+
 ## Prerequisites
 
 Before you begin, ensure you have the following installed:
@@ -15,7 +26,7 @@ Before you begin, ensure you have the following installed:
    ```
    git clone git@github.com:informalsystems/malachite.git
    cd malachite
-   git checkout 8a9f3702eb41199bc8a7f45139adba233a04744a
+   git checkout 8a9f3702eb41199bc8a7f45139adba233a04744a # Remember to update GitHub workflow when changing
    cd code && cargo build
    ```
 2. Then clone the snapchain repo and build it:

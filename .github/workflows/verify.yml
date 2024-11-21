@@ -1,0 +1,52 @@
+name: Verify
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+    inputs:
+      malachite_git_ref:
+        required: true
+        type: string
+        default: "8a9f3702eb41199bc8a7f45139adba233a04744a"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/cache/restore@v4
+        id: malachite-cache
+        with:
+          path: malachite
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ inputs.malachite_git_ref }}
+      - if: ${{ steps.malachite-cache.outputs.cache-hit != 'true' }}
+        uses: actions/checkout@v4
+        with:
+          repository: farcasterxyz/malachite
+          ref: ${{ inputs.malachite_git_ref }}
+          path: malachite
+      - if: ${{ steps.malachite-cache.outputs.cache-hit != 'true' }}
+        working-directory: malachite/code
+        run: cargo build
+      - if: ${{ steps.malachite-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        id: malachite-cache
+        with:
+          path: malachite
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ inputs.malachite_git_ref }}
+
+      - uses: actions/checkout@v4
+        with:
+          path: snapchain
+      - working-directory: snapchain
+        run: cargo build
+      - working-directory: snapchain
+        run: cargo test
+      - working-directory: snapchain
+        run: cargo fmt --all --check
+
