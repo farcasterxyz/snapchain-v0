@@ -3,7 +3,7 @@ use super::shard::ShardStore;
 use crate::core::error::HubError;
 use crate::core::types::{proto, Height};
 use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
-use crate::proto::{msg as message, snapchain};
+use crate::proto::{hub_event, msg as message, snapchain};
 use crate::storage::db;
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch};
 use crate::storage::store::account::{
@@ -167,21 +167,9 @@ impl ShardEngine {
                     }
                 }
                 Message::UserMessage(msg) => {
-                    let data = msg.data.as_ref().ok_or(EngineError::NoMessageData)?;
-                    let msg_type = MessageType::try_from(data.r#type)
-                        .or(Err(EngineError::InvalidMessageType))?;
-                    match msg_type {
-                        MessageType::CastAdd => {
-                            self.cast_store
-                                .merge(&msg, txn_batch)
-                                .map_err(EngineError::new_store_error(msg.hash.clone()))?;
-                            merged_user_messages.push(msg.clone());
-                            self.trie
-                                .insert(&*self.db, txn_batch, vec![msg.hash.clone()])?;
-                        }
-                        unhandled_type => {
-                            return Err(EngineError::UnsupportedMessageType(unhandled_type));
-                        }
+                    let merge_result = self.merge_message(msg, txn_batch);
+                    if merge_result.is_ok() {
+                        merged_user_messages.push(msg.clone());
                     }
                 }
             }
@@ -212,8 +200,8 @@ impl ShardEngine {
         let mut txn = RocksDbTransactionBatch::new();
         let result = self.prepare_proposal(&mut txn, shard).unwrap(); //TODO: don't unwrap()
 
-        // TODO: use drop trait?
-        self.trie.reload(&*self.db).unwrap();
+        // TODO: this should probably operate automatically via drop trait
+        self.trie.reload(&self.db).unwrap();
 
         result
     }
@@ -224,30 +212,10 @@ impl ShardEngine {
         transactions: &[Transaction],
         shard_root: &[u8],
     ) -> Result<(), EngineError> {
-        let mut merged_messages: Vec<message::Message> = vec![];
-
         for snap_txn in transactions {
             for msg in &snap_txn.user_messages {
-                let data = msg.data.as_ref().ok_or(EngineError::NoMessageData)?;
-                let msg_type =
-                    MessageType::try_from(data.r#type).or(Err(EngineError::InvalidMessageType))?;
-
-                match msg_type {
-                    MessageType::CastAdd => {
-                        self.cast_store
-                            .merge(msg, txn_batch)
-                            .map_err(EngineError::new_store_error(msg.hash.clone()))?;
-
-                        merged_messages.push(msg.clone());
-
-                        self.trie
-                            .insert(&*self.db, txn_batch, vec![msg.hash.clone()])?;
-                    }
-
-                    unhandled_type => {
-                        return Err(EngineError::UnsupportedMessageType(unhandled_type));
-                    }
-                }
+                // Errors are validated based on the shard root
+                let _ = self.merge_message(msg, txn_batch);
             }
 
             for msg in &snap_txn.system_messages {
@@ -266,6 +234,52 @@ impl ShardEngine {
             return Err(EngineError::HashMismatch);
         }
 
+        Ok(())
+    }
+
+    fn merge_message(
+        &mut self,
+        msg: &message::Message,
+        txn_batch: &mut RocksDbTransactionBatch,
+    ) -> Result<(), EngineError> {
+        let data = msg.data.as_ref().ok_or(EngineError::NoMessageData)?;
+        let mt = MessageType::try_from(data.r#type).or(Err(EngineError::InvalidMessageType))?;
+
+        let event = match mt {
+            MessageType::CastAdd => self
+                .cast_store
+                .merge(msg, txn_batch)
+                .map_err(EngineError::new_store_error(msg.hash.clone())),
+            unhandled_type => {
+                return Err(EngineError::UnsupportedMessageType(unhandled_type));
+            }
+        }?;
+
+        self.update_trie(event, txn_batch)?;
+
+        Ok(())
+    }
+
+    fn update_trie(
+        &mut self,
+        event: hub_event::HubEvent,
+        txn_batch: &mut RocksDbTransactionBatch,
+    ) -> Result<(), EngineError> {
+        match event.body {
+            Some(hub_event::hub_event::Body::MergeMessageBody(merge)) => {
+                if let Some(msg) = merge.message {
+                    self.trie
+                        .insert(&self.db, txn_batch, vec![msg.hash.clone()])?;
+                }
+                for deleted_message in merge.deleted_messages {
+                    self.trie
+                        .delete(&self.db, txn_batch, vec![deleted_message.hash.clone()])?;
+                }
+            }
+            _ => {
+                return Err(EngineError::UnsupportedMessageType(MessageType::CastAdd));
+            }
+        }
         Ok(())
     }
 
@@ -298,7 +312,7 @@ impl ShardEngine {
         }
 
         self.db.commit(txn).unwrap();
-        self.trie.reload(&*self.shard_store.db).unwrap();
+        self.trie.reload(&self.db).unwrap();
 
         match self.shard_store.put_shard_chunk(shard_chunk) {
             Err(err) => {
