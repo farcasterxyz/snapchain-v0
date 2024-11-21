@@ -6,7 +6,9 @@ use crate::storage::db;
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch};
 use crate::storage::store::account::{CastStore, MessagesPage, Store, StoreEventHandler};
 use crate::storage::store::BlockStore;
+use crate::storage::trie;
 use crate::storage::trie::merkle_trie;
+use message::MessageType;
 use snapchain::{Block, ShardChunk, Transaction};
 use std::iter;
 use std::sync::Arc;
@@ -16,20 +18,32 @@ use tracing::{error, warn};
 
 #[derive(Error, Debug)]
 enum EngineError {
-    #[error("trie error: {source}")]
-    TrieError {
-        #[from]
-        source: Box<dyn std::error::Error + Send + Sync>,
+    #[error(transparent)]
+    TrieError(#[from] trie::errors::TrieError),
+
+    #[error("store error")]
+    StoreError {
+        inner: HubError, // TODO: move away from HubError when we can
+        hash: Vec<u8>,
     },
 
-    #[error("unable to merge cast message during commit: {0}")]
-    MergeCastMessageError(String),
-
-    #[error("unsupported message type: {0}")]
-    UnsupportedMessageType(String),
+    #[error("unsupported message type")]
+    UnsupportedMessageType(MessageType),
 
     #[error("merkle trie root hash mismatch")]
     HashMismatch,
+
+    #[error("message has no data")]
+    NoMessageData,
+
+    #[error("invalid message type")]
+    InvalidMessageType,
+}
+
+impl EngineError {
+    pub fn new_store_error(hash: Vec<u8>) -> impl FnOnce(HubError) -> Self {
+        move |inner: HubError| EngineError::StoreError { inner, hash }
+    }
 }
 
 // Shard state root and the transactions
@@ -199,32 +213,29 @@ impl ShardEngine {
 
         for snap_txn in transactions {
             for msg in &snap_txn.user_messages {
-                if msg.is_type(message::MessageType::CastAdd) {
-                    cast_store.merge(msg, txn_batch).map_err(|err| {
-                        EngineError::MergeCastMessageError(format!(
-                            "Message hash: {}, Error: {}",
-                            hex::encode(&msg.hash),
-                            err
-                        ))
-                    })?;
+                let data = msg.data.as_ref().ok_or(EngineError::NoMessageData)?;
+                let mt =
+                    MessageType::try_from(data.r#type).or(Err(EngineError::InvalidMessageType))?;
 
-                    merged_messages.push(msg.clone());
+                match mt {
+                    MessageType::CastAdd => {
+                        cast_store
+                            .merge(msg, txn_batch)
+                            .map_err(EngineError::new_store_error(msg.hash.clone()))?;
 
-                    trie.insert(db, txn_batch, vec![msg.hash.clone()])
-                        .map_err(|e| EngineError::TrieError {
-                            source: Box::new(e),
-                        })?;
-                } else {
-                    return Err(EngineError::UnsupportedMessageType(
-                        msg.msg_type().to_string(),
-                    ));
+                        merged_messages.push(msg.clone());
+
+                        trie.insert(db, txn_batch, vec![msg.hash.clone()])?;
+                    }
+
+                    unhandled_type => {
+                        return Err(EngineError::UnsupportedMessageType(unhandled_type));
+                    }
                 }
             }
         }
 
-        let root1 = trie.root_hash().map_err(|e| EngineError::TrieError {
-            source: Box::new(e),
-        })?;
+        let root1 = trie.root_hash()?;
 
         if &root1 != shard_root {
             return Err(EngineError::HashMismatch);
