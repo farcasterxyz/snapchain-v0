@@ -86,7 +86,7 @@ pub struct ShardEngine {
     shard_store: ShardStore,
     messages_rx: mpsc::Receiver<MempoolMessage>,
     messages_tx: mpsc::Sender<MempoolMessage>,
-    trie: merkle_trie::MerkleTrie,
+    pub(crate) trie: merkle_trie::MerkleTrie,
     cast_store: Store,
     pub db: Arc<RocksDB>,
     onchain_event_store: OnchainEventStore,
@@ -104,15 +104,8 @@ impl ShardEngine {
         let db = &*shard_store.db;
 
         // TODO: adding the trie here introduces many calls that want to return errors. Rethink unwrap strategy.
-        let mut txn_batch = RocksDbTransactionBatch::new();
         let mut trie = merkle_trie::MerkleTrie::new();
-        trie.initialize(db, &mut txn_batch).unwrap();
-
-        // TODO: The empty trie currently has some issues with the newly added commit/rollback code. Remove when we can.
-        trie.insert(db, &mut txn_batch, vec![vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]])
-            .unwrap();
-        db.commit(txn_batch).unwrap();
-        trie.reload(db).unwrap();
+        trie.initialize(db).unwrap();
 
         let event_handler = StoreEventHandler::new(None, None, None);
         let db = shard_store.db.clone();

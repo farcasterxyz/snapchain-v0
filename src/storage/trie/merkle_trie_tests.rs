@@ -4,6 +4,10 @@ mod tests {
     use crate::storage::trie::errors::TrieError;
     use crate::storage::trie::merkle_trie::MerkleTrie;
 
+    fn random_hash() -> Vec<u8> {
+        (0..32).map(|_| rand::random::<u8>()).collect()
+    }
+
     #[test]
     fn test_merkle_trie_get_node() {
         let tmp_path = tempfile::tempdir()
@@ -16,10 +20,9 @@ mod tests {
         let db = &RocksDB::new(&tmp_path);
         db.open().unwrap();
 
-        let mut txn_batch = RocksDbTransactionBatch::new();
-
         let mut trie = MerkleTrie::new();
-        trie.initialize(db, &mut txn_batch).unwrap();
+        trie.initialize(db).unwrap();
+        let mut txn_batch = RocksDbTransactionBatch::new();
 
         let result = trie.insert(db, &mut txn_batch, vec![vec![1, 2, 3, 4, 5, 6, 7, 8, 9]]);
         assert!(result.is_err());
@@ -89,5 +92,77 @@ mod tests {
 
         // Clean up
         std::fs::remove_dir_all(&tmp_path).unwrap();
+    }
+
+    #[test]
+    fn test_reload_with_empty_root() {
+        let tmp_path = tempfile::tempdir()
+            .unwrap()
+            .path()
+            .as_os_str()
+            .to_string_lossy()
+            .to_string();
+
+        let db = &RocksDB::new(&tmp_path);
+        db.open().unwrap();
+
+        let mut trie = MerkleTrie::new();
+        trie.initialize(db).unwrap();
+
+        let mut txn_batch = RocksDbTransactionBatch::new();
+        let hash = random_hash();
+
+        let res = trie.insert(db, &mut txn_batch, vec![hash.clone()]).unwrap();
+        assert_eq!(res, vec![true]);
+
+        let res = trie.exists(db, &hash).unwrap();
+        assert_eq!(res, true);
+
+        let res = trie.reload(db);
+        assert!(res.is_ok());
+
+        // Does not exist after reload
+        let res = trie.exists(db, &hash).unwrap();
+        assert_eq!(res, false);
+    }
+
+    #[test]
+    fn test_reload_with_existing_data() {
+        let tmp_path = tempfile::tempdir()
+            .unwrap()
+            .path()
+            .as_os_str()
+            .to_string_lossy()
+            .to_string();
+
+        let db = &RocksDB::new(&tmp_path);
+        db.open().unwrap();
+
+        let mut trie = MerkleTrie::new();
+        trie.initialize(db).unwrap();
+
+        let mut first_txn = RocksDbTransactionBatch::new();
+        let first_hash = random_hash();
+        let second_hash = random_hash();
+
+        trie.insert(db, &mut first_txn, vec![first_hash.clone()])
+            .unwrap();
+        db.commit(first_txn).unwrap();
+        trie.reload(db).unwrap();
+
+        let res = trie.exists(db, &first_hash).unwrap();
+        assert_eq!(res, true);
+
+        let mut second_txn = RocksDbTransactionBatch::new();
+        trie.insert(db, &mut second_txn, vec![second_hash.clone()])
+            .unwrap();
+
+        trie.reload(db).unwrap();
+
+        // First hash still exists, but not the second
+        let res = trie.exists(db, &first_hash).unwrap();
+        assert_eq!(res, true);
+        let res = trie.exists(db, &second_hash).unwrap();
+        assert_eq!(res, false);
     }
 }

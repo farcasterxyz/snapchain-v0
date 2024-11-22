@@ -107,21 +107,40 @@ mod tests {
         (msg1, msg2)
     }
 
-    #[test]
-    fn test_engine_basic_propose() {
+    #[tokio::test]
+    async fn test_engine_basic_propose() {
         let (mut engine, _tmpdir) = new_engine();
+        let (msg1, _) = entities();
+        let messages_tx = engine.messages_tx();
+
+        // State root starts empty
+        assert_eq!("", to_hex(&engine.trie_root_hash()));
+
+        // Propose empty transaction
+        let state_change = engine.propose_state_change(1);
+        assert_eq!(1, state_change.shard_id);
+        assert_eq!(state_change.transactions.len(), 0);
+        // No messages so, new state root should be same as before
+        assert_eq!("", to_hex(&state_change.new_state_root));
+        // Root hash is not updated until commit
+        assert_eq!("", to_hex(&engine.trie_root_hash()));
+
+        // Propose a message
+        messages_tx
+            .send(MempoolMessage::UserMessage(msg1.clone()))
+            .await
+            .unwrap();
+
         let state_change = engine.propose_state_change(1);
 
         assert_eq!(1, state_change.shard_id);
-        assert_eq!(state_change.transactions.len(), 0);
+        assert_eq!(state_change.transactions.len(), 1);
         assert_eq!(
-            "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
+            "d63b8a2bc65fe7b1df189882ba7dc3293ed3b373",
             to_hex(&state_change.new_state_root)
         );
-        assert_eq!(
-            "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
-            to_hex(&engine.trie_root_hash())
-        );
+        // Root hash is not updated until commit
+        assert_eq!("", to_hex(&engine.trie_root_hash()));
     }
 
     #[test]
@@ -153,7 +172,7 @@ mod tests {
     fn test_engine_commit_no_messages_happy_path() {
         let (mut engine, _tmpdir) = new_engine();
         let state_change = engine.propose_state_change(1);
-        let expected_roots = vec!["237b11d0dd9e78994ef2f141c7f170d48bb51d34"];
+        let expected_roots = vec![""];
 
         let chunk = state_change_to_shard_chunk(1, 1, &state_change);
         engine.commit_shard_chunk(chunk);
@@ -231,9 +250,9 @@ mod tests {
         let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
         let expected_roots = vec![
-            "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
-            "8d566fb56cabed2665962a558dd2d4be0b0e4f6c",
-            "215cee5fa4850848a9f9f06a93b0ba4da2ff52ef",
+            "",
+            "d63b8a2bc65fe7b1df189882ba7dc3293ed3b373",
+            "5856450d7f70d4784ece499851e30a3bd7be40ad",
         ];
 
         /* note: Hard-coded expected_roots is going to be fragile for some time.
@@ -314,10 +333,7 @@ mod tests {
         let (msg1, msg2) = entities();
         let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
-        let expected_roots = vec![
-            "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
-            "215cee5fa4850848a9f9f06a93b0ba4da2ff52ef",
-        ];
+        let expected_roots = vec!["", "5856450d7f70d4784ece499851e30a3bd7be40ad"];
 
         {
             messages_tx
@@ -364,7 +380,7 @@ mod tests {
         messages_tx
             .send(MempoolMessage::ValidatorMessage(
                 crate::proto::snapchain::ValidatorMessage {
-                    on_chain_event: Some(onchain_event),
+                    on_chain_event: Some(onchain_event.clone()),
                     fname_transfer: None,
                 },
             ))
@@ -374,6 +390,10 @@ mod tests {
         assert_eq!(1, state_change.shard_id);
         assert_eq!(state_change.transactions.len(), 1);
         assert_eq!(1, state_change.transactions[0].system_messages.len());
+
+        // No hub events are generated
+        let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
+        assert_eq!(0, events.events.len());
 
         let valid = engine.validate_state_change(&state_change);
         assert!(valid);
@@ -388,5 +408,17 @@ mod tests {
             .get_onchain_events(OnChainEventType::EventTypeIdRegister, 1)
             .unwrap();
         assert_eq!(stored_onchain_events.len(), 1);
+
+        // Hub events are generated
+        let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
+        assert_eq!(1, events.events.len());
+        let generated_event = match events.events[0].clone().body {
+            Some(crate::proto::hub_event::hub_event::Body::MergeOnChainEventBody(e)) => e,
+            _ => panic!("Unexpected event type"),
+        };
+        assert_eq!(
+            to_hex(&onchain_event.transaction_hash),
+            to_hex(&generated_event.on_chain_event.unwrap().transaction_hash)
+        );
     }
 }

@@ -2,6 +2,7 @@ use super::super::db::{RocksDB, RocksDbTransactionBatch};
 use super::errors::TrieError;
 use super::trie_node::{TrieNode, TIMESTAMP_LENGTH};
 use std::collections::HashMap;
+use tracing::info;
 
 pub const TRIE_DBPATH_PREFIX: &str = "trieDb";
 
@@ -38,18 +39,17 @@ impl MerkleTrie {
         self.root.replace(empty);
     }
 
-    pub fn initialize(
-        &mut self,
-        db: &RocksDB,
-        txn_batch: &mut RocksDbTransactionBatch,
-    ) -> Result<(), TrieError> {
+    pub fn initialize(&mut self, db: &RocksDB) -> Result<(), TrieError> {
         // db must be "open" by now
 
         let loaded = self.load_root(db)?;
         if let Some(root_node) = loaded {
             self.root.replace(root_node);
         } else {
-            self.create_empty_root(txn_batch);
+            info!("Initializing empty merkle trie root");
+            let mut txn_batch = RocksDbTransactionBatch::new();
+            self.create_empty_root(&mut txn_batch);
+            db.commit(txn_batch).map_err(TrieError::wrap_database)?;
         }
 
         Ok(())
