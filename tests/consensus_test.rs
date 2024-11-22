@@ -78,12 +78,16 @@ impl NodeForTest {
         let node_id = node.id();
         let assert_valid_block = move |block: &Block| {
             let header = block.header.as_ref().unwrap();
-            let message_count = block.shard_chunks[0].transactions[0].user_messages.len();
+            let transactions_count: usize = block
+                .shard_chunks
+                .iter()
+                .map(|c| c.transactions.len())
+                .sum();
             info!(
                 hash = hex::encode(&block.hash),
                 height = header.height.as_ref().map(|h| h.block_number),
                 id = node_id,
-                message_count,
+                transactions = transactions_count,
                 "decided block",
             );
             assert_eq!(block.shard_chunks.len(), num_shards as usize);
@@ -312,9 +316,11 @@ async fn test_basic_consensus() {
             hash.extend_from_slice(&i.to_be_bytes()); // just for now
 
             messages_tx1
-                .send(snapchain::storage::store::engine::Message::UserMessage(
-                    cli::compose_message(321, format!("Cast {}", i).as_str(), None, None),
-                ))
+                .send(
+                    snapchain::storage::store::engine::MempoolMessage::UserMessage(
+                        cli::compose_message(321, format!("Cast {}", i).as_str(), None, None),
+                    ),
+                )
                 .await
                 .unwrap();
             i += 1;

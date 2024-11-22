@@ -47,6 +47,7 @@ threadpool = "1.8.1"
 rand = "0.8.5"
 humantime-serde = "1.1.1"
 humantime = "2.1.0"
+itertools = "0.13.0"
 
 [build-dependencies]
 tonic-build = "0.9.2"

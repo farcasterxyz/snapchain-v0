@@ -1,10 +1,9 @@
-use super::account::{OnchainEventStorageError, OnchainEventsPage};
+use super::account::OnchainEventStorageError;
 use super::shard::ShardStore;
 use crate::core::error::HubError;
-use crate::core::types::{proto, Height};
+use crate::core::types::Height;
 use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
-use crate::proto::{msg as message, snapchain};
-use crate::storage::db;
+use crate::proto::{hub_event, msg as message, snapchain};
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch};
 use crate::storage::store::account::{
     CastStore, MessagesPage, OnchainEventStore, Store, StoreEventHandler,
@@ -12,13 +11,13 @@ use crate::storage::store::account::{
 use crate::storage::store::BlockStore;
 use crate::storage::trie;
 use crate::storage::trie::merkle_trie;
+use itertools::Itertools;
 use message::MessageType;
 use snapchain::{Block, ShardChunk, Transaction};
-use std::iter;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 #[derive(Error, Debug)]
 enum EngineError {
@@ -33,6 +32,9 @@ enum EngineError {
 
     #[error("unsupported message type")]
     UnsupportedMessageType(MessageType),
+
+    #[error("unsupported event")]
+    UnsupportedEvent,
 
     #[error("merkle trie root hash mismatch")]
     HashMismatch,
@@ -57,9 +59,18 @@ impl EngineError {
 }
 
 #[derive(Clone)]
-pub enum Message {
+pub enum MempoolMessage {
     UserMessage(message::Message),
     ValidatorMessage(snapchain::ValidatorMessage),
+}
+
+impl MempoolMessage {
+    pub fn fid(&self) -> u32 {
+        match self {
+            MempoolMessage::UserMessage(msg) => msg.fid(),
+            MempoolMessage::ValidatorMessage(msg) => msg.fid(),
+        }
+    }
 }
 
 // Shard state root and the transactions
@@ -73,8 +84,8 @@ pub struct ShardStateChange {
 pub struct ShardEngine {
     shard_id: u32,
     shard_store: ShardStore,
-    messages_rx: mpsc::Receiver<Message>,
-    messages_tx: mpsc::Sender<Message>,
+    messages_rx: mpsc::Receiver<MempoolMessage>,
+    messages_tx: mpsc::Sender<MempoolMessage>,
     trie: merkle_trie::MerkleTrie,
     cast_store: Store,
     pub db: Arc<RocksDB>,
@@ -109,7 +120,7 @@ impl ShardEngine {
         let onchain_event_store =
             OnchainEventStore::new(shard_store.db.clone(), event_handler.clone());
 
-        let (messages_tx, messages_rx) = mpsc::channel::<Message>(10_000);
+        let (messages_tx, messages_rx) = mpsc::channel::<MempoolMessage>(10_000);
         ShardEngine {
             shard_id,
             shard_store,
@@ -122,7 +133,7 @@ impl ShardEngine {
         }
     }
 
-    pub fn messages_tx(&self) -> mpsc::Sender<Message> {
+    pub fn messages_tx(&self) -> mpsc::Sender<MempoolMessage> {
         self.messages_tx.clone()
     }
 
@@ -145,75 +156,65 @@ impl ShardEngine {
             }
         }
 
-        let mut merged_user_messages: Vec<message::Message> = vec![];
-        let mut merged_system_messages: Vec<proto::ValidatorMessage> = vec![];
-
-        for msg in &messages {
-            match msg {
-                Message::ValidatorMessage(msg) => {
-                    if let Some(onchain_event) = &msg.on_chain_event {
-                        match self
-                            .onchain_event_store
-                            .merge_onchain_event(onchain_event.clone(), txn_batch)
-                        {
-                            Ok(_) => {
-                                merged_system_messages.push(msg.clone());
-                                // TODO(aditi): Insert into trie.
-                            }
-                            Err(err) => {
-                                error!("Unable to merge onchain event: {}", err)
-                            }
-                        }
-                    }
-                }
-                Message::UserMessage(msg) => {
-                    let data = msg.data.as_ref().ok_or(EngineError::NoMessageData)?;
-                    let msg_type = MessageType::try_from(data.r#type)
-                        .or(Err(EngineError::InvalidMessageType))?;
-                    match msg_type {
-                        MessageType::CastAdd => {
-                            self.cast_store
-                                .merge(&msg, txn_batch)
-                                .map_err(EngineError::new_store_error(msg.hash.clone()))?;
-                            merged_user_messages.push(msg.clone());
-                            self.trie
-                                .insert(&*self.db, txn_batch, vec![msg.hash.clone()])?;
-                        }
-                        unhandled_type => {
-                            return Err(EngineError::UnsupportedMessageType(unhandled_type));
-                        }
-                    }
-                }
-            }
+        let mut snapchain_txns = self.create_transactions_from_mempool(messages);
+        for snapchain_txn in &mut snapchain_txns {
+            self.replay_snapchain_txn(&snapchain_txn, txn_batch)?;
+            snapchain_txn.account_root = self.trie.root_hash()?; // TODO: This should use the account root and not the shard root
         }
 
-        // TODO: Group by fid so we only have a single txn per block per fid
-        let mut transactions = vec![];
-        let snap_txn = snapchain::Transaction {
-            fid: 1234,                               //TODO
-            account_root: vec![5, 5, 6, 6],          //TODO
-            system_messages: merged_system_messages, //TODO
-            user_messages: merged_user_messages,
-        };
-        transactions.push(snap_txn);
-
         let new_root_hash = self.trie.root_hash()?;
-
         let result = ShardStateChange {
             shard_id,
             new_state_root: new_root_hash.clone(),
-            transactions,
+            transactions: snapchain_txns,
         };
 
         Ok(result)
+    }
+
+    // Groups messages by fid and creates a transaction for each fid
+    fn create_transactions_from_mempool(
+        &mut self,
+        mut messages: Vec<MempoolMessage>,
+    ) -> Vec<Transaction> {
+        let mut transactions = vec![];
+
+        let grouped_messages = messages.iter().into_group_map_by(|msg| msg.fid());
+        let unique_fids = grouped_messages.keys().len();
+        for (fid, messages) in grouped_messages {
+            let mut transaction = Transaction {
+                fid: fid as u64,
+                account_root: vec![], // Starts empty, will be updated after replay
+                system_messages: vec![],
+                user_messages: vec![],
+            };
+            for msg in messages {
+                match msg {
+                    MempoolMessage::ValidatorMessage(msg) => {
+                        transaction.system_messages.push(msg.clone());
+                    }
+                    MempoolMessage::UserMessage(msg) => {
+                        transaction.user_messages.push(msg.clone());
+                    }
+                }
+            }
+            transactions.push(transaction);
+        }
+        info!(
+            transactions = transactions.len(),
+            messages = messages.len(),
+            fids = unique_fids,
+            "Created transactions from mempool"
+        );
+        transactions
     }
 
     pub fn propose_state_change(&mut self, shard: u32) -> ShardStateChange {
         let mut txn = RocksDbTransactionBatch::new();
         let result = self.prepare_proposal(&mut txn, shard).unwrap(); //TODO: don't unwrap()
 
-        // TODO: use drop trait?
-        self.trie.reload(&*self.db).unwrap();
+        // TODO: this should probably operate automatically via drop trait
+        self.trie.reload(&self.db).unwrap();
 
         result
     }
@@ -224,40 +225,8 @@ impl ShardEngine {
         transactions: &[Transaction],
         shard_root: &[u8],
     ) -> Result<(), EngineError> {
-        let mut merged_messages: Vec<message::Message> = vec![];
-
-        for snap_txn in transactions {
-            for msg in &snap_txn.user_messages {
-                let data = msg.data.as_ref().ok_or(EngineError::NoMessageData)?;
-                let msg_type =
-                    MessageType::try_from(data.r#type).or(Err(EngineError::InvalidMessageType))?;
-
-                match msg_type {
-                    MessageType::CastAdd => {
-                        self.cast_store
-                            .merge(msg, txn_batch)
-                            .map_err(EngineError::new_store_error(msg.hash.clone()))?;
-
-                        merged_messages.push(msg.clone());
-
-                        self.trie
-                            .insert(&*self.db, txn_batch, vec![msg.hash.clone()])?;
-                    }
-
-                    unhandled_type => {
-                        return Err(EngineError::UnsupportedMessageType(unhandled_type));
-                    }
-                }
-            }
-
-            for msg in &snap_txn.system_messages {
-                if let Some(onchain_event) = &msg.on_chain_event {
-                    self.onchain_event_store
-                        .merge_onchain_event(onchain_event.clone(), txn_batch)?;
-
-                    // TODO(aditi): Insert into the trie
-                }
-            }
+        for snapchain_txn in transactions {
+            self.replay_snapchain_txn(snapchain_txn, txn_batch)?;
         }
 
         let root1 = self.trie.root_hash()?;
@@ -266,6 +235,120 @@ impl ShardEngine {
             return Err(EngineError::HashMismatch);
         }
 
+        Ok(())
+    }
+
+    fn replay_snapchain_txn(
+        &mut self,
+        snapchain_txn: &Transaction,
+        txn_batch: &mut RocksDbTransactionBatch,
+    ) -> Result<(), EngineError> {
+        let total_user_messages = snapchain_txn.user_messages.len();
+        let total_system_messages = snapchain_txn.system_messages.len();
+        let mut user_messages_count = 0;
+        let mut system_messages_count = 0;
+
+        for msg in &snapchain_txn.user_messages {
+            // Errors are validated based on the shard root
+            let result = self.merge_message(msg, txn_batch);
+            match result {
+                Ok(event) => {
+                    self.update_trie(event, txn_batch)?;
+                    user_messages_count += 1;
+                }
+                Err(err) => {
+                    warn!(
+                        fid = msg.fid(),
+                        hash = msg.hex_hash(),
+                        "Error merging message: {:?}",
+                        err
+                    );
+                }
+            }
+        }
+
+        for msg in &snapchain_txn.system_messages {
+            if let Some(onchain_event) = &msg.on_chain_event {
+                let event = self
+                    .onchain_event_store
+                    .merge_onchain_event(onchain_event.clone(), txn_batch);
+
+                match event {
+                    Ok(hub_event) => {
+                        self.update_trie(hub_event, txn_batch)?;
+                        system_messages_count += 1;
+                    }
+                    Err(err) => {
+                        warn!("Error merging onchain event: {:?}", err);
+                    }
+                }
+            }
+        }
+
+        info!(
+            fid = snapchain_txn.fid,
+            num_user_messages = total_user_messages,
+            num_system_messages = total_system_messages,
+            user_messages_merged = user_messages_count,
+            system_messages_merged = system_messages_count,
+            "Replayed transaction"
+        );
+
+        // TODO: This should return the account root
+        Ok(())
+    }
+
+    fn merge_message(
+        &mut self,
+        msg: &message::Message,
+        txn_batch: &mut RocksDbTransactionBatch,
+    ) -> Result<hub_event::HubEvent, EngineError> {
+        let data = msg.data.as_ref().ok_or(EngineError::NoMessageData)?;
+        let mt = MessageType::try_from(data.r#type).or(Err(EngineError::InvalidMessageType))?;
+
+        let event = match mt {
+            MessageType::CastAdd => self
+                .cast_store
+                .merge(msg, txn_batch)
+                .map_err(EngineError::new_store_error(msg.hash.clone())),
+            unhandled_type => {
+                return Err(EngineError::UnsupportedMessageType(unhandled_type));
+            }
+        }?;
+
+        Ok(event)
+    }
+
+    fn update_trie(
+        &mut self,
+        event: hub_event::HubEvent,
+        txn_batch: &mut RocksDbTransactionBatch,
+    ) -> Result<(), EngineError> {
+        match event.body {
+            Some(hub_event::hub_event::Body::MergeMessageBody(merge)) => {
+                if let Some(msg) = merge.message {
+                    self.trie
+                        .insert(&self.db, txn_batch, vec![msg.hash.clone()])?;
+                }
+                for deleted_message in merge.deleted_messages {
+                    self.trie
+                        .delete(&self.db, txn_batch, vec![deleted_message.hash.clone()])?;
+                }
+            }
+            Some(hub_event::hub_event::Body::MergeOnChainEventBody(merge)) => {
+                if let Some(onchain_event) = merge.on_chain_event {
+                    self.trie.insert(
+                        &self.db,
+                        txn_batch,
+                        vec![onchain_event.transaction_hash.clone()],
+                    )?;
+                }
+            }
+            _ => {
+                // TODO: This fallback case should not exist, every event should be handled
+                return Err(EngineError::UnsupportedEvent);
+            }
+        }
         Ok(())
     }
 
@@ -298,7 +381,7 @@ impl ShardEngine {
         }
 
         self.db.commit(txn).unwrap();
-        self.trie.reload(&*self.shard_store.db).unwrap();
+        self.trie.reload(&self.db).unwrap();
 
         match self.shard_store.put_shard_chunk(shard_chunk) {
             Err(err) => {
@@ -306,6 +389,15 @@ impl ShardEngine {
             }
             Ok(()) => {}
         }
+    }
+
+    pub(crate) fn sync_id_exists(&mut self, sync_id: &Vec<u8>) -> bool {
+        self.trie
+            .exists(&self.db, sync_id.as_ref())
+            .unwrap_or_else(|err| {
+                error!("Error checking if sync id exists: {:?}", err);
+                false
+            })
     }
 
     pub fn get_confirmed_height(&self) -> Height {

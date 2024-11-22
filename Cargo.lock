@@ -5153,6 +5153,7 @@ dependencies = [
  "hex",
  "humantime",
  "humantime-serde",
+ "itertools 0.13.0",
  "libp2p",
  "malachite-common",
  "malachite-config",

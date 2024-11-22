@@ -12,7 +12,6 @@ use crate::{
     proto::msg::{link_body::Target, message_data::Body, Message, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
-use prost::Message as _;
 use std::clone::Clone;
 use std::string::ToString;
 use std::sync::{Arc, Mutex};
