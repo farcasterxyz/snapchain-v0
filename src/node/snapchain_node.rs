@@ -34,7 +34,7 @@ impl SnapchainNode {
         config: Config,
         rpc_address: Option<String>,
         gossip_tx: mpsc::Sender<GossipEvent<SnapchainValidatorContext>>,
-        block_tx: mpsc::Sender<Block>,
+        block_tx: Option<mpsc::Sender<Block>>,
         block_store: BlockStore,
         rocksdb_dir: String,
     ) -> Self {

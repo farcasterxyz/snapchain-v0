@@ -119,14 +119,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Use the new non-global metrics registry when we upgrade to newer version of malachite
     let _ = Metrics::register(registry);
 
-    let (block_tx, _block_rx) = mpsc::channel::<Block>(100);
-
     let node = SnapchainNode::create(
         keypair.clone(),
         app_config.consensus.clone(),
         Some(app_config.rpc_address.clone()),
         gossip_tx.clone(),
-        block_tx,
+        None,
         block_store.clone(),
         app_config.rocksdb_dir,
     )
