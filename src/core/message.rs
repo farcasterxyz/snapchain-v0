@@ -29,14 +29,12 @@ impl message::Message {
 
 impl snapchain::ValidatorMessage {
     pub fn fid(&self) -> u32 {
-        if self.fname_transfer.is_some() {
-            return self.fname_transfer.as_ref().unwrap().fid as u32;
+        if let Some(fname) = &self.fname_transfer {
+            return fname.fid as u32;
         }
-
-        if self.on_chain_event.is_some() {
-            return self.on_chain_event.as_ref().unwrap().fid as u32;
+        if let Some(event) = &self.on_chain_event {
+            return event.fid as u32;
         }
-
         0
     }
 }

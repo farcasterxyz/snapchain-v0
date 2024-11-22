@@ -156,17 +156,17 @@ impl ShardEngine {
             }
         }
 
-        let mut snap_txns = self.create_transactions_from_mempool(messages);
-        for snap_txn in &mut snap_txns {
-            self.replay_snap_txn(&snap_txn, txn_batch)?;
-            snap_txn.account_root = self.trie.root_hash()?; // TODO: This should use the account root and not the shard root
+        let mut snapchain_txns = self.create_transactions_from_mempool(messages);
+        for snapchain_txn in &mut snapchain_txns {
+            self.replay_snapchain_txn(&snapchain_txn, txn_batch)?;
+            snapchain_txn.account_root = self.trie.root_hash()?; // TODO: This should use the account root and not the shard root
         }
 
         let new_root_hash = self.trie.root_hash()?;
         let result = ShardStateChange {
             shard_id,
             new_state_root: new_root_hash.clone(),
-            transactions: snap_txns,
+            transactions: snapchain_txns,
         };
 
         Ok(result)
@@ -225,8 +225,8 @@ impl ShardEngine {
         transactions: &[Transaction],
         shard_root: &[u8],
     ) -> Result<(), EngineError> {
-        for snap_txn in transactions {
-            self.replay_snap_txn(snap_txn, txn_batch)?;
+        for snapchain_txn in transactions {
+            self.replay_snapchain_txn(snapchain_txn, txn_batch)?;
         }
 
         let root1 = self.trie.root_hash()?;
@@ -238,17 +238,17 @@ impl ShardEngine {
         Ok(())
     }
 
-    fn replay_snap_txn(
+    fn replay_snapchain_txn(
         &mut self,
-        snap_txn: &Transaction,
+        snapchain_txn: &Transaction,
         txn_batch: &mut RocksDbTransactionBatch,
     ) -> Result<(), EngineError> {
-        let total_user_messages = snap_txn.user_messages.len();
-        let total_system_messages = snap_txn.system_messages.len();
+        let total_user_messages = snapchain_txn.user_messages.len();
+        let total_system_messages = snapchain_txn.system_messages.len();
         let mut user_messages_count = 0;
         let mut system_messages_count = 0;
 
-        for msg in &snap_txn.user_messages {
+        for msg in &snapchain_txn.user_messages {
             // Errors are validated based on the shard root
             let result = self.merge_message(msg, txn_batch);
             match result {
@@ -267,7 +267,7 @@ impl ShardEngine {
             }
         }
 
-        for msg in &snap_txn.system_messages {
+        for msg in &snapchain_txn.system_messages {
             if let Some(onchain_event) = &msg.on_chain_event {
                 let event = self
                     .onchain_event_store
@@ -286,7 +286,7 @@ impl ShardEngine {
         }
 
         info!(
-            fid = snap_txn.fid,
+            fid = snapchain_txn.fid,
             num_user_messages = total_user_messages,
             num_system_messages = total_system_messages,
             user_messages_merged = user_messages_count,
@@ -345,6 +345,7 @@ impl ShardEngine {
                 }
             }
             _ => {
+                // TODO: This fallback case should not exist, every event should be handled
                 return Err(EngineError::UnsupportedEvent);
             }
         }
@@ -390,7 +391,7 @@ impl ShardEngine {
         }
     }
 
-    pub fn sync_id_exists(&mut self, sync_id: &Vec<u8>) -> bool {
+    pub(crate) fn sync_id_exists(&mut self, sync_id: &Vec<u8>) -> bool {
         self.trie
             .exists(&self.db, sync_id.as_ref())
             .unwrap_or_else(|err| {
