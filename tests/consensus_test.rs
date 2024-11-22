@@ -69,7 +69,7 @@ impl NodeForTest {
             config,
             None,
             gossip_tx,
-            block_tx,
+            Some(block_tx),
             block_store.clone(),
             make_tmp_path(),
         )

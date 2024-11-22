@@ -221,7 +221,7 @@ pub struct BlockProposer {
     pending_chunks: BTreeMap<u64, Vec<ShardChunk>>,
     shard_decision_rx: mpsc::Receiver<ShardChunk>,
     num_shards: u32,
-    block_tx: mpsc::Sender<Block>,
+    block_tx: Option<mpsc::Sender<Block>>,
     engine: BlockEngine,
 }
 
@@ -231,7 +231,7 @@ impl BlockProposer {
         shard_id: SnapchainShard,
         shard_decision_rx: mpsc::Receiver<ShardChunk>,
         num_shards: u32,
-        block_tx: mpsc::Sender<Block>,
+        block_tx: Option<mpsc::Sender<Block>>,
         engine: BlockEngine,
     ) -> BlockProposer {
         BlockProposer {
@@ -292,11 +292,13 @@ impl BlockProposer {
     }
 
     async fn publish_new_block(&self, block: Block) {
-        match self.block_tx.send(block.clone()).await {
-            Err(err) => {
-                error!("Error publishing new block {:?}", err.to_string());
+        if let Some(block_tx) = &self.block_tx {
+            match block_tx.send(block.clone()).await {
+                Err(err) => {
+                    error!("Error publishing new block {:?}", err.to_string());
+                }
+                Ok(_) => {}
             }
-            Ok(_) => {}
         }
     }
 }
