@@ -1,16 +1,21 @@
+use clap::Parser;
 use hex;
-use snapchain::proto::{rpc, snapchain::Block};
 use snapchain::utils::cli::follow_blocks;
-use std::error::Error;
 use tokio::sync::mpsc;
-use tokio::time;
+
+#[derive(Parser)]
+struct Cli {
+    #[arg(long)]
+    addr: String,
+}
 
 #[tokio::main]
 async fn main() {
-    let addr = "http://127.0.0.1:3383".to_string();
+    let args = Cli::parse();
+
     let (block_tx, mut block_rx) = mpsc::channel(1000);
     tokio::spawn(async move {
-        follow_blocks(addr, block_tx).await.unwrap();
+        follow_blocks(args.addr, block_tx).await.unwrap();
     });
 
     while let Some(block) = block_rx.recv().await {
