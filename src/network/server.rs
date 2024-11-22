@@ -39,7 +39,8 @@ impl SnapchainService for MySnapchainService {
         request: Request<message::Message>,
     ) -> Result<Response<message::Message>, Status> {
         let hash = request.get_ref().hash.encode_hex::<String>();
-        info!(hash, "Received a message");
+
+        info!(hash, "Received call to [submit_message] RPC");
 
         let message = request.into_inner();
         self.message_tx
@@ -57,6 +58,9 @@ impl SnapchainService for MySnapchainService {
     ) -> Result<Response<BlocksResponse>, Status> {
         let start_block_number = request.get_ref().start_block_number;
         let stop_block_number = request.get_ref().stop_block_number;
+
+        info!( {start_block_number, stop_block_number}, "Received call to [get_blocks] RPC");
+
         match self
             .block_store
             .get_blocks(start_block_number, stop_block_number)
@@ -77,6 +81,10 @@ impl SnapchainService for MySnapchainService {
         let shard_index = request.get_ref().shard_id;
         let start_block_number = request.get_ref().start_block_number;
         let stop_block_number = request.get_ref().stop_block_number;
+
+        info!( {shard_index, start_block_number, stop_block_number},
+            "Received call to [get_shard_chunks] RPC");
+
         let shard_store = self.shard_stores.get(&shard_index);
         match shard_store {
             None => Err(Status::from_error(Box::new(
