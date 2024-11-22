@@ -37,11 +37,19 @@ Before you begin, ensure you have the following installed:
    cargo build
    ```
 
+## Testing
+
+After setting up your Rust toolchain above, you can run tests with:
+
+```
+cargo test
+```
+
 ## Running the Application
 
 For development, you can run multiple nodes by running:
 ```
-docker compose up --build
+make dev
 ```
 
 These will be configured to communicate with each other.
@@ -50,4 +58,12 @@ To query a node, you can run `grpcurl` from within the container:
 
 ```
 docker compose exec node1 grpcurl -import-path proto -proto proto/rpc.proto list
+```
+
+## Clean up
+
+You can remove any cached items by running:
+
+```
+make clean
 ```
