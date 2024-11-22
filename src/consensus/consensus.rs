@@ -14,7 +14,7 @@ use malachite_consensus::{Effect, ProposedValue, Resume, SignedConsensusMsg};
 use malachite_metrics::Metrics;
 
 use crate::consensus::timers::{TimeoutElapsed, TimerScheduler};
-use crate::consensus::validator::{self, ShardValidator};
+use crate::consensus::validator::ShardValidator;
 use crate::core::types::{
     Height, ShardId, SnapchainContext, SnapchainShard, SnapchainValidator,
     SnapchainValidatorContext,

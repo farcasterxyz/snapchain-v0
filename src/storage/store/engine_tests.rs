@@ -5,7 +5,7 @@ mod tests {
     use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
     use crate::proto::snapchain::{Height, ShardChunk, ShardHeader, Transaction};
     use crate::storage::db;
-    use crate::storage::store::engine::{Message, ShardEngine, ShardStateChange};
+    use crate::storage::store::engine::{MempoolMessage, ShardEngine, ShardStateChange};
     use crate::storage::store::shard::ShardStore;
     use crate::utils::cli;
     use prost::Message as _;
@@ -180,7 +180,7 @@ mod tests {
         let messages_tx = engine.messages_tx();
 
         messages_tx
-            .send(Message::UserMessage(msg1.clone()))
+            .send(MempoolMessage::UserMessage(msg1.clone()))
             .await
             .unwrap();
         let state_change = engine.propose_state_change(1);
@@ -253,7 +253,7 @@ mod tests {
 
         {
             messages_tx
-                .send(Message::UserMessage(msg1.clone()))
+                .send(MempoolMessage::UserMessage(msg1.clone()))
                 .await
                 .unwrap();
             let state_change = engine.propose_state_change(1);
@@ -282,7 +282,7 @@ mod tests {
 
         {
             messages_tx
-                .send(Message::UserMessage(msg2.clone()))
+                .send(MempoolMessage::UserMessage(msg2.clone()))
                 .await
                 .unwrap();
             let state_change = engine.propose_state_change(1);
@@ -323,11 +323,11 @@ mod tests {
 
         {
             messages_tx
-                .send(Message::UserMessage(msg1.clone()))
+                .send(MempoolMessage::UserMessage(msg1.clone()))
                 .await
                 .unwrap();
             messages_tx
-                .send(Message::UserMessage(msg2.clone()))
+                .send(MempoolMessage::UserMessage(msg2.clone()))
                 .await
                 .unwrap();
             let state_change = engine.propose_state_change(1);
@@ -364,7 +364,7 @@ mod tests {
         let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
         messages_tx
-            .send(Message::ValidatorMessage(
+            .send(MempoolMessage::ValidatorMessage(
                 crate::proto::snapchain::ValidatorMessage {
                     on_chain_event: Some(onchain_event),
                     fname_transfer: None,

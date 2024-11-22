@@ -312,9 +312,11 @@ async fn test_basic_consensus() {
             hash.extend_from_slice(&i.to_be_bytes()); // just for now
 
             messages_tx1
-                .send(snapchain::storage::store::engine::Message::UserMessage(
-                    cli::compose_message(321, format!("Cast {}", i).as_str(), None, None),
-                ))
+                .send(
+                    snapchain::storage::store::engine::MempoolMessage::UserMessage(
+                        cli::compose_message(321, format!("Cast {}", i).as_str(), None, None),
+                    ),
+                )
                 .await
                 .unwrap();
             i += 1;
