@@ -294,7 +294,7 @@ impl BlockProposer {
     async fn publish_new_block(&self, block: Block) {
         match self.block_tx.send(block.clone()).await {
             Err(err) => {
-                error!("Erorr publishing new block {:#?}", err)
+                error!("Error publishing new block {:#?}", err)
             }
             Ok(_) => {}
         }
