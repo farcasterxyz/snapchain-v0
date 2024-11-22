@@ -270,7 +270,7 @@ impl Consensus {
             }
 
             ConsensusMsg::ReceivedSignedVote(vote) => {
-                debug!(
+                info!(
                     "Received vote: {:?} for height: {:?}, round: {:?} at {:?}",
                     vote.shard_hash, vote.height, vote.round, self.params.address
                 );
@@ -290,7 +290,7 @@ impl Consensus {
             }
 
             ConsensusMsg::ReceivedSignedProposal(proposal) => {
-                debug!(
+                info!(
                     "Received proposal: {:?} for height: {:?}, round: {:?} at {:?}",
                     proposal.shard_hash, proposal.height, proposal.round, self.params.address
                 );
@@ -347,7 +347,7 @@ impl Consensus {
 
             ConsensusMsg::ReceivedFullProposal(full_proposal) => {
                 let height = full_proposal.height.clone().unwrap();
-                debug!(
+                info!(
                     "Received proposed value: {:?} at {:?}",
                     height, self.params.address
                 );
@@ -420,7 +420,7 @@ impl Consensus {
                 Ok(())
             }
             ConsensusMsg::ReceivedProposedValue(value) => {
-                debug!(
+                info!(
                     "Received proposed value: {:?} for height: {:?}, round: {:?} at {:?}",
                     value.value, value.height, value.round, self.params.address
                 );
@@ -451,7 +451,7 @@ impl Consensus {
             return Ok(());
         }
         let validator_set = state.shard_validator.get_validator_set();
-        debug!(
+        info!(
             "Starting height: {height} with {:?} validators",
             validator_set.count()
         );
@@ -504,7 +504,7 @@ impl Consensus {
             }
 
             Effect::StartRound(height, round, proposer) => {
-                debug!("Starting height: {height}, round: {round}, proposer: {proposer}");
+                info!("Starting height: {height}, round: {round}, proposer: {proposer}");
                 shard_validator.start_round(height, round, proposer);
                 Ok(Resume::Continue)
             }
@@ -529,7 +529,7 @@ impl Consensus {
             Effect::Broadcast(gossip_msg) => {
                 match gossip_msg {
                     SignedConsensusMsg::Proposal(proposal) => {
-                        debug!(
+                        info!(
                             "Broadcasting proposal gossip message: {:?} {:?} from {:?}",
                             proposal.height, proposal.round, proposal.proposer
                         );
@@ -538,7 +538,7 @@ impl Consensus {
                             .await?;
                     }
                     SignedConsensusMsg::Vote(vote) => {
-                        debug!(
+                        info!(
                             "Broadcasting vote gossip message: {:?} {:?} {:?} from {:?}",
                             vote.vote_type, vote.height, vote.round, vote.voter
                         );
@@ -557,7 +557,7 @@ impl Consensus {
 
                 let value = full_proposal.shard_hash();
 
-                debug!("Proposing value: {value} for height: {height}, round: {round}");
+                info!("Proposing value: {value} for height: {height}, round: {round}");
                 let result = myself.cast(ConsensusMsg::ProposeValue(height, round, value, None));
                 if let Err(e) = result {
                     error!("Error when forwarding locally proposed value: {e:?}");

@@ -98,7 +98,7 @@ impl SnapchainGossip {
 
                 // Set a custom gossipsub configuration
                 let gossipsub_config = gossipsub::ConfigBuilder::default()
-                    .heartbeat_interval(Duration::from_secs(1)) // This is set to aid debugging by not cluttering the log space
+                    .heartbeat_interval(Duration::from_secs(10)) // This is set to aid debugging by not cluttering the log space
                     .validation_mode(gossipsub::ValidationMode::Strict) // This sets the kind of message validation. The default is Strict (enforce message signing)
                     .message_id_fn(message_id_fn) // content-address messages. No two messages of the same content will be propagated.
                     .build()
@@ -112,7 +112,7 @@ impl SnapchainGossip {
 
                 Ok(SnapchainBehavior { gossipsub })
             })?
-            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(300)))
+            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
             .build();
 
         for addr in config.bootstrap_addrs() {
@@ -182,7 +182,7 @@ impl SnapchainGossip {
                                     match gossip_message.message {
                                         Some(proto::gossip_message::Message::FullProposal(full_proposal)) => {
                                             let height = full_proposal.height();
-                                            debug!("Received block with height {} from peer: {}", height, peer_id);
+                                            info!("Received block with height {} from peer: {}", height, peer_id);
                                             let consensus_message = ConsensusMsg::ReceivedFullProposal(full_proposal);
                                             let res = self.system_tx.send(SystemMessage::Consensus(consensus_message)).await;
                                             if let Err(e) = res {
@@ -190,7 +190,7 @@ impl SnapchainGossip {
                                             }
                                         },
                                         Some(proto::gossip_message::Message::Validator(validator)) => {
-                                            debug!("Received validator registration from peer: {}", peer_id);
+                                            info!("Received validator registration from peer: {}", peer_id);
                                             if let Some(validator) = validator.validator {
                                                 let public_key = libp2p::identity::ed25519::PublicKey::try_from_bytes(&validator.signer);
                                                 if public_key.is_err() {
@@ -278,7 +278,7 @@ impl SnapchainGossip {
                             self.publish(encoded_message);
                         },
                         Some(GossipEvent::RegisterValidator(register_validator)) => {
-                            debug!("Broadcasting validator registration");
+                            info!("Broadcasting validator registration");
                             let gossip_message = proto::GossipMessage {
                                 message: Some(proto::gossip_message::Message::Validator(register_validator)),
                             };
