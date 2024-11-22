@@ -51,14 +51,7 @@ mod tests {
             shard_index,
             block_number,
         });
-
-        //TODO: don't assume 1 transaction
-        chunk.transactions[0].user_messages = change.transactions[0]
-            .user_messages
-            .iter()
-            .cloned()
-            .collect();
-
+        chunk.transactions = change.transactions.clone();
         chunk
     }
 
@@ -88,7 +81,7 @@ mod tests {
             block_number: 0,
             block_hash: vec![],
             block_timestamp: 0,
-            transaction_hash: vec![],
+            transaction_hash: [1; 10].to_vec(),
             log_index: 0,
             fid: 1,
             tx_index: 0,
@@ -120,8 +113,7 @@ mod tests {
         let state_change = engine.propose_state_change(1);
 
         assert_eq!(1, state_change.shard_id);
-        assert_eq!(state_change.transactions.len(), 1);
-        assert_eq!(0, state_change.transactions[0].user_messages.len());
+        assert_eq!(state_change.transactions.len(), 0);
         assert_eq!(
             "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
             to_hex(&state_change.new_state_root)
@@ -196,6 +188,9 @@ mod tests {
         let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
         assert_eq!(0, events.events.len());
 
+        // And it's not inserted into the trie
+        assert_eq!(engine.sync_id_exists(&msg1.hash), false);
+
         let valid = engine.validate_state_change(&state_change);
         assert!(valid);
 
@@ -224,6 +219,9 @@ mod tests {
             to_hex(&msg1.hash),
             to_hex(&generated_event.message.unwrap().hash)
         );
+
+        // The message exists in the trie
+        assert_eq!(engine.sync_id_exists(&msg1.hash), true);
     }
 
     #[tokio::test]

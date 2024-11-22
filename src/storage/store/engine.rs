@@ -11,6 +11,7 @@ use crate::storage::store::account::{
 use crate::storage::store::BlockStore;
 use crate::storage::trie;
 use crate::storage::trie::merkle_trie;
+use itertools::Itertools;
 use message::MessageType;
 use snapchain::{Block, ShardChunk, Transaction};
 use std::sync::Arc;
@@ -155,7 +156,7 @@ impl ShardEngine {
             }
         }
 
-        let mut snap_txns = self.create_transactions_from_mempool(messages, txn_batch);
+        let mut snap_txns = self.create_transactions_from_mempool(messages);
         for snap_txn in &mut snap_txns {
             self.replay_snap_txn(&snap_txn, txn_batch)?;
             snap_txn.account_root = self.trie.root_hash()?; // TODO: This should use the account root and not the shard root
@@ -175,41 +176,36 @@ impl ShardEngine {
     fn create_transactions_from_mempool(
         &mut self,
         mut messages: Vec<MempoolMessage>,
-        txn_batch: &mut RocksDbTransactionBatch,
     ) -> Vec<Transaction> {
         let mut transactions = vec![];
 
-        messages.sort_by(|a, b| a.fid().cmp(&b.fid()));
-        let mut last_fid = 0;
-        let mut transaction = Transaction {
-            fid: 0,
-            account_root: vec![],
-            system_messages: vec![],
-            user_messages: vec![],
-        };
-
-        for msg in &messages {
-            if msg.fid() != last_fid {
-                if last_fid != 0 {
-                    transactions.push(transaction);
-                }
-                last_fid = msg.fid();
-                transaction = Transaction {
-                    fid: msg.fid() as u64,
-                    account_root: vec![],
-                    system_messages: vec![],
-                    user_messages: vec![],
-                };
-            }
-            match msg {
-                MempoolMessage::ValidatorMessage(msg) => {
-                    transaction.system_messages.push(msg.clone());
-                }
-                MempoolMessage::UserMessage(msg) => {
-                    transaction.user_messages.push(msg.clone());
+        let grouped_messages = messages.iter().into_group_map_by(|msg| msg.fid());
+        let unique_fids = grouped_messages.keys().len();
+        for (fid, messages) in grouped_messages {
+            let mut transaction = Transaction {
+                fid: fid as u64,
+                account_root: vec![], // Starts empty, will be updated after replay
+                system_messages: vec![],
+                user_messages: vec![],
+            };
+            for msg in messages {
+                match msg {
+                    MempoolMessage::ValidatorMessage(msg) => {
+                        transaction.system_messages.push(msg.clone());
+                    }
+                    MempoolMessage::UserMessage(msg) => {
+                        transaction.user_messages.push(msg.clone());
+                    }
                 }
             }
+            transactions.push(transaction);
         }
+        info!(
+            transactions = transactions.len(),
+            messages = messages.len(),
+            fids = unique_fids,
+            "Created transactions from mempool"
+        );
         transactions
     }
 
@@ -392,6 +388,15 @@ impl ShardEngine {
             }
             Ok(()) => {}
         }
+    }
+
+    pub fn sync_id_exists(&mut self, sync_id: &Vec<u8>) -> bool {
+        self.trie
+            .exists(&self.db, sync_id.as_ref())
+            .unwrap_or_else(|err| {
+                error!("Error checking if sync id exists: {:?}", err);
+                false
+            })
     }
 
     pub fn get_confirmed_height(&self) -> Height {
