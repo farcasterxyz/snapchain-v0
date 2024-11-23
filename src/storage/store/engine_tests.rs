@@ -5,12 +5,16 @@ mod tests {
     use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
     use crate::proto::snapchain::{Height, ShardChunk, ShardHeader, Transaction};
     use crate::storage::db;
+    use crate::storage::db::RocksDbTransactionBatch;
     use crate::storage::store::engine::{MempoolMessage, ShardEngine, ShardStateChange};
     use crate::storage::store::shard::ShardStore;
-    use crate::utils::cli;
+    use crate::storage::trie::merkle_trie::TrieKey;
+    use crate::utils::factory::{events_factory, messages_factory};
     use prost::Message as _;
     use tempfile;
     use tracing_subscriber::EnvFilter;
+
+    const FID_FOR_TEST: u32 = 1234;
 
     fn new_engine() -> (ShardEngine, tempfile::TempDir) {
         let dir = tempfile::TempDir::new().unwrap();
@@ -62,7 +66,7 @@ mod tests {
             transactions: vec![Transaction {
                 user_messages: vec![],
                 system_messages: vec![],
-                fid: 1234,
+                fid: FID_FOR_TEST as u64,
                 account_root: vec![5, 5, 6, 6], //TODO,
             }],
             hash: vec![],
@@ -71,23 +75,11 @@ mod tests {
     }
 
     fn default_message(text: &str) -> message::Message {
-        cli::compose_message(1234, text, Some(0), None)
+        messages_factory::casts::create_cast_add(FID_FOR_TEST, text, Some(0), None)
     }
 
     fn default_onchain_event() -> OnChainEvent {
-        OnChainEvent {
-            r#type: OnChainEventType::EventTypeIdRegister as i32,
-            chain_id: 0,
-            block_number: 0,
-            block_hash: vec![],
-            block_timestamp: 0,
-            transaction_hash: [1; 10].to_vec(),
-            log_index: 0,
-            fid: 1,
-            tx_index: 0,
-            version: 1,
-            body: None,
-        }
+        events_factory::create_onchain_event(FID_FOR_TEST)
     }
 
     fn entities() -> (message::Message, message::Message) {
@@ -107,21 +99,65 @@ mod tests {
         (msg1, msg2)
     }
 
-    #[test]
-    fn test_engine_basic_propose() {
+    fn validate_and_commit_state_change(
+        engine: &mut ShardEngine,
+        state_change: &ShardStateChange,
+    ) -> ShardChunk {
+        let valid = engine.validate_state_change(state_change);
+        assert!(valid);
+
+        let height = engine.get_confirmed_height();
+        let chunk = state_change_to_shard_chunk(1, height.block_number + 1, state_change);
+        engine.commit_shard_chunk(&chunk);
+        chunk
+    }
+
+    async fn commit_message(engine: &mut ShardEngine, msg: &message::Message) -> ShardChunk {
+        let messages_tx = engine.messages_tx();
+
+        messages_tx
+            .send(MempoolMessage::UserMessage(msg.clone()))
+            .await
+            .unwrap();
+        let state_change = engine.propose_state_change(1);
+
+        validate_and_commit_state_change(engine, &state_change)
+    }
+
+    #[tokio::test]
+    async fn test_engine_basic_propose() {
         let (mut engine, _tmpdir) = new_engine();
+        let (msg1, _) = entities();
+        let messages_tx = engine.messages_tx();
+
+        // State root starts empty
+        assert_eq!("", to_hex(&engine.trie_root_hash()));
+
+        // Propose empty transaction
+        let state_change = engine.propose_state_change(1);
+        assert_eq!(1, state_change.shard_id);
+        assert_eq!(state_change.transactions.len(), 0);
+        // No messages so, new state root should be same as before
+        assert_eq!("", to_hex(&state_change.new_state_root));
+        // Root hash is not updated until commit
+        assert_eq!("", to_hex(&engine.trie_root_hash()));
+
+        // Propose a message
+        messages_tx
+            .send(MempoolMessage::UserMessage(msg1.clone()))
+            .await
+            .unwrap();
+
         let state_change = engine.propose_state_change(1);
 
         assert_eq!(1, state_change.shard_id);
-        assert_eq!(state_change.transactions.len(), 0);
+        assert_eq!(state_change.transactions.len(), 1);
         assert_eq!(
-            "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
+            "9d9ff2bff951492db0c42511f23230d6e819ab15",
             to_hex(&state_change.new_state_root)
         );
-        assert_eq!(
-            "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
-            to_hex(&engine.trie_root_hash())
-        );
+        // Root hash is not updated until commit
+        assert_eq!("", to_hex(&engine.trie_root_hash()));
     }
 
     #[test]
@@ -146,17 +182,16 @@ mod tests {
 
         chunk.header.as_mut().unwrap().shard_root = invalid_hash;
 
-        engine.commit_shard_chunk(chunk);
+        engine.commit_shard_chunk(&chunk);
     }
 
     #[test]
     fn test_engine_commit_no_messages_happy_path() {
         let (mut engine, _tmpdir) = new_engine();
         let state_change = engine.propose_state_change(1);
-        let expected_roots = vec!["237b11d0dd9e78994ef2f141c7f170d48bb51d34"];
+        let expected_roots = vec![""];
 
-        let chunk = state_change_to_shard_chunk(1, 1, &state_change);
-        engine.commit_shard_chunk(chunk);
+        validate_and_commit_state_change(&mut engine, &state_change);
 
         assert_eq!(expected_roots[0], to_hex(&engine.trie_root_hash()));
 
@@ -189,7 +224,7 @@ mod tests {
         assert_eq!(0, events.events.len());
 
         // And it's not inserted into the trie
-        assert_eq!(engine.sync_id_exists(&msg1.hash), false);
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&msg1)), false);
 
         let valid = engine.validate_state_change(&state_change);
         assert!(valid);
@@ -198,8 +233,7 @@ mod tests {
         let casts_result = engine.get_casts_by_fid(msg1.fid());
         assert_eq!(0, casts_result.unwrap().messages_bytes.len());
 
-        let chunk = state_change_to_shard_chunk(1, 1, &state_change);
-        engine.commit_shard_chunk(chunk);
+        validate_and_commit_state_change(&mut engine, &state_change);
 
         // commit does write to the store
         let casts_result = engine.get_casts_by_fid(msg1.fid());
@@ -221,7 +255,93 @@ mod tests {
         );
 
         // The message exists in the trie
-        assert_eq!(engine.sync_id_exists(&msg1.hash), true);
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&msg1)), true);
+    }
+
+    #[tokio::test]
+    async fn test_engine_commit_delete_message() {
+        let timestamp = messages_factory::farcaster_time();
+        let cast =
+            messages_factory::casts::create_cast_add(FID_FOR_TEST, "msg1", Some(timestamp), None);
+        let (mut engine, _tmpdir) = new_engine();
+
+        commit_message(&mut engine, &cast).await;
+
+        // The cast is present in the store and the trie
+        let casts_result = engine.get_casts_by_fid(cast.fid());
+        let messages = casts_result.unwrap().messages_bytes;
+        assert_eq!(1, messages.len());
+        let decoded = message::Message::decode(&*messages[0]).unwrap();
+        assert_eq!(to_hex(&cast.hash), to_hex(&decoded.hash));
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast)), true);
+
+        // Delete the cast
+        let delete_cast = messages_factory::casts::create_cast_remove(
+            FID_FOR_TEST,
+            &cast.hash,
+            Some(timestamp + 1),
+            None,
+        );
+
+        commit_message(&mut engine, &delete_cast).await;
+
+        // The cast is not present in the store
+        let casts_result = engine.get_casts_by_fid(FID_FOR_TEST);
+        let messages = casts_result.unwrap().messages_bytes;
+        assert_eq!(0, messages.len());
+
+        // The cast is not present in the trie, but the remove message is
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast)), false);
+        assert_eq!(
+            engine.trie_key_exists(&TrieKey::for_message(&delete_cast)),
+            true
+        );
+    }
+
+    #[tokio::test]
+    async fn test_account_roots() {
+        let cast = messages_factory::casts::create_cast_add(FID_FOR_TEST, "msg1", None, None);
+        let (mut engine, _tmpdir) = new_engine();
+
+        let txn = &mut RocksDbTransactionBatch::new();
+        let account_root = engine
+            .trie
+            .get_hash(&engine.db, txn, &TrieKey::for_fid(FID_FOR_TEST));
+        let shard_root = engine.trie.root_hash().unwrap();
+
+        // Account root and shard root is empty initially
+        assert_eq!(account_root.len(), 0);
+        assert_eq!(shard_root.len(), 0);
+
+        commit_message(&mut engine, &cast).await;
+
+        let updated_account_root =
+            engine
+                .trie
+                .get_hash(&engine.db, txn, &TrieKey::for_fid(FID_FOR_TEST));
+        let updated_shard_root = engine.trie.root_hash().unwrap();
+        // Account root is not empty after a message is committed
+        assert_eq!(updated_account_root.len() > 0, true);
+        assert_ne!(updated_shard_root, shard_root);
+
+        let another_fid_cast =
+            messages_factory::casts::create_cast_add(FID_FOR_TEST + 1, "msg2", None, None);
+
+        commit_message(&mut engine, &another_fid_cast).await;
+
+        let account_root_another_fid =
+            engine
+                .trie
+                .get_hash(&engine.db, txn, &TrieKey::for_fid(FID_FOR_TEST + 1));
+        let account_root_original_fid =
+            engine
+                .trie
+                .get_hash(&engine.db, txn, &TrieKey::for_fid(FID_FOR_TEST));
+        let latest_shard_root = engine.trie.root_hash().unwrap();
+        // Only the account root for the new fid and the shard root is updated, original fid account root remains the same
+        assert_eq!(account_root_another_fid.len() > 0, true);
+        assert_eq!(account_root_original_fid, updated_account_root);
+        assert_ne!(latest_shard_root, updated_shard_root);
     }
 
     #[tokio::test]
@@ -231,9 +351,9 @@ mod tests {
         let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
         let expected_roots = vec![
-            "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
-            "8d566fb56cabed2665962a558dd2d4be0b0e4f6c",
-            "215cee5fa4850848a9f9f06a93b0ba4da2ff52ef",
+            "",
+            "9d9ff2bff951492db0c42511f23230d6e819ab15",
+            "89506154d345eaf8ef9d0bdf5756b08feb97411b",
         ];
 
         /* note: Hard-coded expected_roots is going to be fragile for some time.
@@ -265,11 +385,7 @@ mod tests {
 
             assert_eq!(expected_roots[1], to_hex(&state_change.new_state_root));
 
-            let valid = engine.validate_state_change(&state_change);
-            assert!(valid);
-
-            let chunk = state_change_to_shard_chunk(1, 1, &state_change);
-            engine.commit_shard_chunk(chunk);
+            validate_and_commit_state_change(&mut engine, &state_change);
 
             assert_eq!(expected_roots[1], to_hex(&engine.trie_root_hash()));
 
@@ -294,11 +410,7 @@ mod tests {
 
             assert_eq!(expected_roots[2], to_hex(&state_change.new_state_root));
 
-            let valid = engine.validate_state_change(&state_change);
-            assert!(valid);
-
-            let chunk = state_change_to_shard_chunk(1, 2, &state_change);
-            engine.commit_shard_chunk(chunk);
+            validate_and_commit_state_change(&mut engine, &state_change);
 
             assert_eq!(expected_roots[2], to_hex(&engine.trie_root_hash()));
 
@@ -314,10 +426,7 @@ mod tests {
         let (msg1, msg2) = entities();
         let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
-        let expected_roots = vec![
-            "237b11d0dd9e78994ef2f141c7f170d48bb51d34",
-            "215cee5fa4850848a9f9f06a93b0ba4da2ff52ef",
-        ];
+        let expected_roots = vec!["", "89506154d345eaf8ef9d0bdf5756b08feb97411b"];
 
         {
             messages_tx
@@ -342,11 +451,7 @@ mod tests {
 
             assert_eq!(expected_roots[1], to_hex(&state_change.new_state_root));
 
-            let valid = engine.validate_state_change(&state_change);
-            assert!(valid);
-
-            let chunk = state_change_to_shard_chunk(1, 1, &state_change);
-            engine.commit_shard_chunk(chunk);
+            validate_and_commit_state_change(&mut engine, &state_change);
 
             assert_eq!(expected_roots[1], to_hex(&engine.trie_root_hash()));
 
@@ -364,7 +469,7 @@ mod tests {
         messages_tx
             .send(MempoolMessage::ValidatorMessage(
                 crate::proto::snapchain::ValidatorMessage {
-                    on_chain_event: Some(onchain_event),
+                    on_chain_event: Some(onchain_event.clone()),
                     fname_transfer: None,
                 },
             ))
@@ -375,18 +480,30 @@ mod tests {
         assert_eq!(state_change.transactions.len(), 1);
         assert_eq!(1, state_change.transactions[0].system_messages.len());
 
-        let valid = engine.validate_state_change(&state_change);
-        assert!(valid);
+        // No hub events are generated
+        let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
+        assert_eq!(0, events.events.len());
 
-        let chunk = state_change_to_shard_chunk(1, 1, &state_change);
-        engine.commit_shard_chunk(chunk);
+        validate_and_commit_state_change(&mut engine, &state_change);
 
         let height = engine.get_confirmed_height();
         assert_eq!(height.shard_index, 1);
 
         let stored_onchain_events = engine
-            .get_onchain_events(OnChainEventType::EventTypeIdRegister, 1)
+            .get_onchain_events(OnChainEventType::EventTypeIdRegister, FID_FOR_TEST)
             .unwrap();
         assert_eq!(stored_onchain_events.len(), 1);
+
+        // Hub events are generated
+        let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
+        assert_eq!(1, events.events.len());
+        let generated_event = match events.events[0].clone().body {
+            Some(crate::proto::hub_event::hub_event::Body::MergeOnChainEventBody(e)) => e,
+            _ => panic!("Unexpected event type"),
+        };
+        assert_eq!(
+            to_hex(&onchain_event.transaction_hash),
+            to_hex(&generated_event.on_chain_event.unwrap().transaction_hash)
+        );
     }
 }

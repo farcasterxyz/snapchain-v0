@@ -28,9 +28,9 @@ mod tests {
         let db = &RocksDB::new(db_path.to_str().unwrap());
         db.open().unwrap();
 
-        let mut txn_batch = RocksDbTransactionBatch::new();
-        t.initialize(db, &mut txn_batch)?;
+        t.initialize(db)?;
 
+        let mut txn_batch = RocksDbTransactionBatch::new();
         t.insert(
             db,
             &mut txn_batch,
@@ -86,9 +86,9 @@ mod tests {
             db.open().unwrap();
 
             let mut t1 = MerkleTrie::new();
-            let mut txn_batch = RocksDbTransactionBatch::new();
+            t1.initialize(db)?;
 
-            t1.initialize(db, &mut txn_batch)?;
+            let mut txn_batch = RocksDbTransactionBatch::new();
             t1.insert(db, &mut txn_batch, hashes1.clone())?;
             let items = t1.items()?;
             println!(
@@ -104,9 +104,9 @@ mod tests {
             db.open().unwrap();
 
             let mut t2 = MerkleTrie::new();
-            let mut txn_batch = RocksDbTransactionBatch::new();
+            t2.initialize(db)?;
 
-            t2.initialize(db, &mut txn_batch)?;
+            let mut txn_batch = RocksDbTransactionBatch::new();
             t2.insert(db, &mut txn_batch, hashes1)?;
             let items = t2.items()?;
             println!(
