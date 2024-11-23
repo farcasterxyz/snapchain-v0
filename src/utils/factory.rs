@@ -1,11 +1,32 @@
 use crate::core::types::FARCASTER_EPOCH;
 use crate::proto::msg as message;
+use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
 use ed25519_dalek::{SecretKey, Signer, SigningKey};
 use hex::FromHex;
 use message::CastType::Cast;
 use message::MessageType;
 use message::{CastAddBody, FarcasterNetwork, MessageData};
 use prost::Message;
+
+pub mod events_factory {
+    use super::*;
+
+    pub fn create_onchain_event(fid: u32) -> OnChainEvent {
+        OnChainEvent {
+            r#type: OnChainEventType::EventTypeIdRegister as i32,
+            chain_id: 10,
+            block_number: rand::random::<u32>(),
+            block_hash: vec![],
+            block_timestamp: 0,
+            transaction_hash: rand::random::<[u8; 32]>().to_vec(),
+            log_index: 0,
+            fid: fid as u64,
+            tx_index: 0,
+            version: 1,
+            body: None,
+        }
+    }
+}
 
 pub mod messages_factory {
     use super::*;

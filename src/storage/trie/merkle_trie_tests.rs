@@ -2,7 +2,8 @@
 mod tests {
     use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
     use crate::storage::trie::errors::TrieError;
-    use crate::storage::trie::merkle_trie::MerkleTrie;
+    use crate::storage::trie::merkle_trie::{MerkleTrie, TrieKey};
+    use crate::utils::factory::{events_factory, messages_factory};
 
     fn random_hash() -> Vec<u8> {
         (0..32).map(|_| rand::random::<u8>()).collect()
@@ -164,5 +165,30 @@ mod tests {
         assert_eq!(res, true);
         let res = trie.exists(db, &second_hash).unwrap();
         assert_eq!(res, false);
+    }
+
+    #[test]
+    fn test_trie_key() {
+        let fid_key = TrieKey::for_fid(1234);
+        assert_eq!(fid_key, (1234u32).to_be_bytes().to_vec());
+
+        let message = messages_factory::casts::create_cast_add(1234, "test", None, None);
+        let message_key = TrieKey::for_message(&message);
+        assert_eq!(message_key[0..4], TrieKey::for_fid(1234));
+        assert_eq!(message_key[4], message.msg_type() as u8);
+        assert_eq!(message_key[5..], message.hash);
+
+        let delete_message =
+            messages_factory::casts::create_cast_remove(321456, &message.hash, None, None);
+        let delete_message_key = TrieKey::for_message(&delete_message);
+        assert_eq!(delete_message_key[0..4], TrieKey::for_fid(321456));
+        assert_eq!(delete_message_key[4], delete_message.msg_type() as u8);
+        assert_eq!(delete_message_key[5..], delete_message.hash);
+
+        let event = events_factory::create_onchain_event(1234);
+        let event_key = TrieKey::for_onchain_event(&event);
+        assert_eq!(event_key[0..4], TrieKey::for_fid(1234));
+        assert_eq!(event_key[4], event.r#type as u8);
+        assert_eq!(event_key[5..], event.transaction_hash);
     }
 }

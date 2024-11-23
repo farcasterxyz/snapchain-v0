@@ -11,6 +11,7 @@ use crate::storage::store::account::{
 use crate::storage::store::BlockStore;
 use crate::storage::trie;
 use crate::storage::trie::merkle_trie;
+use crate::storage::trie::merkle_trie::TrieKey;
 use itertools::Itertools;
 use message::MessageType;
 use snapchain::{Block, ShardChunk, Transaction};
@@ -151,8 +152,8 @@ impl ShardEngine {
 
         let mut snapchain_txns = self.create_transactions_from_mempool(messages);
         for snapchain_txn in &mut snapchain_txns {
-            self.replay_snapchain_txn(&snapchain_txn, txn_batch)?;
-            snapchain_txn.account_root = self.trie.root_hash()?; // TODO: This should use the account root and not the shard root
+            let account_root = self.replay_snapchain_txn(&snapchain_txn, txn_batch)?;
+            snapchain_txn.account_root = account_root;
         }
 
         let new_root_hash = self.trie.root_hash()?;
@@ -235,7 +236,7 @@ impl ShardEngine {
         &mut self,
         snapchain_txn: &Transaction,
         txn_batch: &mut RocksDbTransactionBatch,
-    ) -> Result<(), EngineError> {
+    ) -> Result<Vec<u8>, EngineError> {
         let total_user_messages = snapchain_txn.user_messages.len();
         let total_system_messages = snapchain_txn.system_messages.len();
         let mut user_messages_count = 0;
@@ -278,17 +279,23 @@ impl ShardEngine {
             }
         }
 
+        let account_root = self.trie.get_hash(
+            &self.db,
+            txn_batch,
+            &TrieKey::for_fid(snapchain_txn.fid as u32),
+        );
         info!(
             fid = snapchain_txn.fid,
             num_user_messages = total_user_messages,
             num_system_messages = total_system_messages,
             user_messages_merged = user_messages_count,
             system_messages_merged = system_messages_count,
+            account_root = hex::encode(&account_root),
             "Replayed transaction"
         );
 
-        // TODO: This should return the account root
-        Ok(())
+        // Return the new account root hash
+        Ok(account_root)
     }
 
     fn merge_message(
@@ -325,11 +332,14 @@ impl ShardEngine {
             Some(hub_event::hub_event::Body::MergeMessageBody(merge)) => {
                 if let Some(msg) = merge.message {
                     self.trie
-                        .insert(&self.db, txn_batch, vec![msg.hash.clone()])?;
+                        .insert(&self.db, txn_batch, vec![TrieKey::for_message(&msg)])?;
                 }
                 for deleted_message in merge.deleted_messages {
-                    self.trie
-                        .delete(&self.db, txn_batch, vec![deleted_message.hash.clone()])?;
+                    self.trie.delete(
+                        &self.db,
+                        txn_batch,
+                        vec![TrieKey::for_message(&deleted_message)],
+                    )?;
                 }
             }
             Some(hub_event::hub_event::Body::MergeOnChainEventBody(merge)) => {
@@ -337,7 +347,7 @@ impl ShardEngine {
                     self.trie.insert(
                         &self.db,
                         txn_batch,
-                        vec![onchain_event.transaction_hash.clone()],
+                        vec![TrieKey::for_onchain_event(&onchain_event)],
                     )?;
                 }
             }
@@ -388,7 +398,7 @@ impl ShardEngine {
         }
     }
 
-    pub(crate) fn sync_id_exists(&mut self, sync_id: &Vec<u8>) -> bool {
+    pub(crate) fn trie_key_exists(&mut self, sync_id: &Vec<u8>) -> bool {
         self.trie
             .exists(&self.db, sync_id.as_ref())
             .unwrap_or_else(|err| {

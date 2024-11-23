@@ -1,10 +1,38 @@
 use super::super::db::{RocksDB, RocksDbTransactionBatch};
 use super::errors::TrieError;
 use super::trie_node::{TrieNode, TIMESTAMP_LENGTH};
+use crate::proto::msg as message;
+use crate::proto::onchain_event;
 use std::collections::HashMap;
 use tracing::info;
 
 pub const TRIE_DBPATH_PREFIX: &str = "trieDb";
+
+pub struct TrieKey {}
+
+impl TrieKey {
+    pub fn for_message(msg: &message::Message) -> Vec<u8> {
+        let mut key = Vec::new();
+        key.extend_from_slice(&Self::for_fid(msg.fid()));
+        key.push(msg.msg_type() as u8);
+        key.extend_from_slice(&msg.hash);
+        key
+    }
+
+    pub fn for_onchain_event(event: &onchain_event::OnChainEvent) -> Vec<u8> {
+        let mut key = Vec::new();
+        key.extend_from_slice(&Self::for_fid(event.fid as u32));
+        key.push(event.r#type as u8);
+        key.extend_from_slice(&event.transaction_hash);
+        key
+    }
+
+    pub fn for_fid(fid: u32) -> Vec<u8> {
+        let mut key = Vec::with_capacity(4);
+        key.extend_from_slice(&fid.to_be_bytes());
+        key
+    }
+}
 
 #[derive(Debug)]
 pub struct NodeMetadata {
@@ -173,6 +201,17 @@ impl MerkleTrie {
         }
 
         None
+    }
+
+    pub fn get_hash(
+        &self,
+        db: &RocksDB,
+        txn_batch: &mut RocksDbTransactionBatch,
+        prefix: &[u8],
+    ) -> Vec<u8> {
+        self.get_node(db, txn_batch, prefix)
+            .map(|node| node.hash())
+            .unwrap_or(vec![])
     }
 
     pub fn root_hash(&self) -> Result<Vec<u8>, TrieError> {

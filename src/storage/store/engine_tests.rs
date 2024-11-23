@@ -5,9 +5,11 @@ mod tests {
     use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
     use crate::proto::snapchain::{Height, ShardChunk, ShardHeader, Transaction};
     use crate::storage::db;
+    use crate::storage::db::RocksDbTransactionBatch;
     use crate::storage::store::engine::{MempoolMessage, ShardEngine, ShardStateChange};
     use crate::storage::store::shard::ShardStore;
-    use crate::utils::factory::messages_factory;
+    use crate::storage::trie::merkle_trie::TrieKey;
+    use crate::utils::factory::{events_factory, messages_factory};
     use prost::Message as _;
     use tempfile;
     use tracing_subscriber::EnvFilter;
@@ -77,19 +79,7 @@ mod tests {
     }
 
     fn default_onchain_event() -> OnChainEvent {
-        OnChainEvent {
-            r#type: OnChainEventType::EventTypeIdRegister as i32,
-            chain_id: 0,
-            block_number: 0,
-            block_hash: vec![],
-            block_timestamp: 0,
-            transaction_hash: [1; 10].to_vec(),
-            log_index: 0,
-            fid: 1,
-            tx_index: 0,
-            version: 1,
-            body: None,
-        }
+        events_factory::create_onchain_event(FID_FOR_TEST)
     }
 
     fn entities() -> (message::Message, message::Message) {
@@ -163,7 +153,7 @@ mod tests {
         assert_eq!(1, state_change.shard_id);
         assert_eq!(state_change.transactions.len(), 1);
         assert_eq!(
-            "d63b8a2bc65fe7b1df189882ba7dc3293ed3b373",
+            "9d9ff2bff951492db0c42511f23230d6e819ab15",
             to_hex(&state_change.new_state_root)
         );
         // Root hash is not updated until commit
@@ -234,7 +224,7 @@ mod tests {
         assert_eq!(0, events.events.len());
 
         // And it's not inserted into the trie
-        assert_eq!(engine.sync_id_exists(&msg1.hash), false);
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&msg1)), false);
 
         let valid = engine.validate_state_change(&state_change);
         assert!(valid);
@@ -265,17 +255,15 @@ mod tests {
         );
 
         // The message exists in the trie
-        assert_eq!(engine.sync_id_exists(&msg1.hash), true);
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&msg1)), true);
     }
 
     #[tokio::test]
     async fn test_engine_commit_delete_message() {
-        enable_logging();
         let timestamp = messages_factory::farcaster_time();
         let cast =
             messages_factory::casts::create_cast_add(FID_FOR_TEST, "msg1", Some(timestamp), None);
         let (mut engine, _tmpdir) = new_engine();
-        let messages_tx = engine.messages_tx();
 
         commit_message(&mut engine, &cast).await;
 
@@ -285,7 +273,7 @@ mod tests {
         assert_eq!(1, messages.len());
         let decoded = message::Message::decode(&*messages[0]).unwrap();
         assert_eq!(to_hex(&cast.hash), to_hex(&decoded.hash));
-        assert_eq!(engine.sync_id_exists(&cast.hash), true);
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast)), true);
 
         // Delete the cast
         let delete_cast = messages_factory::casts::create_cast_remove(
@@ -303,8 +291,57 @@ mod tests {
         assert_eq!(0, messages.len());
 
         // The cast is not present in the trie, but the remove message is
-        assert_eq!(engine.sync_id_exists(&cast.hash), false);
-        assert_eq!(engine.sync_id_exists(&delete_cast.hash), true);
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast)), false);
+        assert_eq!(
+            engine.trie_key_exists(&TrieKey::for_message(&delete_cast)),
+            true
+        );
+    }
+
+    #[tokio::test]
+    async fn test_account_roots() {
+        let cast = messages_factory::casts::create_cast_add(FID_FOR_TEST, "msg1", None, None);
+        let (mut engine, _tmpdir) = new_engine();
+
+        let txn = &mut RocksDbTransactionBatch::new();
+        let account_root = engine
+            .trie
+            .get_hash(&engine.db, txn, &TrieKey::for_fid(FID_FOR_TEST));
+        let shard_root = engine.trie.root_hash().unwrap();
+
+        // Account root and shard root is empty initially
+        assert_eq!(account_root.len(), 0);
+        assert_eq!(shard_root.len(), 0);
+
+        commit_message(&mut engine, &cast).await;
+
+        let updated_account_root =
+            engine
+                .trie
+                .get_hash(&engine.db, txn, &TrieKey::for_fid(FID_FOR_TEST));
+        let updated_shard_root = engine.trie.root_hash().unwrap();
+        // Account root is not empty after a message is committed
+        assert_eq!(updated_account_root.len() > 0, true);
+        assert_ne!(updated_shard_root, shard_root);
+
+        let another_fid_cast =
+            messages_factory::casts::create_cast_add(FID_FOR_TEST + 1, "msg2", None, None);
+
+        commit_message(&mut engine, &another_fid_cast).await;
+
+        let account_root_another_fid =
+            engine
+                .trie
+                .get_hash(&engine.db, txn, &TrieKey::for_fid(FID_FOR_TEST + 1));
+        let account_root_original_fid =
+            engine
+                .trie
+                .get_hash(&engine.db, txn, &TrieKey::for_fid(FID_FOR_TEST));
+        let latest_shard_root = engine.trie.root_hash().unwrap();
+        // Only the account root for the new fid and the shard root is updated, original fid account root remains the same
+        assert_eq!(account_root_another_fid.len() > 0, true);
+        assert_eq!(account_root_original_fid, updated_account_root);
+        assert_ne!(latest_shard_root, updated_shard_root);
     }
 
     #[tokio::test]
@@ -315,8 +352,8 @@ mod tests {
         let messages_tx = engine.messages_tx();
         let expected_roots = vec![
             "",
-            "d63b8a2bc65fe7b1df189882ba7dc3293ed3b373",
-            "5856450d7f70d4784ece499851e30a3bd7be40ad",
+            "9d9ff2bff951492db0c42511f23230d6e819ab15",
+            "89506154d345eaf8ef9d0bdf5756b08feb97411b",
         ];
 
         /* note: Hard-coded expected_roots is going to be fragile for some time.
@@ -389,7 +426,7 @@ mod tests {
         let (msg1, msg2) = entities();
         let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
-        let expected_roots = vec!["", "5856450d7f70d4784ece499851e30a3bd7be40ad"];
+        let expected_roots = vec!["", "89506154d345eaf8ef9d0bdf5756b08feb97411b"];
 
         {
             messages_tx
@@ -453,7 +490,7 @@ mod tests {
         assert_eq!(height.shard_index, 1);
 
         let stored_onchain_events = engine
-            .get_onchain_events(OnChainEventType::EventTypeIdRegister, 1)
+            .get_onchain_events(OnChainEventType::EventTypeIdRegister, FID_FOR_TEST)
             .unwrap();
         assert_eq!(stored_onchain_events.len(), 1);
 
