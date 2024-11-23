@@ -223,9 +223,9 @@ impl FullProposal {
         }
     }
 
-    pub fn shard_chunk(&self) -> Option<ShardChunk> {
+    pub fn shard_chunk(&self) -> Option<&ShardChunk> {
         match &self.proposed_value {
-            Some(ProposedValue::Shard(chunk)) => Some(chunk.clone()),
+            Some(ProposedValue::Shard(chunk)) => Some(&chunk),
             _ => None,
         }
     }

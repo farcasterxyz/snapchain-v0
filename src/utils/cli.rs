@@ -1,13 +1,8 @@
-use crate::core::types::FARCASTER_EPOCH;
 use crate::proto::msg as message;
 use crate::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 use crate::proto::{rpc, snapchain::Block};
-use ed25519_dalek::{SecretKey, Signer, SigningKey};
-use hex::FromHex;
-use message::CastType::Cast;
-use message::MessageType::CastAdd;
-use message::{CastAddBody, FarcasterNetwork, MessageData};
-use prost::Message;
+use crate::utils::factory::messages_factory;
+use ed25519_dalek::SigningKey;
 use std::error::Error;
 use tokio::sync::mpsc;
 use tokio::time;
@@ -28,60 +23,12 @@ pub async fn send_message(
 }
 
 pub fn compose_message(
-    fid: u64,
+    fid: u32,
     text: &str,
     timestamp: Option<u32>,
     private_key: Option<SigningKey>,
 ) -> message::Message {
-    let key = private_key.unwrap_or_else(|| {
-        SigningKey::from_bytes(
-            &SecretKey::from_hex(
-                "1000000000000000000000000000000000000000000000000000000000000000",
-            )
-            .unwrap(),
-        )
-    });
-    let network = FarcasterNetwork::Mainnet;
-
-    let timestamp = timestamp.unwrap_or_else(|| {
-        (std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            - FARCASTER_EPOCH) as u32
-    });
-
-    let cast_add = CastAddBody {
-        text: text.to_string(),
-        embeds: vec![],
-        embeds_deprecated: vec![],
-        mentions: vec![],
-        mentions_positions: vec![],
-        parent: None,
-        r#type: Cast as i32,
-    };
-
-    let msg_data = MessageData {
-        fid,
-        r#type: CastAdd as i32,
-        timestamp,
-        network: network as i32,
-        body: Some(message::message_data::Body::CastAddBody(cast_add)),
-    };
-
-    let msg_data_bytes = msg_data.encode_to_vec();
-    let hash = blake3::hash(&msg_data_bytes).as_bytes()[0..20].to_vec();
-
-    let signature = key.sign(&hash).to_bytes();
-    message::Message {
-        data: Some(msg_data),
-        hash_scheme: message::HashScheme::Blake3 as i32,
-        hash: hash.clone(),
-        signature_scheme: message::SignatureScheme::Ed25519 as i32,
-        signature: signature.to_vec(),
-        signer: key.verifying_key().to_bytes().to_vec(),
-        data_bytes: None,
-    }
+    messages_factory::casts::create_cast_add(fid, text, timestamp, private_key)
 }
 
 pub async fn follow_blocks(

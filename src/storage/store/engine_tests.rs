@@ -7,10 +7,12 @@ mod tests {
     use crate::storage::db;
     use crate::storage::store::engine::{MempoolMessage, ShardEngine, ShardStateChange};
     use crate::storage::store::shard::ShardStore;
-    use crate::utils::cli;
+    use crate::utils::factory::messages_factory;
     use prost::Message as _;
     use tempfile;
     use tracing_subscriber::EnvFilter;
+
+    const FID_FOR_TEST: u32 = 1234;
 
     fn new_engine() -> (ShardEngine, tempfile::TempDir) {
         let dir = tempfile::TempDir::new().unwrap();
@@ -62,7 +64,7 @@ mod tests {
             transactions: vec![Transaction {
                 user_messages: vec![],
                 system_messages: vec![],
-                fid: 1234,
+                fid: FID_FOR_TEST as u64,
                 account_root: vec![5, 5, 6, 6], //TODO,
             }],
             hash: vec![],
@@ -71,7 +73,7 @@ mod tests {
     }
 
     fn default_message(text: &str) -> message::Message {
-        cli::compose_message(1234, text, Some(0), None)
+        messages_factory::casts::create_cast_add(FID_FOR_TEST, text, Some(0), None)
     }
 
     fn default_onchain_event() -> OnChainEvent {
@@ -105,6 +107,31 @@ mod tests {
         );
 
         (msg1, msg2)
+    }
+
+    fn validate_and_commit_state_change(
+        engine: &mut ShardEngine,
+        state_change: &ShardStateChange,
+    ) -> ShardChunk {
+        let valid = engine.validate_state_change(state_change);
+        assert!(valid);
+
+        let height = engine.get_confirmed_height();
+        let chunk = state_change_to_shard_chunk(1, height.block_number + 1, state_change);
+        engine.commit_shard_chunk(&chunk);
+        chunk
+    }
+
+    async fn commit_message(engine: &mut ShardEngine, msg: &message::Message) -> ShardChunk {
+        let messages_tx = engine.messages_tx();
+
+        messages_tx
+            .send(MempoolMessage::UserMessage(msg.clone()))
+            .await
+            .unwrap();
+        let state_change = engine.propose_state_change(1);
+
+        validate_and_commit_state_change(engine, &state_change)
     }
 
     #[tokio::test]
@@ -165,7 +192,7 @@ mod tests {
 
         chunk.header.as_mut().unwrap().shard_root = invalid_hash;
 
-        engine.commit_shard_chunk(chunk);
+        engine.commit_shard_chunk(&chunk);
     }
 
     #[test]
@@ -174,8 +201,7 @@ mod tests {
         let state_change = engine.propose_state_change(1);
         let expected_roots = vec![""];
 
-        let chunk = state_change_to_shard_chunk(1, 1, &state_change);
-        engine.commit_shard_chunk(chunk);
+        validate_and_commit_state_change(&mut engine, &state_change);
 
         assert_eq!(expected_roots[0], to_hex(&engine.trie_root_hash()));
 
@@ -217,8 +243,7 @@ mod tests {
         let casts_result = engine.get_casts_by_fid(msg1.fid());
         assert_eq!(0, casts_result.unwrap().messages_bytes.len());
 
-        let chunk = state_change_to_shard_chunk(1, 1, &state_change);
-        engine.commit_shard_chunk(chunk);
+        validate_and_commit_state_change(&mut engine, &state_change);
 
         // commit does write to the store
         let casts_result = engine.get_casts_by_fid(msg1.fid());
@@ -241,6 +266,45 @@ mod tests {
 
         // The message exists in the trie
         assert_eq!(engine.sync_id_exists(&msg1.hash), true);
+    }
+
+    #[tokio::test]
+    async fn test_engine_commit_delete_message() {
+        enable_logging();
+        let timestamp = messages_factory::farcaster_time();
+        let cast =
+            messages_factory::casts::create_cast_add(FID_FOR_TEST, "msg1", Some(timestamp), None);
+        let (mut engine, _tmpdir) = new_engine();
+        let messages_tx = engine.messages_tx();
+
+        commit_message(&mut engine, &cast).await;
+
+        // The cast is present in the store and the trie
+        let casts_result = engine.get_casts_by_fid(cast.fid());
+        let messages = casts_result.unwrap().messages_bytes;
+        assert_eq!(1, messages.len());
+        let decoded = message::Message::decode(&*messages[0]).unwrap();
+        assert_eq!(to_hex(&cast.hash), to_hex(&decoded.hash));
+        assert_eq!(engine.sync_id_exists(&cast.hash), true);
+
+        // Delete the cast
+        let delete_cast = messages_factory::casts::create_cast_remove(
+            FID_FOR_TEST,
+            &cast.hash,
+            Some(timestamp + 1),
+            None,
+        );
+
+        commit_message(&mut engine, &delete_cast).await;
+
+        // The cast is not present in the store
+        let casts_result = engine.get_casts_by_fid(FID_FOR_TEST);
+        let messages = casts_result.unwrap().messages_bytes;
+        assert_eq!(0, messages.len());
+
+        // The cast is not present in the trie, but the remove message is
+        assert_eq!(engine.sync_id_exists(&cast.hash), false);
+        assert_eq!(engine.sync_id_exists(&delete_cast.hash), true);
     }
 
     #[tokio::test]
@@ -284,11 +348,7 @@ mod tests {
 
             assert_eq!(expected_roots[1], to_hex(&state_change.new_state_root));
 
-            let valid = engine.validate_state_change(&state_change);
-            assert!(valid);
-
-            let chunk = state_change_to_shard_chunk(1, 1, &state_change);
-            engine.commit_shard_chunk(chunk);
+            validate_and_commit_state_change(&mut engine, &state_change);
 
             assert_eq!(expected_roots[1], to_hex(&engine.trie_root_hash()));
 
@@ -313,11 +373,7 @@ mod tests {
 
             assert_eq!(expected_roots[2], to_hex(&state_change.new_state_root));
 
-            let valid = engine.validate_state_change(&state_change);
-            assert!(valid);
-
-            let chunk = state_change_to_shard_chunk(1, 2, &state_change);
-            engine.commit_shard_chunk(chunk);
+            validate_and_commit_state_change(&mut engine, &state_change);
 
             assert_eq!(expected_roots[2], to_hex(&engine.trie_root_hash()));
 
@@ -358,11 +414,7 @@ mod tests {
 
             assert_eq!(expected_roots[1], to_hex(&state_change.new_state_root));
 
-            let valid = engine.validate_state_change(&state_change);
-            assert!(valid);
-
-            let chunk = state_change_to_shard_chunk(1, 1, &state_change);
-            engine.commit_shard_chunk(chunk);
+            validate_and_commit_state_change(&mut engine, &state_change);
 
             assert_eq!(expected_roots[1], to_hex(&engine.trie_root_hash()));
 
@@ -395,11 +447,7 @@ mod tests {
         let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
         assert_eq!(0, events.events.len());
 
-        let valid = engine.validate_state_change(&state_change);
-        assert!(valid);
-
-        let chunk = state_change_to_shard_chunk(1, 1, &state_change);
-        engine.commit_shard_chunk(chunk);
+        validate_and_commit_state_change(&mut engine, &state_change);
 
         let height = engine.get_confirmed_height();
         assert_eq!(height.shard_index, 1);

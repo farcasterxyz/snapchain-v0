@@ -76,8 +76,8 @@ impl ShardProposer {
         }
     }
 
-    async fn publish_new_shard_chunk(&self, shard_chunk: ShardChunk) {
-        &self.tx_decision.send(shard_chunk).await;
+    async fn publish_new_shard_chunk(&self, shard_chunk: &ShardChunk) {
+        &self.tx_decision.send(shard_chunk.clone()).await;
     }
 }
 
@@ -184,7 +184,7 @@ impl Proposer for ShardProposer {
                 });
                 let missing_shard_chunks = rpc_client.get_shard_chunks(request).await?;
                 for shard_chunk in missing_shard_chunks.get_ref().shard_chunks.clone() {
-                    self.engine.commit_shard_chunk(shard_chunk.clone());
+                    self.engine.commit_shard_chunk(&shard_chunk);
                 }
             }
         }

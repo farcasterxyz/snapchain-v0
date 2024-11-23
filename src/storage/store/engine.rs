@@ -304,6 +304,10 @@ impl ShardEngine {
                 .cast_store
                 .merge(msg, txn_batch)
                 .map_err(EngineError::new_store_error(msg.hash.clone())),
+            MessageType::CastRemove => self
+                .cast_store
+                .merge(msg, txn_batch)
+                .map_err(EngineError::new_store_error(msg.hash.clone())),
             unhandled_type => {
                 return Err(EngineError::UnsupportedMessageType(unhandled_type));
             }
@@ -362,7 +366,7 @@ impl ShardEngine {
         result
     }
 
-    pub fn commit_shard_chunk(&mut self, shard_chunk: ShardChunk) {
+    pub fn commit_shard_chunk(&mut self, shard_chunk: &ShardChunk) {
         let mut txn = RocksDbTransactionBatch::new();
 
         let shard_root = &shard_chunk.header.as_ref().unwrap().shard_root;

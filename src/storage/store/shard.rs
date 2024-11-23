@@ -132,7 +132,7 @@ pub fn get_current_height(db: &RocksDB) -> Result<Option<u64>, ShardStorageError
     }
 }
 
-pub fn put_shard_chunk(db: &RocksDB, shard_chunk: ShardChunk) -> Result<(), ShardStorageError> {
+pub fn put_shard_chunk(db: &RocksDB, shard_chunk: &ShardChunk) -> Result<(), ShardStorageError> {
     // TODO: We need to introduce a transaction model
     let header = shard_chunk
         .header
@@ -169,7 +169,7 @@ impl ShardStore {
         ShardStore { db: Arc::new(db) }
     }
 
-    pub fn put_shard_chunk(&self, shard_chunk: ShardChunk) -> Result<(), ShardStorageError> {
+    pub fn put_shard_chunk(&self, shard_chunk: &ShardChunk) -> Result<(), ShardStorageError> {
         put_shard_chunk(&self.db, shard_chunk)
     }
 
