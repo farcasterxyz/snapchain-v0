@@ -4,16 +4,28 @@ services:
     restart: unless-stopped
     networks:
       - metrics_network
-    ports:
-      - '8125:8125/udp' # statsd udp
+    healthcheck:
+      test: [ "CMD", "nc", "-zv", "localhost", "8126" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 1m
     volumes:
       - ./graphite/storage:/opt/graphite/storage
+    ports:
+      - '8125:8125/udp' # statsd udp
 
   grafana:
     image: grafana/grafana:10.0.3
     restart: unless-stopped
     networks:
       - metrics_network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "localhost:3000/api/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 1m
     volumes:
       - ./grafana:/etc/grafana
       - ./grafana/data:/var/lib/grafana
