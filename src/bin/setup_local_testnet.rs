@@ -65,7 +65,6 @@ async fn main() {
 
         let config_file_content = format!(
             r#"
-id = {id}
 rpc_address="{rpc_address}"
 rocksdb_dir="{db_dir}"
 
