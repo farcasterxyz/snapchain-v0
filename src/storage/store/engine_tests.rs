@@ -13,14 +13,18 @@ mod tests {
     use prost::Message as _;
     use std::sync::Arc;
     use tempfile;
+    use tokio::sync::broadcast;
     use tracing_subscriber::EnvFilter;
 
     const FID_FOR_TEST: u32 = 1234;
 
-    fn new_engine() -> (ShardEngine, tempfile::TempDir) {
+    fn new_engine() -> (
+        ShardEngine,
+        tempfile::TempDir,
+        broadcast::Receiver<HubEvent>,
+    ) {
         let metrics_client =
             Arc::new(cadence::StatsdClient::builder("", cadence::NopMetricSink {}).build());
-
         let dir = tempfile::TempDir::new().unwrap();
         let db_path = dir.path().join("a.db");
 
@@ -28,7 +32,12 @@ mod tests {
         db.open().unwrap();
 
         let shard_store = ShardStore::new(db);
-        (ShardEngine::new(1, shard_store, metrics_client), dir)
+        let (event_tx, event_rx) = broadcast::channel(100);
+        (
+            ShardEngine::new(1, shard_store, metrics_client, event_tx),
+            dir,
+            event_rx,
+        )
     }
 
     fn enable_logging() {
@@ -130,7 +139,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_basic_propose() {
-        let (mut engine, _tmpdir) = new_engine();
+        let (mut engine, _tmpdir, _event_rx) = new_engine();
         let (msg1, _) = entities();
         let messages_tx = engine.messages_tx();
 
@@ -167,7 +176,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "State change commit failed: merkle trie root hash mismatch")]
     fn test_engine_commit_with_mismatched_hash() {
-        let (mut engine, _tmpdir) = new_engine();
+        let (mut engine, _tmpdir, _event_rx) = new_engine();
         let mut state_change = engine.propose_state_change(1);
         let invalid_hash = from_hex("ffffffffffffffffffffffffffffffffffffffff");
 
@@ -191,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_engine_commit_no_messages_happy_path() {
-        let (mut engine, _tmpdir) = new_engine();
+        let (mut engine, _tmpdir, _event_rx) = new_engine();
         let state_change = engine.propose_state_change(1);
         let expected_roots = vec![""];
 
@@ -207,7 +216,7 @@ mod tests {
     async fn test_engine_commit_with_single_message() {
         // enable_logging();
         let (msg1, _) = entities();
-        let (mut engine, _tmpdir) = new_engine();
+        let (mut engine, _tmpdir, mut event_rx) = new_engine();
         let messages_tx = engine.messages_tx();
 
         messages_tx
@@ -249,6 +258,8 @@ mod tests {
         // And events are generated
         let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
         assert_eq!(1, events.events.len());
+        assert_eq!(event_rx.recv().await.unwrap(), events.events[0]);
+
         let generated_event = match events.events[0].clone().body {
             Some(crate::proto::hub_event::hub_event::Body::MergeMessageBody(msg)) => msg,
             _ => panic!("Unexpected event type"),
@@ -267,7 +278,7 @@ mod tests {
         let timestamp = messages_factory::farcaster_time();
         let cast =
             messages_factory::casts::create_cast_add(FID_FOR_TEST, "msg1", Some(timestamp), None);
-        let (mut engine, _tmpdir) = new_engine();
+        let (mut engine, _tmpdir, _event_rx) = new_engine();
 
         commit_message(&mut engine, &cast).await;
 
@@ -305,7 +316,7 @@ mod tests {
     #[tokio::test]
     async fn test_account_roots() {
         let cast = messages_factory::casts::create_cast_add(FID_FOR_TEST, "msg1", None, None);
-        let (mut engine, _tmpdir) = new_engine();
+        let (mut engine, _tmpdir, _event_rx) = new_engine();
 
         let txn = &mut RocksDbTransactionBatch::new();
         let account_root = engine
@@ -352,7 +363,7 @@ mod tests {
     async fn test_engine_send_messages_one_by_one() {
         // enable_logging();
         let (msg1, msg2) = entities();
-        let (mut engine, _tmpdir) = new_engine();
+        let (mut engine, _tmpdir, _event_rx) = new_engine();
         let messages_tx = engine.messages_tx();
         let expected_roots = vec![
             "",
@@ -428,7 +439,7 @@ mod tests {
     async fn test_engine_send_two_messages() {
         // enable_logging();
         let (msg1, msg2) = entities();
-        let (mut engine, _tmpdir) = new_engine();
+        let (mut engine, _tmpdir, _event_rx) = new_engine();
         let messages_tx = engine.messages_tx();
         let expected_roots = vec!["", "89506154d345eaf8ef9d0bdf5756b08feb97411b"];
 
@@ -468,7 +479,7 @@ mod tests {
     #[tokio::test]
     async fn test_engine_send_onchain_event() {
         let onchain_event = default_onchain_event();
-        let (mut engine, _tmpdir) = new_engine();
+        let (mut engine, _tmpdir, mut event_rx) = new_engine();
         let messages_tx = engine.messages_tx();
         messages_tx
             .send(MempoolMessage::ValidatorMessage(
@@ -487,6 +498,7 @@ mod tests {
         // No hub events are generated
         let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
         assert_eq!(0, events.events.len());
+        assert!(event_rx.try_recv().is_err());
 
         validate_and_commit_state_change(&mut engine, &state_change);
 
@@ -501,6 +513,8 @@ mod tests {
         // Hub events are generated
         let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
         assert_eq!(1, events.events.len());
+        assert_eq!(event_rx.recv().await.unwrap(), events.events[0]);
+
         let generated_event = match events.events[0].clone().body {
             Some(crate::proto::hub_event::hub_event::Body::MergeOnChainEventBody(e)) => e,
             _ => panic!("Unexpected event type"),

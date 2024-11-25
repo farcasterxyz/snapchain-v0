@@ -90,6 +90,7 @@ impl StoreEventHandler {
         })
     }
 
+    // TODO(aditi): This is named "commit_transaction" but the commit doesn't actually happen here. This function is provided a [txn] that's committed elsewhere.
     pub fn commit_transaction(
         &self,
         txn: &mut RocksDbTransactionBatch,
@@ -106,7 +107,6 @@ impl StoreEventHandler {
 
         // These two calls are made in the JS code
         // this._storageCache.processEvent(event);
-        // this.broadcastEvent(event);
 
         Ok(event_id)
     }
@@ -143,7 +143,7 @@ impl HubEvent {
         let start_prefix = Self::make_event_key(start_id);
         let stop_prefix = match stop_id {
             Some(id) => Self::make_event_key(id),
-            None => increment_vec_u8(&vec![RootPrefix::HubEvents as u8 + 1]),
+            None => increment_vec_u8(&Self::make_event_key(std::u64::MAX)),
         };
 
         let mut events = Vec::new();

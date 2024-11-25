@@ -1,32 +1,43 @@
 use std::collections::HashMap;
 
 use crate::core::error::HubError;
+use crate::proto::hub_event::HubEvent;
 use crate::proto::msg as message;
 use crate::proto::rpc::snapchain_service_server::SnapchainService;
-use crate::proto::rpc::{BlocksRequest, BlocksResponse, ShardChunksRequest, ShardChunksResponse};
+use crate::proto::rpc::{
+    BlocksRequest, BlocksResponse, ShardChunksRequest, ShardChunksResponse, SubscribeRequest,
+};
 use crate::storage::store::engine::MempoolMessage;
 use crate::storage::store::shard::ShardStore;
 use crate::storage::store::BlockStore;
+use alloy::rpc::types::request;
+use futures::stream::select_all;
+use futures_util::pin_mut;
 use hex::ToHex;
-use tokio::sync::mpsc;
-use tonic::{Request, Response, Status};
+use tokio::select;
+use tokio::sync::{broadcast, mpsc};
+use tokio_stream::{wrappers::ReceiverStream, Stream};
+use tonic::{server, Request, Response, Status};
 use tracing::info;
 
 pub struct MySnapchainService {
     message_tx: mpsc::Sender<MempoolMessage>,
     block_store: BlockStore,
     shard_stores: HashMap<u32, ShardStore>,
+    shard_events: HashMap<u32, broadcast::Sender<HubEvent>>,
 }
 
 impl MySnapchainService {
     pub fn new(
         block_store: BlockStore,
         shard_stores: HashMap<u32, ShardStore>,
+        shard_events: HashMap<u32, broadcast::Sender<HubEvent>>,
         message_tx: mpsc::Sender<MempoolMessage>,
     ) -> Self {
         Self {
             block_store,
             shard_stores,
+            shard_events,
             message_tx,
         }
     }
@@ -100,5 +111,46 @@ impl SnapchainService for MySnapchainService {
                 }
             }
         }
+    }
+
+    type SubscribeStream = ReceiverStream<Result<HubEvent, Status>>;
+
+    async fn subscribe(
+        &self,
+        request: Request<SubscribeRequest>,
+    ) -> Result<Response<Self::SubscribeStream>, Status> {
+        // TODO(aditi): Use [from_id]
+        // TODO(aditi): Read older events from the db
+        // TODO(aditi): Rethink the channel size
+        let (server_tx, client_rx) = mpsc::channel::<Result<HubEvent, Status>>(100);
+        let events_txs = match request.get_ref().shard_index {
+            Some(shard_id) => match self.shard_events.get(&(shard_id as u32)) {
+                None => {
+                    return Err(Status::from_error(Box::new(
+                        HubError::invalid_internal_state("Missing shard event tx"),
+                    )))
+                }
+                Some(tx) => vec![tx.clone()],
+            },
+            None => self.shard_events.values().cloned().collect(),
+        };
+
+        for event_tx in events_txs {
+            let tx = server_tx.clone();
+            tokio::spawn(async move {
+                let mut event_rx = event_tx.subscribe();
+                while let Ok(hub_event) = event_rx.recv().await {
+                    match tx.send(Ok(hub_event)).await {
+                        Ok(_) => {}
+                        Err(_) => {
+                            // This means the client hung up
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        Ok(Response::new(ReceiverStream::new(client_rx)))
     }
 }

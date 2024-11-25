@@ -3,6 +3,7 @@ package rpc;
 
 import "message.proto";
 import "blocks.proto";
+import "hub_event.proto";
 
 message BlocksRequest {
   uint32 shard_id = 1;
@@ -24,8 +25,17 @@ message ShardChunksResponse {
   repeated snapchain.ShardChunk shard_chunks = 1;
 }
 
+message SubscribeRequest {
+  repeated hub_event.HubEventType event_types = 1;
+  optional uint64 from_id = 2;
+  optional uint64 fid_partitions = 3;
+  optional uint64 fid_partition_index = 4;
+  optional uint32 shard_index = 5;
+}
+
 service SnapchainService {
   rpc SubmitMessage(msg.Message) returns (msg.Message);
   rpc GetBlocks(BlocksRequest) returns (BlocksResponse);
   rpc GetShardChunks(ShardChunksRequest) returns (ShardChunksResponse);
+  rpc Subscribe(SubscribeRequest) returns (stream hub_event.HubEvent);
 };

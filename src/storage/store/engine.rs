@@ -2,6 +2,7 @@ use super::account::OnchainEventStorageError;
 use super::shard::ShardStore;
 use crate::core::error::HubError;
 use crate::core::types::Height;
+use crate::proto::hub_event::HubEvent;
 use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
 use crate::proto::{hub_event, msg as message, snapchain};
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch};
@@ -18,7 +19,7 @@ use message::MessageType;
 use snapchain::{Block, ShardChunk, Transaction};
 use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, warn};
 
 #[derive(Error, Debug)]
@@ -88,6 +89,7 @@ pub struct ShardEngine {
     shard_store: ShardStore,
     messages_rx: mpsc::Receiver<MempoolMessage>,
     messages_tx: mpsc::Sender<MempoolMessage>,
+    events_tx: broadcast::Sender<HubEvent>,
     pub(crate) trie: merkle_trie::MerkleTrie,
     cast_store: Store,
     pub db: Arc<RocksDB>,
@@ -107,6 +109,7 @@ impl ShardEngine {
         shard_id: u32,
         shard_store: ShardStore,
         metrics_client: Arc<StatsdClient>,
+        events_tx: broadcast::Sender<HubEvent>,
     ) -> ShardEngine {
         let db = &*shard_store.db;
 
@@ -126,6 +129,7 @@ impl ShardEngine {
             shard_store,
             messages_rx,
             messages_tx,
+            events_tx,
             trie,
             cast_store,
             db,
@@ -159,7 +163,7 @@ impl ShardEngine {
 
         let mut snapchain_txns = self.create_transactions_from_mempool(messages);
         for snapchain_txn in &mut snapchain_txns {
-            let account_root = self.replay_snapchain_txn(&snapchain_txn, txn_batch)?;
+            let (account_root, _events) = self.replay_snapchain_txn(&snapchain_txn, txn_batch)?;
             snapchain_txn.account_root = account_root;
         }
 
@@ -242,9 +246,11 @@ impl ShardEngine {
         txn_batch: &mut RocksDbTransactionBatch,
         transactions: &[Transaction],
         shard_root: &[u8],
-    ) -> Result<(), EngineError> {
+    ) -> Result<Vec<HubEvent>, EngineError> {
+        let mut events = vec![];
         for snapchain_txn in transactions {
-            self.replay_snapchain_txn(snapchain_txn, txn_batch)?;
+            let (_, txn_events) = self.replay_snapchain_txn(snapchain_txn, txn_batch)?;
+            events.extend(txn_events);
         }
 
         let root1 = self.trie.root_hash()?;
@@ -253,25 +259,27 @@ impl ShardEngine {
             return Err(EngineError::HashMismatch);
         }
 
-        Ok(())
+        Ok(events)
     }
 
     fn replay_snapchain_txn(
         &mut self,
         snapchain_txn: &Transaction,
         txn_batch: &mut RocksDbTransactionBatch,
-    ) -> Result<Vec<u8>, EngineError> {
+    ) -> Result<(Vec<u8>, Vec<HubEvent>), EngineError> {
         let total_user_messages = snapchain_txn.user_messages.len();
         let total_system_messages = snapchain_txn.system_messages.len();
         let mut user_messages_count = 0;
         let mut system_messages_count = 0;
+        let mut events = vec![];
 
         for msg in &snapchain_txn.user_messages {
             // Errors are validated based on the shard root
             let result = self.merge_message(msg, txn_batch);
             match result {
                 Ok(event) => {
-                    self.update_trie(event, txn_batch)?;
+                    self.update_trie(&event, txn_batch)?;
+                    events.push(event.clone());
                     user_messages_count += 1;
                 }
                 Err(err) => {
@@ -293,7 +301,8 @@ impl ShardEngine {
 
                 match event {
                     Ok(hub_event) => {
-                        self.update_trie(hub_event, txn_batch)?;
+                        self.update_trie(&hub_event, txn_batch)?;
+                        events.push(hub_event.clone());
                         system_messages_count += 1;
                     }
                     Err(err) => {
@@ -319,7 +328,7 @@ impl ShardEngine {
         );
 
         // Return the new account root hash
-        Ok(account_root)
+        Ok((account_root, events))
     }
 
     fn merge_message(
@@ -349,16 +358,16 @@ impl ShardEngine {
 
     fn update_trie(
         &mut self,
-        event: hub_event::HubEvent,
+        event: &hub_event::HubEvent,
         txn_batch: &mut RocksDbTransactionBatch,
     ) -> Result<(), EngineError> {
-        match event.body {
+        match &event.body {
             Some(hub_event::hub_event::Body::MergeMessageBody(merge)) => {
-                if let Some(msg) = merge.message {
+                if let Some(msg) = &merge.message {
                     self.trie
                         .insert(&self.db, txn_batch, vec![TrieKey::for_message(&msg)])?;
                 }
-                for deleted_message in merge.deleted_messages {
+                for deleted_message in &merge.deleted_messages {
                     self.trie.delete(
                         &self.db,
                         txn_batch,
@@ -367,7 +376,7 @@ impl ShardEngine {
                 }
             }
             Some(hub_event::hub_event::Body::MergeOnChainEventBody(merge)) => {
-                if let Some(onchain_event) = merge.on_chain_event {
+                if let Some(onchain_event) = &merge.on_chain_event {
                     self.trie.insert(
                         &self.db,
                         txn_batch,
@@ -409,20 +418,18 @@ impl ShardEngine {
         result
     }
 
-    pub fn commit_shard_chunk(&mut self, shard_chunk: &ShardChunk) {
-        let mut txn = RocksDbTransactionBatch::new();
-
-        let shard_root = &shard_chunk.header.as_ref().unwrap().shard_root;
-        let transactions = &shard_chunk.transactions;
-
-        if let Err(err) = self.replay_proposal(&mut txn, transactions, shard_root) {
-            error!("State change commit failed: {}", err);
-            panic!("State change commit failed: {}", err);
-        }
-
+    pub fn commit_and_emit_events(
+        &mut self,
+        shard_chunk: &ShardChunk,
+        events: Vec<HubEvent>,
+        txn: RocksDbTransactionBatch,
+    ) {
         self.db.commit(txn).unwrap();
+        for event in events {
+            // An error here just means there are no active receivers, which is fine and will happen if there are no active subscribe rpcs
+            self.events_tx.send(event);
+        }
         self.trie.reload(&self.db).unwrap();
-
         self.incr("commit");
 
         let block_number = &shard_chunk
@@ -432,14 +439,29 @@ impl ShardEngine {
             .height
             .unwrap()
             .block_number;
-
         self.gauge("block_height", *block_number);
-
         match self.shard_store.put_shard_chunk(shard_chunk) {
             Err(err) => {
                 error!("Unable to write shard chunk to store {}", err)
             }
             Ok(()) => {}
+        }
+    }
+
+    pub fn commit_shard_chunk(&mut self, shard_chunk: &ShardChunk) {
+        let mut txn = RocksDbTransactionBatch::new();
+
+        let shard_root = &shard_chunk.header.as_ref().unwrap().shard_root;
+        let transactions = &shard_chunk.transactions;
+
+        match self.replay_proposal(&mut txn, transactions, shard_root) {
+            Err(err) => {
+                error!("State change commit failed: {}", err);
+                panic!("State change commit failed: {}", err);
+            }
+            Ok(events) => {
+                self.commit_and_emit_events(shard_chunk, events, txn);
+            }
         }
     }
 
