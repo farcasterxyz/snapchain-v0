@@ -26,7 +26,7 @@ mod tests {
 
     async fn subscribe_and_listen(
         service: &MySnapchainService,
-        shard_id: u64,
+        shard_id: u32,
         num_events_expected: u64,
     ) {
         let mut listener = service
@@ -34,7 +34,8 @@ mod tests {
                 event_types: vec![HubEventType::MergeMessage as i32],
                 from_id: None,
                 shard_index: Some(shard_id),
-                total_shards: None,
+                fid_partitions: None,
+                fid_partition_index: None,
             }))
             .await
             .unwrap();
