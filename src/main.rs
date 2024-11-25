@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::net;
 use std::net::SocketAddr;
+use std::process;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::ctrl_c;
@@ -28,7 +29,13 @@ use snapchain::storage::db::RocksDB;
 async fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();
 
-    let app_config = snapchain::cfg::load_and_merge_config(args)?;
+    let app_config = match snapchain::cfg::load_and_merge_config(args) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            process::exit(1);
+        }
+    };
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     match app_config.log_format.as_str() {
@@ -42,9 +49,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    if app_config.id == 0 {
-        return Err("node id must be specified greater than 0".into());
-    }
     if app_config.clear_db {
         let db_dir = format!("{}", app_config.rocksdb_dir);
         std::fs::remove_dir_all(db_dir.clone()).unwrap();
@@ -78,7 +82,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let block_store = BlockStore::new(db);
 
     info!(
-        id = app_config.id,
         addr = addr,
         grpc_addr = grpc_addr,
         "SnapchainService listening",

@@ -25,7 +25,6 @@ impl Default for MetricsConfig {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
-    pub id: u32,
     pub log_format: String,
     pub fnames: connectors::fname::Config,
     pub onchain_events: connectors::onchain_events::Config,
@@ -40,7 +39,6 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            id: 0,
             log_format: "text".to_string(),
             fnames: connectors::fname::Config::default(),
             onchain_events: connectors::onchain_events::Config::default(),
@@ -56,14 +54,11 @@ impl Default for Config {
 
 #[derive(Parser)]
 pub struct CliArgs {
-    #[arg(long, help = "Unique identifier for the node")]
-    id: Option<u32>,
-
     #[arg(long, help = "Log format (text or json)")]
     log_format: Option<String>,
 
     #[arg(long, help = "Path to the config file")]
-    config_path: Option<String>,
+    config_path: String,
 
     #[arg(long, action, help = "Start the node with a clean database")]
     clear_db: bool,
@@ -74,35 +69,20 @@ pub struct CliArgs {
 }
 
 pub fn load_and_merge_config(args: Vec<String>) -> Result<Config, Box<dyn Error>> {
-    let cli_args = CliArgs::parse_from(args);
+    let cli_args = CliArgs::try_parse_from(args)?;
 
     let mut figment = Figment::from(Serialized::defaults(Config::default()));
 
-    let config_path: String;
-    if cli_args.id.is_some() && cli_args.config_path.is_none() {
-        config_path = format!("nodes/{:}/snapchain.toml", cli_args.id.unwrap());
-    } else if let Some(path) = &cli_args.config_path {
-        config_path = path.to_string();
+    if Path::new(&cli_args.config_path).exists() {
+        figment = figment.merge(Toml::file(&cli_args.config_path));
     } else {
-        config_path = "snapchain.toml".to_string();
-    }
-
-    if Path::new(&config_path).exists() {
-        figment = figment.merge(Toml::file(config_path));
-    } else {
-        // If the config path was explicitly set and we didn't find it, error
-        if cli_args.config_path.is_some() {
-            return Err(format!("config file not found: {}", config_path).into());
-        }
+        return Err(format!("config file not found: {}", &cli_args.config_path).into());
     }
 
     figment = figment.merge(Env::prefixed("SNAPCHAIN_").split("__"));
 
     let mut config: Config = figment.extract()?;
 
-    if let Some(id) = cli_args.id {
-        config.id = id;
-    }
     if let Some(log_format) = cli_args.log_format {
         config.log_format = log_format;
     }
