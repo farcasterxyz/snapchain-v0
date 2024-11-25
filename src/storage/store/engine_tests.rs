@@ -10,8 +10,8 @@ mod tests {
     use crate::storage::store::shard::ShardStore;
     use crate::storage::trie::merkle_trie::TrieKey;
     use crate::utils::factory::{events_factory, messages_factory};
+    use crate::utils::statsd_wrapper::StatsdClientWrapper;
     use prost::Message as _;
-    use std::sync::Arc;
     use tempfile;
     use tokio::sync::broadcast;
     use tracing_subscriber::EnvFilter;
@@ -23,8 +23,10 @@ mod tests {
         tempfile::TempDir,
         broadcast::Receiver<HubEvent>,
     ) {
-        let metrics_client =
-            Arc::new(cadence::StatsdClient::builder("", cadence::NopMetricSink {}).build());
+        let statsd_client = StatsdClientWrapper::new(
+            cadence::StatsdClient::builder("", cadence::NopMetricSink {}).build(),
+            true,
+        );
         let dir = tempfile::TempDir::new().unwrap();
         let db_path = dir.path().join("a.db");
 
@@ -34,7 +36,7 @@ mod tests {
         let shard_store = ShardStore::new(db);
         let (event_tx, event_rx) = broadcast::channel(100);
         (
-            ShardEngine::new(1, shard_store, metrics_client, event_tx),
+            ShardEngine::new(1, shard_store, statsd_client, event_tx),
             dir,
             event_rx,
         )

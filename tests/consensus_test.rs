@@ -13,6 +13,7 @@ use snapchain::proto::snapchain::Block;
 use snapchain::storage::db::RocksDB;
 use snapchain::storage::store::BlockStore;
 use snapchain::utils::cli;
+use snapchain::utils::statsd_wrapper::StatsdClientWrapper;
 use snapchain::{
     consensus::consensus::ConsensusMsg,
     core::types::{ShardId, SnapchainShard, SnapchainValidator, SnapchainValidatorContext},
@@ -55,8 +56,10 @@ fn make_tmp_path() -> String {
 
 impl NodeForTest {
     pub async fn create(keypair: Keypair, num_shards: u32, grpc_port: u32) -> Self {
-        let metrics_client =
-            Arc::new(cadence::StatsdClient::builder("", cadence::NopMetricSink {}).build());
+        let statsd_client = StatsdClientWrapper::new(
+            cadence::StatsdClient::builder("", cadence::NopMetricSink {}).build(),
+            true,
+        );
 
         let mut config = snapchain::consensus::consensus::Config::default();
         config = config.with_shard_ids((1..=num_shards).collect());
@@ -75,7 +78,7 @@ impl NodeForTest {
             Some(block_tx),
             block_store.clone(),
             make_tmp_path(),
-            metrics_client,
+            statsd_client,
         )
         .await;
 

@@ -12,13 +12,12 @@ use crate::storage::db::RocksDB;
 use crate::storage::store::engine::{BlockEngine, MempoolMessage, ShardEngine};
 use crate::storage::store::shard::ShardStore;
 use crate::storage::store::BlockStore;
-use cadence::StatsdClient;
+use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
 use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tracing::warn;
 
@@ -30,7 +29,7 @@ pub struct SnapchainNode {
     pub shard_stores: HashMap<u32, ShardStore>,
     pub shard_events: HashMap<u32, broadcast::Sender<HubEvent>>,
     pub address: Address,
-    metrics_client: Arc<StatsdClient>,
+    statsd_client: StatsdClientWrapper,
 }
 
 impl SnapchainNode {
@@ -42,7 +41,7 @@ impl SnapchainNode {
         block_tx: Option<mpsc::Sender<Block>>,
         block_store: BlockStore,
         rocksdb_dir: String,
-        metrics_client: Arc<StatsdClient>,
+        statsd_client: StatsdClientWrapper,
     ) -> Self {
         let validator_address = Address(keypair.public().to_bytes());
 
@@ -91,7 +90,7 @@ impl SnapchainNode {
             let engine = ShardEngine::new(
                 shard_id,
                 shard_store,
-                metrics_client.clone(),
+                statsd_client.clone(),
                 events_tx.clone(),
             );
 
@@ -186,7 +185,7 @@ impl SnapchainNode {
             messages_tx_by_shard: shard_messages,
             address: validator_address,
             shard_stores,
-            metrics_client,
+            statsd_client,
             shard_events,
         }
     }

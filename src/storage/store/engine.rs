@@ -13,7 +13,8 @@ use crate::storage::store::BlockStore;
 use crate::storage::trie;
 use crate::storage::trie::merkle_trie;
 use crate::storage::trie::merkle_trie::TrieKey;
-use cadence::{Counted, CountedExt, Gauged, StatsdClient};
+use crate::utils::statsd_wrapper::StatsdClientWrapper;
+use cadence::{Counted, CountedExt, Gauged};
 use itertools::Itertools;
 use message::MessageType;
 use snapchain::{Block, ShardChunk, Transaction};
@@ -94,7 +95,7 @@ pub struct ShardEngine {
     cast_store: Store,
     pub db: Arc<RocksDB>,
     onchain_event_store: OnchainEventStore,
-    metrics_client: Arc<StatsdClient>,
+    statsd_client: StatsdClientWrapper,
 }
 
 fn encode_vec(data: &[Vec<u8>]) -> String {
@@ -108,7 +109,7 @@ impl ShardEngine {
     pub fn new(
         shard_id: u32,
         shard_store: ShardStore,
-        metrics_client: Arc<StatsdClient>,
+        statsd_client: StatsdClientWrapper,
         events_tx: broadcast::Sender<HubEvent>,
     ) -> ShardEngine {
         let db = &*shard_store.db;
@@ -134,7 +135,7 @@ impl ShardEngine {
             cast_store,
             db,
             onchain_event_store,
-            metrics_client,
+            statsd_client,
         }
     }
 
@@ -214,21 +215,6 @@ impl ShardEngine {
         transactions
     }
 
-    fn incr(&self, key: &str) {
-        let key = format!("shard{}.{}", self.shard_id, key);
-        _ = self.metrics_client.incr(key.as_str())
-    }
-
-    fn count(&self, key: &str, value: u64) {
-        let key = format!("shard{}.{}", self.shard_id, key);
-        _ = self.metrics_client.count(key.as_str(), value)
-    }
-
-    fn gauge(&self, key: &str, value: u64) {
-        let key = format!("shard{}.{}", self.shard_id, key);
-        _ = self.metrics_client.gauge(key.as_str(), value)
-    }
-
     pub fn propose_state_change(&mut self, shard: u32) -> ShardStateChange {
         let mut txn = RocksDbTransactionBatch::new();
         let result = self.prepare_proposal(&mut txn, shard).unwrap(); //TODO: don't unwrap()
@@ -236,8 +222,8 @@ impl ShardEngine {
         // TODO: this should probably operate automatically via drop trait
         self.trie.reload(&self.db).unwrap();
 
-        self.incr("propose");
-
+        self.statsd_client
+            .count_with_shard(self.shard_id, "propose", 1);
         result
     }
 
@@ -408,11 +394,15 @@ impl ShardEngine {
         self.trie.reload(&*self.shard_store.db).unwrap();
 
         if result {
-            self.incr("validate.true");
-            self.count("validate.false", 0)
+            self.statsd_client
+                .count_with_shard(self.shard_id, "validate.true", 1);
+            self.statsd_client
+                .count_with_shard(self.shard_id, "validate.false", 0);
         } else {
-            self.incr("validate.false");
-            self.count("validate.true", 0);
+            self.statsd_client
+                .count_with_shard(self.shard_id, "validate.false", 1);
+            self.statsd_client
+                .count_with_shard(self.shard_id, "validate.true", 0);
         }
 
         result
@@ -430,7 +420,8 @@ impl ShardEngine {
             self.events_tx.send(event);
         }
         self.trie.reload(&self.db).unwrap();
-        self.incr("commit");
+        self.statsd_client
+            .count_with_shard(self.shard_id, "commit", 1);
 
         let block_number = &shard_chunk
             .header
@@ -439,7 +430,8 @@ impl ShardEngine {
             .height
             .unwrap()
             .block_number;
-        self.gauge("block_height", *block_number);
+        self.statsd_client
+            .gauge_with_shard(self.shard_id, "block_height", *block_number);
         match self.shard_store.put_shard_chunk(shard_chunk) {
             Err(err) => {
                 error!("Unable to write shard chunk to store {}", err)
