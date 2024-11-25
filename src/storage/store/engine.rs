@@ -432,12 +432,8 @@ impl ShardEngine {
             Ok(events) => {
                 self.db.commit(txn).unwrap();
                 for event in events {
-                    match self.events_tx.send(event) {
-                        Ok(_) => {}
-                        Err(err) => {
-                            error!("Unable to broadcast event {:#?}", err)
-                        }
-                    }
+                    // An error here just means there are no active receivers, which is fine and will happen if there are no active subscribe rpcs
+                    self.events_tx.send(event);
                 }
                 self.trie.reload(&self.db).unwrap();
                 self.incr("commit");

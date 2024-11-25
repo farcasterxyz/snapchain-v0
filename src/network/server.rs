@@ -125,7 +125,14 @@ impl SnapchainService for MySnapchainService {
         let events_txs = match request.get_ref().shard_index {
             Some(shard_id) => {
                 // TODO(aditi): Fix error handling
-                vec![self.shard_events.get(&(shard_id as u32)).unwrap().clone()]
+                match self.shard_events.get(&(shard_id as u32)) {
+                    None => {
+                        return Err(Status::from_error(Box::new(
+                            HubError::invalid_internal_state("Missing shard event tx"),
+                        )))
+                    }
+                    Some(tx) => vec![tx.clone()],
+                }
             }
             None => self.shard_events.values().cloned().collect(),
         };
