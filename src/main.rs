@@ -24,6 +24,7 @@ use snapchain::network::server::MySnapchainService;
 use snapchain::node::snapchain_node::SnapchainNode;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::storage::db::RocksDB;
+use snapchain::utils::statsd_wrapper::StatsdClientWrapper;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -56,22 +57,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
         warn!("Cleared db at {:?}", db_dir);
     }
 
-    if app_config.metrics.prefix == "" {
+    if app_config.statsd.prefix == "" {
         // TODO: consider removing this check
-        return Err("metrics prefix must be specified in config".into());
+        return Err("statsd prefix must be specified in config".into());
     }
 
     // TODO: parsing to SocketAddr only allows for IPs, DNS names won't work
-    let (metrics_host, metrics_port) = match app_config.metrics.addr.parse::<SocketAddr>() {
+    let (statsd_host, statsd_port) = match app_config.statsd.addr.parse::<SocketAddr>() {
         Ok(addr) => Ok((addr.ip().to_string(), addr.port())),
-        Err(e) => Err(format!("invalid metrics address: {}", e)),
+        Err(e) => Err(format!("invalid statsd address: {}", e)),
     }?;
 
-    let host = (metrics_host, metrics_port);
+    let host = (statsd_host, statsd_port);
     let socket = net::UdpSocket::bind("0.0.0.0:0").unwrap();
     let sink = cadence::UdpMetricSink::from(host, socket)?;
-    let client1 = cadence::StatsdClient::builder(app_config.metrics.prefix.as_str(), sink).build();
-    let client1 = Arc::new(client1);
+    let statsd_client =
+        cadence::StatsdClient::builder(app_config.statsd.prefix.as_str(), sink).build();
+    let statsd_client = StatsdClientWrapper::new(statsd_client, app_config.statsd.use_tags);
 
     let addr = app_config.gossip.address.clone();
     let grpc_addr = app_config.rpc_address.clone();
@@ -149,7 +151,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None,
         block_store.clone(),
         app_config.rocksdb_dir,
-        client1.clone(),
+        statsd_client.clone(),
     )
     .await;
 

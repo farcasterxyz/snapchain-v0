@@ -9,16 +9,18 @@ use std::error::Error;
 use std::path::Path;
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct MetricsConfig {
+pub struct StatsdConfig {
     pub prefix: String,
     pub addr: String,
+    pub use_tags: bool,
 }
 
-impl Default for MetricsConfig {
+impl Default for StatsdConfig {
     fn default() -> Self {
         Self {
             prefix: "".to_string(), //TODO: "snapchain" eventually
             addr: "127.0.0.1:8125".to_string(),
+            use_tags: true,
         }
     }
 }
@@ -33,7 +35,7 @@ pub struct Config {
     pub rpc_address: String,
     pub rocksdb_dir: String,
     pub clear_db: bool,
-    pub metrics: MetricsConfig,
+    pub statsd: StatsdConfig,
 }
 
 impl Default for Config {
@@ -47,7 +49,7 @@ impl Default for Config {
             rpc_address: "0.0.0.0:3383".to_string(),
             rocksdb_dir: ".rocks".to_string(),
             clear_db: false,
-            metrics: MetricsConfig::default(),
+            statsd: StatsdConfig::default(),
         }
     }
 }

@@ -9,12 +9,15 @@ struct Args {
     #[arg(long, value_parser = parse_duration, default_value = "250ms")]
     propose_value_delay: Duration,
 
-    /// Metrics prefix. note: node ID will be appended before config file written
+    /// Statsd prefix. note: node ID will be appended before config file written
     #[arg(long, default_value = "snapchain")]
-    metrics_prefix: String,
+    statsd_prefix: String,
 
     #[arg(long, default_value = "127.0.0.1:8125")]
-    metrics_addr: String,
+    statsd_addr: String,
+
+    #[arg(long, default_value = "false")]
+    statsd_use_tags: bool,
 }
 
 fn parse_duration(arg: &str) -> Result<Duration, String> {
@@ -60,17 +63,19 @@ async fn main() {
 
         let propose_value_delay = humantime::format_duration(args.propose_value_delay);
 
-        let metrics_prefix = format!("{}{}", args.metrics_prefix, id);
-        let metrics_addr = args.metrics_addr.clone();
+        let statsd_prefix = format!("{}{}", args.statsd_prefix, id);
+        let statsd_addr = args.statsd_addr.clone();
+        let statsd_use_tags = args.statsd_use_tags;
 
         let config_file_content = format!(
             r#"
 rpc_address="{rpc_address}"
 rocksdb_dir="{db_dir}"
 
-[metrics]
-prefix="{metrics_prefix}"
-addr="{metrics_addr}"
+[statsd]
+prefix="{statsd_prefix}"
+addr="{statsd_addr}"
+use_tags={statsd_use_tags}
 
 [gossip]
 address="{gossip_multi_addr}"
