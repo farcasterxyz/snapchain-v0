@@ -278,7 +278,7 @@ impl ShardEngine {
             let result = self.merge_message(msg, txn_batch);
             match result {
                 Ok(event) => {
-                    self.update_trie(event.clone(), txn_batch)?;
+                    self.update_trie(&event, txn_batch)?;
                     events.push(event.clone());
                     user_messages_count += 1;
                 }
@@ -301,7 +301,7 @@ impl ShardEngine {
 
                 match event {
                     Ok(hub_event) => {
-                        self.update_trie(hub_event.clone(), txn_batch)?;
+                        self.update_trie(&hub_event, txn_batch)?;
                         events.push(hub_event.clone());
                         system_messages_count += 1;
                     }
@@ -358,16 +358,16 @@ impl ShardEngine {
 
     fn update_trie(
         &mut self,
-        event: hub_event::HubEvent,
+        event: &hub_event::HubEvent,
         txn_batch: &mut RocksDbTransactionBatch,
     ) -> Result<(), EngineError> {
-        match event.body {
+        match &event.body {
             Some(hub_event::hub_event::Body::MergeMessageBody(merge)) => {
-                if let Some(msg) = merge.message {
+                if let Some(msg) = &merge.message {
                     self.trie
                         .insert(&self.db, txn_batch, vec![TrieKey::for_message(&msg)])?;
                 }
-                for deleted_message in merge.deleted_messages {
+                for deleted_message in &merge.deleted_messages {
                     self.trie.delete(
                         &self.db,
                         txn_batch,
@@ -376,7 +376,7 @@ impl ShardEngine {
                 }
             }
             Some(hub_event::hub_event::Body::MergeOnChainEventBody(merge)) => {
-                if let Some(onchain_event) = merge.on_chain_event {
+                if let Some(onchain_event) = &merge.on_chain_event {
                     self.trie.insert(
                         &self.db,
                         txn_batch,
@@ -418,6 +418,36 @@ impl ShardEngine {
         result
     }
 
+    pub fn commit_and_emit_events(
+        &mut self,
+        shard_chunk: &ShardChunk,
+        events: Vec<HubEvent>,
+        txn: RocksDbTransactionBatch,
+    ) {
+        self.db.commit(txn).unwrap();
+        for event in events {
+            // An error here just means there are no active receivers, which is fine and will happen if there are no active subscribe rpcs
+            self.events_tx.send(event);
+        }
+        self.trie.reload(&self.db).unwrap();
+        self.incr("commit");
+
+        let block_number = &shard_chunk
+            .header
+            .as_ref()
+            .unwrap()
+            .height
+            .unwrap()
+            .block_number;
+        self.gauge("block_height", *block_number);
+        match self.shard_store.put_shard_chunk(shard_chunk) {
+            Err(err) => {
+                error!("Unable to write shard chunk to store {}", err)
+            }
+            Ok(()) => {}
+        }
+    }
+
     pub fn commit_shard_chunk(&mut self, shard_chunk: &ShardChunk) {
         let mut txn = RocksDbTransactionBatch::new();
 
@@ -430,28 +460,7 @@ impl ShardEngine {
                 panic!("State change commit failed: {}", err);
             }
             Ok(events) => {
-                self.db.commit(txn).unwrap();
-                for event in events {
-                    // An error here just means there are no active receivers, which is fine and will happen if there are no active subscribe rpcs
-                    self.events_tx.send(event);
-                }
-                self.trie.reload(&self.db).unwrap();
-                self.incr("commit");
-
-                let block_number = &shard_chunk
-                    .header
-                    .as_ref()
-                    .unwrap()
-                    .height
-                    .unwrap()
-                    .block_number;
-                self.gauge("block_height", *block_number);
-                match self.shard_store.put_shard_chunk(shard_chunk) {
-                    Err(err) => {
-                        error!("Unable to write shard chunk to store {}", err)
-                    }
-                    Ok(()) => {}
-                }
+                self.commit_and_emit_events(shard_chunk, events, txn);
             }
         }
     }

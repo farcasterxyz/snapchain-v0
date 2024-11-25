@@ -4,25 +4,15 @@ mod tests {
     use std::sync::Arc;
 
     use crate::network::server::MySnapchainService;
-    use crate::proto::hub_event::{HubEvent, HubEventType, MergeMessageBody};
-    use crate::proto::msg as message;
-    use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
+    use crate::proto::hub_event::{HubEvent, HubEventType};
     use crate::proto::rpc::snapchain_service_server::SnapchainService;
     use crate::proto::rpc::SubscribeRequest;
-    use crate::proto::snapchain::{Height, ShardChunk, ShardHeader, Transaction};
     use crate::storage::db;
-    use crate::storage::db::RocksDbTransactionBatch;
-    use crate::storage::store::engine::{MempoolMessage, ShardEngine, ShardStateChange};
-    use crate::storage::store::shard::{self, ShardStore};
     use crate::storage::store::BlockStore;
-    use crate::storage::trie::merkle_trie::TrieKey;
-    use crate::utils::factory::{events_factory, messages_factory};
     use futures::StreamExt;
-    use prost::Message as _;
     use tempfile;
     use tokio::sync::{broadcast, mpsc};
-    use tokio_stream::wrappers::ReceiverStream;
-    use tonic::{Request, Response, Status};
+    use tonic::Request;
 
     async fn subscribe_and_listen(
         service: &MySnapchainService,
