@@ -216,7 +216,7 @@ mod tests {
     async fn test_engine_commit_with_single_message() {
         // enable_logging();
         let (msg1, _) = entities();
-        let (mut engine, _tmpdir, _event_rx) = new_engine();
+        let (mut engine, _tmpdir, mut event_rx) = new_engine();
         let messages_tx = engine.messages_tx();
 
         messages_tx
@@ -258,6 +258,8 @@ mod tests {
         // And events are generated
         let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
         assert_eq!(1, events.events.len());
+        assert_eq!(event_rx.recv().await.unwrap(), events.events[0]);
+
         let generated_event = match events.events[0].clone().body {
             Some(crate::proto::hub_event::hub_event::Body::MergeMessageBody(msg)) => msg,
             _ => panic!("Unexpected event type"),
@@ -477,7 +479,7 @@ mod tests {
     #[tokio::test]
     async fn test_engine_send_onchain_event() {
         let onchain_event = default_onchain_event();
-        let (mut engine, _tmpdir, _event_rx) = new_engine();
+        let (mut engine, _tmpdir, mut event_rx) = new_engine();
         let messages_tx = engine.messages_tx();
         messages_tx
             .send(MempoolMessage::ValidatorMessage(
@@ -496,6 +498,7 @@ mod tests {
         // No hub events are generated
         let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
         assert_eq!(0, events.events.len());
+        assert!(event_rx.try_recv().is_err());
 
         validate_and_commit_state_change(&mut engine, &state_change);
 
@@ -510,6 +513,8 @@ mod tests {
         // Hub events are generated
         let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
         assert_eq!(1, events.events.len());
+        assert_eq!(event_rx.recv().await.unwrap(), events.events[0]);
+
         let generated_event = match events.events[0].clone().body {
             Some(crate::proto::hub_event::hub_event::Body::MergeOnChainEventBody(e)) => e,
             _ => panic!("Unexpected event type"),

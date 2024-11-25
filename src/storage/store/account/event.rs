@@ -75,7 +75,6 @@ impl HubEventIdGenerator {
 
 pub struct StoreEventHandler {
     generator: Arc<Mutex<HubEventIdGenerator>>,
-    event_tx: broadcast::Sender<HubEvent>,
 }
 
 impl StoreEventHandler {
@@ -83,7 +82,6 @@ impl StoreEventHandler {
         epoch: Option<u64>,
         last_timestamp: Option<u64>,
         last_seq: Option<u64>,
-        event_tx: broadcast::Sender<HubEvent>,
     ) -> Arc<Self> {
         Arc::new(StoreEventHandler {
             generator: Arc::new(Mutex::new(HubEventIdGenerator::new(
@@ -91,10 +89,10 @@ impl StoreEventHandler {
                 last_timestamp,
                 last_seq,
             ))),
-            event_tx,
         })
     }
 
+    // TODO(aditi): This is named "commit_transaction" but the commit doesn't actually happen here. This function is provided a [txn] that's committed elsewhere
     pub fn commit_transaction(
         &self,
         txn: &mut RocksDbTransactionBatch,
@@ -108,12 +106,6 @@ impl StoreEventHandler {
         raw_event.id = event_id;
 
         HubEvent::put_event_transaction(txn, &raw_event)?;
-        match self.event_tx.send(raw_event.clone()) {
-            Ok(_) => {}
-            Err(err) => {
-                error!("Unable to broadcast event {:#?}", err)
-            }
-        }
 
         // These two calls are made in the JS code
         // this._storageCache.processEvent(event);
@@ -153,7 +145,7 @@ impl HubEvent {
         let start_prefix = Self::make_event_key(start_id);
         let stop_prefix = match stop_id {
             Some(id) => Self::make_event_key(id),
-            None => increment_vec_u8(&vec![RootPrefix::HubEvents as u8 + 1]),
+            None => increment_vec_u8(&Self::make_event_key(std::u64::MAX)),
         };
 
         let mut events = Vec::new();

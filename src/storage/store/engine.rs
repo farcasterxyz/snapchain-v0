@@ -89,6 +89,7 @@ pub struct ShardEngine {
     shard_store: ShardStore,
     messages_rx: mpsc::Receiver<MempoolMessage>,
     messages_tx: mpsc::Sender<MempoolMessage>,
+    events_tx: broadcast::Sender<HubEvent>,
     pub(crate) trie: merkle_trie::MerkleTrie,
     cast_store: Store,
     pub db: Arc<RocksDB>,
@@ -108,7 +109,7 @@ impl ShardEngine {
         shard_id: u32,
         shard_store: ShardStore,
         metrics_client: Arc<StatsdClient>,
-        event_tx: broadcast::Sender<HubEvent>,
+        events_tx: broadcast::Sender<HubEvent>,
     ) -> ShardEngine {
         let db = &*shard_store.db;
 
@@ -116,7 +117,7 @@ impl ShardEngine {
         let mut trie = merkle_trie::MerkleTrie::new();
         trie.initialize(db).unwrap();
 
-        let event_handler = StoreEventHandler::new(None, None, None, event_tx);
+        let event_handler = StoreEventHandler::new(None, None, None);
         let db = shard_store.db.clone();
         let cast_store = CastStore::new(shard_store.db.clone(), event_handler.clone(), 100);
         let onchain_event_store =
@@ -128,6 +129,7 @@ impl ShardEngine {
             shard_store,
             messages_rx,
             messages_tx,
+            events_tx,
             trie,
             cast_store,
             db,
@@ -161,7 +163,7 @@ impl ShardEngine {
 
         let mut snapchain_txns = self.create_transactions_from_mempool(messages);
         for snapchain_txn in &mut snapchain_txns {
-            let account_root = self.replay_snapchain_txn(&snapchain_txn, txn_batch)?;
+            let (account_root, _events) = self.replay_snapchain_txn(&snapchain_txn, txn_batch)?;
             snapchain_txn.account_root = account_root;
         }
 
@@ -244,9 +246,11 @@ impl ShardEngine {
         txn_batch: &mut RocksDbTransactionBatch,
         transactions: &[Transaction],
         shard_root: &[u8],
-    ) -> Result<(), EngineError> {
+    ) -> Result<Vec<HubEvent>, EngineError> {
+        let mut events = vec![];
         for snapchain_txn in transactions {
-            self.replay_snapchain_txn(snapchain_txn, txn_batch)?;
+            let (_, txn_events) = self.replay_snapchain_txn(snapchain_txn, txn_batch)?;
+            events.extend(txn_events);
         }
 
         let root1 = self.trie.root_hash()?;
@@ -255,25 +259,27 @@ impl ShardEngine {
             return Err(EngineError::HashMismatch);
         }
 
-        Ok(())
+        Ok(events)
     }
 
     fn replay_snapchain_txn(
         &mut self,
         snapchain_txn: &Transaction,
         txn_batch: &mut RocksDbTransactionBatch,
-    ) -> Result<Vec<u8>, EngineError> {
+    ) -> Result<(Vec<u8>, Vec<HubEvent>), EngineError> {
         let total_user_messages = snapchain_txn.user_messages.len();
         let total_system_messages = snapchain_txn.system_messages.len();
         let mut user_messages_count = 0;
         let mut system_messages_count = 0;
+        let mut events = vec![];
 
         for msg in &snapchain_txn.user_messages {
             // Errors are validated based on the shard root
             let result = self.merge_message(msg, txn_batch);
             match result {
                 Ok(event) => {
-                    self.update_trie(event, txn_batch)?;
+                    self.update_trie(event.clone(), txn_batch)?;
+                    events.push(event.clone());
                     user_messages_count += 1;
                 }
                 Err(err) => {
@@ -295,7 +301,8 @@ impl ShardEngine {
 
                 match event {
                     Ok(hub_event) => {
-                        self.update_trie(hub_event, txn_batch)?;
+                        self.update_trie(hub_event.clone(), txn_batch)?;
+                        events.push(hub_event.clone());
                         system_messages_count += 1;
                     }
                     Err(err) => {
@@ -321,7 +328,7 @@ impl ShardEngine {
         );
 
         // Return the new account root hash
-        Ok(account_root)
+        Ok((account_root, events))
     }
 
     fn merge_message(
@@ -417,31 +424,39 @@ impl ShardEngine {
         let shard_root = &shard_chunk.header.as_ref().unwrap().shard_root;
         let transactions = &shard_chunk.transactions;
 
-        if let Err(err) = self.replay_proposal(&mut txn, transactions, shard_root) {
-            error!("State change commit failed: {}", err);
-            panic!("State change commit failed: {}", err);
-        }
-
-        self.db.commit(txn).unwrap();
-        self.trie.reload(&self.db).unwrap();
-
-        self.incr("commit");
-
-        let block_number = &shard_chunk
-            .header
-            .as_ref()
-            .unwrap()
-            .height
-            .unwrap()
-            .block_number;
-
-        self.gauge("block_height", *block_number);
-
-        match self.shard_store.put_shard_chunk(shard_chunk) {
+        match self.replay_proposal(&mut txn, transactions, shard_root) {
             Err(err) => {
-                error!("Unable to write shard chunk to store {}", err)
+                error!("State change commit failed: {}", err);
+                panic!("State change commit failed: {}", err);
             }
-            Ok(()) => {}
+            Ok(events) => {
+                self.db.commit(txn).unwrap();
+                for event in events {
+                    match self.events_tx.send(event) {
+                        Ok(_) => {}
+                        Err(err) => {
+                            error!("Unable to broadcast event {:#?}", err)
+                        }
+                    }
+                }
+                self.trie.reload(&self.db).unwrap();
+                self.incr("commit");
+
+                let block_number = &shard_chunk
+                    .header
+                    .as_ref()
+                    .unwrap()
+                    .height
+                    .unwrap()
+                    .block_number;
+                self.gauge("block_height", *block_number);
+                match self.shard_store.put_shard_chunk(shard_chunk) {
+                    Err(err) => {
+                        error!("Unable to write shard chunk to store {}", err)
+                    }
+                    Ok(()) => {}
+                }
+            }
         }
     }
 
