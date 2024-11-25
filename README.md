@@ -2,17 +2,6 @@
 
 Prototype for the snapchain proposal
 
-## Development Notes
-
-🚨 **We are not accepting external PRs at this time** 🚨
-
-Presently, due to our current development velocity, we don't have time to review or discuss external PRs. Any PRs opened
-against the repo will be closed.
-
-We may accept external PRs at a later date, at which point this note will be removed.
-
-Thank you for your interest in the project!
-
 ## Prerequisites
 
 Before you begin, ensure you have the following installed:
