@@ -118,7 +118,7 @@
             "uid": "P1D261A8554D2DA69"
           },
           "refId": "A",
-          "target": "stats.gauges.*.shard*.block_height"
+          "target": "stats.gauges.snapchain*.shard*.block_height"
         }
       ],
       "title": "Block Height",
@@ -221,7 +221,7 @@
             "uid": "P1D261A8554D2DA69"
           },
           "refId": "A",
-          "target": "stats_counts.*.shard*.propose"
+          "target": "stats_counts.snapchain*.shard*.propose"
         }
       ],
       "title": "Propose",
@@ -311,7 +311,7 @@
             "uid": "P1D261A8554D2DA69"
           },
           "refId": "A",
-          "target": "stats_counts.*.shard*.validate.false"
+          "target": "stats_counts.snapchain*.shard*.validate.false"
         }
       ],
       "title": "Validate False",
@@ -401,7 +401,7 @@
             "uid": "P1D261A8554D2DA69"
           },
           "refId": "A",
-          "target": "stats_counts.*.shard*.validate.true"
+          "target": "stats_counts.snapchain*.shard*.validate.true"
         }
       ],
       "title": "Validate True",
