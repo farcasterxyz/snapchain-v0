@@ -92,7 +92,7 @@ impl StoreEventHandler {
         })
     }
 
-    // TODO(aditi): This is named "commit_transaction" but the commit doesn't actually happen here. This function is provided a [txn] that's committed elsewhere
+    // TODO(aditi): This is named "commit_transaction" but the commit doesn't actually happen here. This function is provided a [txn] that's committed elsewhere.
     pub fn commit_transaction(
         &self,
         txn: &mut RocksDbTransactionBatch,
