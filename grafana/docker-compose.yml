@@ -1,0 +1,24 @@
+services:
+  graphite:
+    image: graphiteapp/graphite-statsd:1.1.10-5
+    restart: unless-stopped
+    networks:
+      - metrics_network
+    ports:
+      - '8125:8125/udp' # statsd udp
+    volumes:
+      - ./graphite/storage:/opt/graphite/storage
+
+  grafana:
+    image: grafana/grafana:10.0.3
+    restart: unless-stopped
+    networks:
+      - metrics_network
+    volumes:
+      - ./grafana:/etc/grafana
+      - ./grafana/data:/var/lib/grafana
+    ports:
+      - '3000:3000' # grafana web
+
+networks:
+  metrics_network:
