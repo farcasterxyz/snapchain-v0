@@ -74,19 +74,16 @@ mod tests {
         run_test(vec![], || {
             let args = vec!["test_binary".to_string()];
 
-            let config = load_and_merge_config(args).expect("Failed to load config");
-
-            assert_eq!(config.id, 0);
-            assert_eq!(config.log_format, "text");
-
-            // subsection
-            assert_eq!(config.fnames.disable, false);
-            assert_eq!(config.fnames.start_from, 0);
-            assert_eq!(config.fnames.stop_at, 200);
-            assert_eq!(
-                config.fnames.url,
-                "https://fnames.farcaster.xyz/transfers".to_string()
-            );
+            let result = load_and_merge_config(args);
+            match result {
+                Ok(_) => panic!("Expected error due to missing config, but got Ok"),
+                Err(e) => {
+                    assert!(e
+                        .to_string()
+                        .contains("error: the following required arguments were not provided:"));
+                    assert!(e.to_string().contains("--config-path <CONFIG_PATH>"));
+                }
+            }
         })
     }
 
@@ -96,7 +93,6 @@ mod tests {
         run_test(vec![], || {
             let (_tmpdir, file_path) = write_config_file(
                 r#"
-                id = 42
                 log_format = "json"
             "#,
             );
@@ -109,7 +105,6 @@ mod tests {
 
             let config = load_and_merge_config(args).expect("Failed to load config");
 
-            assert_eq!(config.id, 42);
             assert_eq!(config.log_format, "json");
         })
     }
@@ -125,7 +120,6 @@ mod tests {
             || {
                 let (_tmpdir, file_path) = write_config_file(
                     r#"
-                id = 42
                 log_format = "text"
             "#,
                 );
@@ -137,7 +131,6 @@ mod tests {
                 ];
                 let config = load_and_merge_config(args).expect("Failed to load config");
 
-                assert_eq!(config.id, 43);
                 assert_eq!(config.log_format, "json");
             },
         )
@@ -154,7 +147,6 @@ mod tests {
             || {
                 let (_tmpdir, file_path) = write_config_file(
                     r#"
-                id = 42
                 log_format = "text"
             "#,
                 );
@@ -163,15 +155,12 @@ mod tests {
                     "test_binary".to_string(),
                     "--config-path".to_string(),
                     file_path.to_string(),
-                    "--id".to_string(),
-                    "100".to_string(),
                     "--log-format".to_string(),
                     "json".to_string(),
                 ];
 
                 let config = load_and_merge_config(args).expect("Failed to load config");
 
-                assert_eq!(config.id, 100);
                 assert_eq!(config.log_format, "json");
             },
         )
@@ -188,7 +177,6 @@ mod tests {
             || {
                 let (_tmpdir, file_path) = write_config_file(
                     r#"
-                id = 42
                 log_format = "text"
 
                 [fnames]
