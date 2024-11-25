@@ -140,7 +140,6 @@ impl SnapchainService for MySnapchainService {
             tokio::spawn(async move {
                 let mut event_rx = event_tx.subscribe();
                 while let Ok(hub_event) = event_rx.recv().await {
-                    // TODO(aditi): Fix error handling
                     match tx.send(Ok(hub_event)).await {
                         Ok(_) => {}
                         Err(_) => {
