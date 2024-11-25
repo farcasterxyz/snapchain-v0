@@ -7,8 +7,6 @@ use crate::storage::util::increment_vec_u8;
 use prost::Message as _;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::broadcast;
-use tracing::error;
 
 const TIMESTAMP_BITS: u32 = 41;
 const SEQUENCE_BITS: u32 = 12;
