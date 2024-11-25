@@ -11,12 +11,16 @@ mod tests {
     use crate::storage::trie::merkle_trie::TrieKey;
     use crate::utils::factory::{events_factory, messages_factory};
     use prost::Message as _;
+    use std::sync::Arc;
     use tempfile;
     use tracing_subscriber::EnvFilter;
 
     const FID_FOR_TEST: u32 = 1234;
 
     fn new_engine() -> (ShardEngine, tempfile::TempDir) {
+        let metrics_client =
+            Arc::new(cadence::StatsdClient::builder("", cadence::NopMetricSink {}).build());
+
         let dir = tempfile::TempDir::new().unwrap();
         let db_path = dir.path().join("a.db");
 
@@ -24,7 +28,7 @@ mod tests {
         db.open().unwrap();
 
         let shard_store = ShardStore::new(db);
-        (ShardEngine::new(1, shard_store), dir)
+        (ShardEngine::new(1, shard_store, metrics_client), dir)
     }
 
     fn enable_logging() {

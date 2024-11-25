@@ -1,8 +1,10 @@
+use cadence::{Counted, CountedExt, Gauged};
 use malachite_metrics::{Metrics, SharedRegistry};
 use snapchain::proto::snapchain::Block;
 use snapchain::storage::store::BlockStore;
 use std::collections::HashMap;
 use std::error::Error;
+use std::net;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -49,6 +51,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
         std::fs::create_dir_all(db_dir.clone()).unwrap();
         warn!("Cleared db at {:?}", db_dir);
     }
+
+    if app_config.metrics.prefix == "" {
+        // TODO: consider removing this check
+        return Err("metrics prefix must be specified in config".into());
+    }
+
+    // TODO: parsing to SocketAddr only allows for IPs, DNS names won't work
+    let (metrics_host, metrics_port) = match app_config.metrics.addr.parse::<SocketAddr>() {
+        Ok(addr) => Ok((addr.ip().to_string(), addr.port())),
+        Err(e) => Err(format!("invalid metrics address: {}", e)),
+    }?;
+
+    let host = (metrics_host, metrics_port);
+    let socket = net::UdpSocket::bind("0.0.0.0:0").unwrap();
+    let sink = cadence::UdpMetricSink::from(host, socket)?;
+    let client1 = cadence::StatsdClient::builder(app_config.metrics.prefix.as_str(), sink).build();
+    let client1 = Arc::new(client1);
 
     let addr = app_config.gossip.address.clone();
     let grpc_addr = app_config.rpc_address.clone();
@@ -127,6 +146,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None,
         block_store.clone(),
         app_config.rocksdb_dir,
+        client1.clone(),
     )
     .await;
 
