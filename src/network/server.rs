@@ -121,19 +121,17 @@ impl SnapchainService for MySnapchainService {
     ) -> Result<Response<Self::SubscribeStream>, Status> {
         // TODO(aditi): Use [from_id]
         // TODO(aditi): Read older events from the db
+        // TODO(aditi): Rethink the channel size
         let (server_tx, client_rx) = mpsc::channel::<Result<HubEvent, Status>>(100);
         let events_txs = match request.get_ref().shard_index {
-            Some(shard_id) => {
-                // TODO(aditi): Fix error handling
-                match self.shard_events.get(&(shard_id as u32)) {
-                    None => {
-                        return Err(Status::from_error(Box::new(
-                            HubError::invalid_internal_state("Missing shard event tx"),
-                        )))
-                    }
-                    Some(tx) => vec![tx.clone()],
+            Some(shard_id) => match self.shard_events.get(&(shard_id as u32)) {
+                None => {
+                    return Err(Status::from_error(Box::new(
+                        HubError::invalid_internal_state("Missing shard event tx"),
+                    )))
                 }
-            }
+                Some(tx) => vec![tx.clone()],
+            },
             None => self.shard_events.values().cloned().collect(),
         };
 
@@ -143,7 +141,13 @@ impl SnapchainService for MySnapchainService {
                 let mut event_rx = event_tx.subscribe();
                 while let Ok(hub_event) = event_rx.recv().await {
                     // TODO(aditi): Fix error handling
-                    tx.send(Ok(hub_event)).await.unwrap();
+                    match tx.send(Ok(hub_event)).await {
+                        Ok(_) => {}
+                        Err(_) => {
+                            // This means the client hung up
+                            break;
+                        }
+                    }
                 }
             });
         }
