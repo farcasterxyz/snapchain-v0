@@ -6,8 +6,15 @@ use std::time::Duration;
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Delay for proposing a value (e.g. "250ms")
-    #[arg(long, value_parser = parse_duration)]
+    #[arg(long, value_parser = parse_duration, default_value = "250ms")]
     propose_value_delay: Duration,
+
+    /// Metrics prefix. note: node ID will be appended before config file written
+    #[arg(long, default_value = "snapchain")]
+    metrics_prefix: String,
+
+    #[arg(long, default_value = "127.0.0.1:8125")]
+    metrics_addr: String,
 }
 
 fn parse_duration(arg: &str) -> Result<Duration, String> {
@@ -30,7 +37,7 @@ async fn main() {
     let base_gossip_port = 50050;
     for i in 1..=nodes {
         let id = i;
-        let db_dir = format!(".rocks");
+        let db_dir = format!("nodes/{id}/.rocks");
 
         if !std::path::Path::new(format!("nodes/{id}").as_str()).exists() {
             std::fs::create_dir(format!("nodes/{id}")).expect("Failed to create node directory");
@@ -42,22 +49,29 @@ async fn main() {
         let secret_key = hex::encode(SecretKey::generate());
         let rpc_port = base_rpc_port + i;
         let gossip_port = base_gossip_port + i;
-        let host = format!("172.100.0.1{i}");
+        let host = format!("127.0.0.1{i}");
         let rpc_address = format!("{host}:{rpc_port}");
         let gossip_multi_addr = format!("/ip4/{host}/udp/{gossip_port}/quic-v1");
         let other_nodes_addresses = (1..=nodes)
             .filter(|&x| x != id)
-            .map(|x| format!("/ip4/172.100.0.1{x}/udp/{:?}/quic-v1", base_gossip_port + x))
+            .map(|x| format!("/ip4/127.0.0.1{x}/udp/{:?}/quic-v1", base_gossip_port + x))
             .collect::<Vec<String>>()
             .join(",");
 
         let propose_value_delay = humantime::format_duration(args.propose_value_delay);
+
+        let metrics_prefix = format!("{}{}", args.metrics_prefix, id);
+        let metrics_addr = args.metrics_addr.clone();
 
         let config_file_content = format!(
             r#"
 id = {id}
 rpc_address="{rpc_address}"
 rocksdb_dir="{db_dir}"
+
+[metrics]
+prefix="{metrics_prefix}"
+addr="{metrics_addr}"
 
 [gossip]
 address="{gossip_multi_addr}"

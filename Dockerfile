@@ -30,7 +30,8 @@ ENV RUST_BACKTRACE=full
 RUN cargo build
 
 ## Pre-generate some configurations we can use
-RUN target/debug/setup --propose-value-delay=250ms
+# TOOD: consider doing something different here
+RUN target/debug/setup_local_testnet
 
 #################################################################################
 

@@ -12,6 +12,7 @@ use crate::storage::store::BlockStore;
 use crate::storage::trie;
 use crate::storage::trie::merkle_trie;
 use crate::storage::trie::merkle_trie::TrieKey;
+use cadence::{Counted, CountedExt, Gauged, StatsdClient};
 use itertools::Itertools;
 use message::MessageType;
 use snapchain::{Block, ShardChunk, Transaction};
@@ -91,6 +92,7 @@ pub struct ShardEngine {
     cast_store: Store,
     pub db: Arc<RocksDB>,
     onchain_event_store: OnchainEventStore,
+    metrics_client: Arc<StatsdClient>,
 }
 
 fn encode_vec(data: &[Vec<u8>]) -> String {
@@ -101,7 +103,11 @@ fn encode_vec(data: &[Vec<u8>]) -> String {
 }
 
 impl ShardEngine {
-    pub fn new(shard_id: u32, shard_store: ShardStore) -> ShardEngine {
+    pub fn new(
+        shard_id: u32,
+        shard_store: ShardStore,
+        metrics_client: Arc<StatsdClient>,
+    ) -> ShardEngine {
         let db = &*shard_store.db;
 
         // TODO: adding the trie here introduces many calls that want to return errors. Rethink unwrap strategy.
@@ -124,6 +130,7 @@ impl ShardEngine {
             cast_store,
             db,
             onchain_event_store,
+            metrics_client,
         }
     }
 
@@ -203,12 +210,29 @@ impl ShardEngine {
         transactions
     }
 
+    fn incr(&self, key: &str) {
+        let key = format!("shard{}.{}", self.shard_id, key);
+        _ = self.metrics_client.incr(key.as_str())
+    }
+
+    fn count(&self, key: &str, value: u64) {
+        let key = format!("shard{}.{}", self.shard_id, key);
+        _ = self.metrics_client.count(key.as_str(), value)
+    }
+
+    fn gauge(&self, key: &str, value: u64) {
+        let key = format!("shard{}.{}", self.shard_id, key);
+        _ = self.metrics_client.gauge(key.as_str(), value)
+    }
+
     pub fn propose_state_change(&mut self, shard: u32) -> ShardStateChange {
         let mut txn = RocksDbTransactionBatch::new();
         let result = self.prepare_proposal(&mut txn, shard).unwrap(); //TODO: don't unwrap()
 
         // TODO: this should probably operate automatically via drop trait
         self.trie.reload(&self.db).unwrap();
+
+        self.incr("propose");
 
         result
     }
@@ -373,6 +397,15 @@ impl ShardEngine {
         }
 
         self.trie.reload(&*self.shard_store.db).unwrap();
+
+        if result {
+            self.incr("validate.true");
+            self.count("validate.false", 0)
+        } else {
+            self.incr("validate.false");
+            self.count("validate.true", 0);
+        }
+
         result
     }
 
@@ -389,6 +422,18 @@ impl ShardEngine {
 
         self.db.commit(txn).unwrap();
         self.trie.reload(&self.db).unwrap();
+
+        self.incr("commit");
+
+        let block_number = &shard_chunk
+            .header
+            .as_ref()
+            .unwrap()
+            .height
+            .unwrap()
+            .block_number;
+
+        self.gauge("block_height", *block_number);
 
         match self.shard_store.put_shard_chunk(shard_chunk) {
             Err(err) => {
