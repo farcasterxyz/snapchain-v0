@@ -6,6 +6,7 @@ use crate::core::types::{
     SnapchainValidatorSet,
 };
 use crate::network::gossip::GossipEvent;
+use crate::proto::hub_event::HubEvent;
 use crate::proto::snapchain::{Block, ShardChunk};
 use crate::storage::db::RocksDB;
 use crate::storage::store::engine::{BlockEngine, MempoolMessage, ShardEngine};
@@ -18,7 +19,7 @@ use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tracing::warn;
 
 const MAX_SHARDS: u32 = 3;
@@ -27,6 +28,7 @@ pub struct SnapchainNode {
     pub consensus_actors: BTreeMap<u32, ActorRef<ConsensusMsg<SnapchainValidatorContext>>>,
     pub messages_tx_by_shard: HashMap<u32, mpsc::Sender<MempoolMessage>>,
     pub shard_stores: HashMap<u32, ShardStore>,
+    pub shard_events: HashMap<u32, broadcast::Sender<HubEvent>>,
     pub address: Address,
     metrics_client: Arc<StatsdClient>,
 }
@@ -51,6 +53,7 @@ impl SnapchainNode {
         let mut shard_messages: HashMap<u32, mpsc::Sender<MempoolMessage>> = HashMap::new();
 
         let mut shard_stores: HashMap<u32, ShardStore> = HashMap::new();
+        let mut shard_events: HashMap<u32, broadcast::Sender<HubEvent>> = HashMap::new();
 
         // Create the shard validators
         for shard_id in config.shard_ids() {
@@ -83,7 +86,14 @@ impl SnapchainNode {
             db.open().unwrap();
             let shard_store = ShardStore::new(db);
             shard_stores.insert(shard_id, shard_store.clone());
-            let engine = ShardEngine::new(shard_id, shard_store, metrics_client.clone());
+            let (events_tx, _events_rx) = broadcast::channel::<HubEvent>(100);
+            shard_events.insert(shard_id, events_tx.clone());
+            let engine = ShardEngine::new(
+                shard_id,
+                shard_store,
+                metrics_client.clone(),
+                events_tx.clone(),
+            );
 
             let messages_tx = engine.messages_tx();
 
@@ -177,6 +187,7 @@ impl SnapchainNode {
             address: validator_address,
             shard_stores,
             metrics_client,
+            shard_events,
         }
     }
 

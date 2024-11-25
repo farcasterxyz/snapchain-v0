@@ -7,6 +7,8 @@ use crate::storage::util::increment_vec_u8;
 use prost::Message as _;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::broadcast;
+use tracing::error;
 
 const TIMESTAMP_BITS: u32 = 41;
 const SEQUENCE_BITS: u32 = 12;
@@ -73,6 +75,7 @@ impl HubEventIdGenerator {
 
 pub struct StoreEventHandler {
     generator: Arc<Mutex<HubEventIdGenerator>>,
+    event_tx: broadcast::Sender<HubEvent>,
 }
 
 impl StoreEventHandler {
@@ -80,6 +83,7 @@ impl StoreEventHandler {
         epoch: Option<u64>,
         last_timestamp: Option<u64>,
         last_seq: Option<u64>,
+        event_tx: broadcast::Sender<HubEvent>,
     ) -> Arc<Self> {
         Arc::new(StoreEventHandler {
             generator: Arc::new(Mutex::new(HubEventIdGenerator::new(
@@ -87,6 +91,7 @@ impl StoreEventHandler {
                 last_timestamp,
                 last_seq,
             ))),
+            event_tx,
         })
     }
 
@@ -103,10 +108,15 @@ impl StoreEventHandler {
         raw_event.id = event_id;
 
         HubEvent::put_event_transaction(txn, &raw_event)?;
+        match self.event_tx.send(raw_event.clone()) {
+            Ok(_) => {}
+            Err(err) => {
+                error!("Unable to broadcast event {:#?}", err)
+            }
+        }
 
         // These two calls are made in the JS code
         // this._storageCache.processEvent(event);
-        // this.broadcastEvent(event);
 
         Ok(event_id)
     }

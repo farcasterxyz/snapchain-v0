@@ -2,6 +2,7 @@ use super::account::OnchainEventStorageError;
 use super::shard::ShardStore;
 use crate::core::error::HubError;
 use crate::core::types::Height;
+use crate::proto::hub_event::HubEvent;
 use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
 use crate::proto::{hub_event, msg as message, snapchain};
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch};
@@ -18,7 +19,7 @@ use message::MessageType;
 use snapchain::{Block, ShardChunk, Transaction};
 use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, warn};
 
 #[derive(Error, Debug)]
@@ -107,6 +108,7 @@ impl ShardEngine {
         shard_id: u32,
         shard_store: ShardStore,
         metrics_client: Arc<StatsdClient>,
+        event_tx: broadcast::Sender<HubEvent>,
     ) -> ShardEngine {
         let db = &*shard_store.db;
 
@@ -114,7 +116,7 @@ impl ShardEngine {
         let mut trie = merkle_trie::MerkleTrie::new();
         trie.initialize(db).unwrap();
 
-        let event_handler = StoreEventHandler::new(None, None, None);
+        let event_handler = StoreEventHandler::new(None, None, None, event_tx);
         let db = shard_store.db.clone();
         let cast_store = CastStore::new(shard_store.db.clone(), event_handler.clone(), 100);
         let onchain_event_store =
