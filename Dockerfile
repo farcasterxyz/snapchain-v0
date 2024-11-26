@@ -31,7 +31,7 @@ RUN cargo build --release --bins
 
 ## Pre-generate some configurations we can use
 # TOOD: consider doing something different here
-RUN target/debug/setup_local_testnet
+RUN target/release/setup_local_testnet
 
 #################################################################################
 
