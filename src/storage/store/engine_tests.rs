@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::proto::hub_event::{HubEvent, MergeMessageBody};
     use crate::proto::msg as message;
     use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
@@ -18,11 +20,7 @@ mod tests {
 
     const FID_FOR_TEST: u32 = 1234;
 
-    fn new_engine() -> (
-        ShardEngine,
-        tempfile::TempDir,
-        broadcast::Receiver<HubEvent>,
-    ) {
+    fn new_engine() -> (ShardEngine, tempfile::TempDir) {
         let statsd_client = StatsdClientWrapper::new(
             cadence::StatsdClient::builder("", cadence::NopMetricSink {}).build(),
             true,
@@ -33,13 +31,7 @@ mod tests {
         let db = db::RocksDB::new(db_path.to_str().unwrap());
         db.open().unwrap();
 
-        let shard_store = ShardStore::new(db);
-        let (event_tx, event_rx) = broadcast::channel(100);
-        (
-            ShardEngine::new(1, shard_store, statsd_client, event_tx),
-            dir,
-            event_rx,
-        )
+        (ShardEngine::new(Arc::new(db), 1, statsd_client), dir)
     }
 
     fn enable_logging() {
@@ -141,7 +133,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_basic_propose() {
-        let (mut engine, _tmpdir, _event_rx) = new_engine();
+        let (mut engine, _tmpdir) = new_engine();
         let (msg1, _) = entities();
         let messages_tx = engine.messages_tx();
 
@@ -178,7 +170,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "State change commit failed: merkle trie root hash mismatch")]
     fn test_engine_commit_with_mismatched_hash() {
-        let (mut engine, _tmpdir, _event_rx) = new_engine();
+        let (mut engine, _tmpdir) = new_engine();
         let mut state_change = engine.propose_state_change(1);
         let invalid_hash = from_hex("ffffffffffffffffffffffffffffffffffffffff");
 
@@ -202,7 +194,7 @@ mod tests {
 
     #[test]
     fn test_engine_commit_no_messages_happy_path() {
-        let (mut engine, _tmpdir, _event_rx) = new_engine();
+        let (mut engine, _tmpdir) = new_engine();
         let state_change = engine.propose_state_change(1);
         let expected_roots = vec![""];
 
@@ -218,8 +210,9 @@ mod tests {
     async fn test_engine_commit_with_single_message() {
         // enable_logging();
         let (msg1, _) = entities();
-        let (mut engine, _tmpdir, mut event_rx) = new_engine();
+        let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
+        let mut event_rx = engine.get_senders().events_tx.subscribe();
 
         messages_tx
             .send(MempoolMessage::UserMessage(msg1.clone()))
@@ -280,7 +273,7 @@ mod tests {
         let timestamp = messages_factory::farcaster_time();
         let cast =
             messages_factory::casts::create_cast_add(FID_FOR_TEST, "msg1", Some(timestamp), None);
-        let (mut engine, _tmpdir, _event_rx) = new_engine();
+        let (mut engine, _tmpdir) = new_engine();
 
         commit_message(&mut engine, &cast).await;
 
@@ -318,13 +311,15 @@ mod tests {
     #[tokio::test]
     async fn test_account_roots() {
         let cast = messages_factory::casts::create_cast_add(FID_FOR_TEST, "msg1", None, None);
-        let (mut engine, _tmpdir, _event_rx) = new_engine();
+        let (mut engine, _tmpdir) = new_engine();
 
         let txn = &mut RocksDbTransactionBatch::new();
-        let account_root = engine
-            .trie
-            .get_hash(&engine.db, txn, &TrieKey::for_fid(FID_FOR_TEST));
-        let shard_root = engine.trie.root_hash().unwrap();
+        let account_root =
+            engine
+                .get_stores()
+                .trie
+                .get_hash(&engine.db, txn, &TrieKey::for_fid(FID_FOR_TEST));
+        let shard_root = engine.get_stores().trie.root_hash().unwrap();
 
         // Account root and shard root is empty initially
         assert_eq!(account_root.len(), 0);
@@ -334,9 +329,10 @@ mod tests {
 
         let updated_account_root =
             engine
+                .get_stores()
                 .trie
                 .get_hash(&engine.db, txn, &TrieKey::for_fid(FID_FOR_TEST));
-        let updated_shard_root = engine.trie.root_hash().unwrap();
+        let updated_shard_root = engine.get_stores().trie.root_hash().unwrap();
         // Account root is not empty after a message is committed
         assert_eq!(updated_account_root.len() > 0, true);
         assert_ne!(updated_shard_root, shard_root);
@@ -348,13 +344,15 @@ mod tests {
 
         let account_root_another_fid =
             engine
+                .get_stores()
                 .trie
                 .get_hash(&engine.db, txn, &TrieKey::for_fid(FID_FOR_TEST + 1));
         let account_root_original_fid =
             engine
+                .get_stores()
                 .trie
                 .get_hash(&engine.db, txn, &TrieKey::for_fid(FID_FOR_TEST));
-        let latest_shard_root = engine.trie.root_hash().unwrap();
+        let latest_shard_root = engine.get_stores().trie.root_hash().unwrap();
         // Only the account root for the new fid and the shard root is updated, original fid account root remains the same
         assert_eq!(account_root_another_fid.len() > 0, true);
         assert_eq!(account_root_original_fid, updated_account_root);
@@ -365,7 +363,7 @@ mod tests {
     async fn test_engine_send_messages_one_by_one() {
         // enable_logging();
         let (msg1, msg2) = entities();
-        let (mut engine, _tmpdir, _event_rx) = new_engine();
+        let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
         let expected_roots = vec![
             "",
@@ -441,7 +439,7 @@ mod tests {
     async fn test_engine_send_two_messages() {
         // enable_logging();
         let (msg1, msg2) = entities();
-        let (mut engine, _tmpdir, _event_rx) = new_engine();
+        let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
         let expected_roots = vec!["", "89506154d345eaf8ef9d0bdf5756b08feb97411b"];
 
@@ -481,8 +479,9 @@ mod tests {
     #[tokio::test]
     async fn test_engine_send_onchain_event() {
         let onchain_event = default_onchain_event();
-        let (mut engine, _tmpdir, mut event_rx) = new_engine();
+        let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
+        let mut event_rx = engine.get_senders().events_tx.subscribe();
         messages_tx
             .send(MempoolMessage::ValidatorMessage(
                 crate::proto::snapchain::ValidatorMessage {

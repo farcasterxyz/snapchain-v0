@@ -9,7 +9,7 @@ use crate::network::gossip::GossipEvent;
 use crate::proto::hub_event::HubEvent;
 use crate::proto::snapchain::{Block, ShardChunk};
 use crate::storage::db::RocksDB;
-use crate::storage::store::engine::{BlockEngine, MempoolMessage, ShardEngine};
+use crate::storage::store::engine::{BlockEngine, MempoolMessage, Senders, ShardEngine, Stores};
 use crate::storage::store::shard::ShardStore;
 use crate::storage::store::BlockStore;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
@@ -18,6 +18,7 @@ use malachite_config::TimeoutConfig;
 use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tracing::warn;
 
@@ -25,9 +26,8 @@ const MAX_SHARDS: u32 = 3;
 
 pub struct SnapchainNode {
     pub consensus_actors: BTreeMap<u32, ActorRef<ConsensusMsg<SnapchainValidatorContext>>>,
-    pub messages_tx_by_shard: HashMap<u32, mpsc::Sender<MempoolMessage>>,
-    pub shard_stores: HashMap<u32, ShardStore>,
-    pub shard_events: HashMap<u32, broadcast::Sender<HubEvent>>,
+    pub shard_stores: HashMap<u32, Stores>,
+    pub shard_senders: HashMap<u32, Senders>,
     pub address: Address,
     statsd_client: StatsdClientWrapper,
 }
@@ -49,10 +49,8 @@ impl SnapchainNode {
 
         let (shard_decision_tx, shard_decision_rx) = mpsc::channel::<ShardChunk>(100);
 
-        let mut shard_messages: HashMap<u32, mpsc::Sender<MempoolMessage>> = HashMap::new();
-
-        let mut shard_stores: HashMap<u32, ShardStore> = HashMap::new();
-        let mut shard_events: HashMap<u32, broadcast::Sender<HubEvent>> = HashMap::new();
+        let mut shard_senders: HashMap<u32, Senders> = HashMap::new();
+        let mut shard_stores: HashMap<u32, Stores> = HashMap::new();
 
         // Create the shard validators
         for shard_id in config.shard_ids() {
@@ -81,20 +79,14 @@ impl SnapchainNode {
                 threshold_params: Default::default(),
             };
             let ctx = SnapchainValidatorContext::new(keypair.clone());
+
             let db = RocksDB::new(format!("{}/shard{}", rocksdb_dir, shard_id).as_str());
             db.open().unwrap();
-            let shard_store = ShardStore::new(db);
-            shard_stores.insert(shard_id, shard_store.clone());
-            let (events_tx, _events_rx) = broadcast::channel::<HubEvent>(100);
-            shard_events.insert(shard_id, events_tx.clone());
-            let engine = ShardEngine::new(
-                shard_id,
-                shard_store,
-                statsd_client.clone(),
-                events_tx.clone(),
-            );
 
-            let messages_tx = engine.messages_tx();
+            let engine = ShardEngine::new(Arc::new(db), shard_id, statsd_client.clone());
+
+            shard_senders.insert(shard_id, engine.get_senders());
+            shard_stores.insert(shard_id, engine.get_stores());
 
             let shard_proposer = ShardProposer::new(
                 validator_address.clone(),
@@ -103,8 +95,6 @@ impl SnapchainNode {
                 shard_decision_tx.clone(),
                 config.propose_value_delay,
             );
-
-            shard_messages.insert(shard_id, messages_tx);
 
             let shard_validator = ShardValidator::new(
                 validator_address.clone(),
@@ -182,11 +172,10 @@ impl SnapchainNode {
 
         Self {
             consensus_actors,
-            messages_tx_by_shard: shard_messages,
             address: validator_address,
-            shard_stores,
             statsd_client,
-            shard_events,
+            shard_senders,
+            shard_stores,
         }
     }
 

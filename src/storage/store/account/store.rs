@@ -280,19 +280,23 @@ pub trait StoreDef: Send + Sync {
     // }
 }
 
-pub struct Store {
-    store_def: Box<dyn StoreDef>,
+#[derive(Clone)]
+pub struct Store<T>
+where
+    T: StoreDef + Clone,
+{
+    store_def: T,
     store_event_handler: Arc<StoreEventHandler>,
     fid_locks: Arc<[Mutex<()>; 4]>,
     db: Arc<RocksDB>,
 }
 
-impl Store {
+impl<T: StoreDef + Clone> Store<T> {
     pub fn new_with_store_def(
         db: Arc<RocksDB>,
         store_event_handler: Arc<StoreEventHandler>,
-        store_def: Box<dyn StoreDef>,
-    ) -> Store {
+        store_def: T,
+    ) -> Store<T> {
         Store {
             store_def,
             store_event_handler,
@@ -306,8 +310,8 @@ impl Store {
         }
     }
 
-    pub fn store_def(&self) -> &dyn StoreDef {
-        self.store_def.as_ref()
+    pub fn store_def(&self) -> T {
+        self.store_def.clone()
     }
 
     pub fn db(&self) -> Arc<RocksDB> {
@@ -962,4 +966,4 @@ impl Store {
 // Note about dispatch - The methods are dispatched to the Store struct, which is a Box<dyn StoreDef>.
 // This means the NodeJS code can pass in any store, and the Rust code will call the correct method
 // for that store
-impl Store {}
+impl<T: StoreDef + Clone> Store<T> {}

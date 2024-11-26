@@ -165,8 +165,8 @@ pub struct ShardStore {
 }
 
 impl ShardStore {
-    pub fn new(db: RocksDB) -> ShardStore {
-        ShardStore { db: Arc::new(db) }
+    pub fn new(db: Arc<RocksDB>) -> ShardStore {
+        ShardStore { db }
     }
 
     pub fn put_shard_chunk(&self, shard_chunk: &ShardChunk) -> Result<(), ShardStorageError> {
