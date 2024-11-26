@@ -1,35 +1,77 @@
+use clap::Parser;
 use ed25519_dalek::{SecretKey, SigningKey};
+use figment::{
+    providers::{Env, Format, Toml},
+    Figment,
+};
 use hex;
 use hex::FromHex;
 use prost::Message as _;
+use serde::{Deserialize, Serialize};
 use snapchain::consensus::proposer::current_time;
 use snapchain::proto::msg as message;
 use snapchain::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 use snapchain::proto::snapchain::Block;
 use snapchain::utils::cli::{compose_message, follow_blocks, send_message};
 use std::collections::HashSet;
+use std::error::Error;
+use std::path::Path;
 use std::time::Duration;
 use std::{env, panic, process};
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tokio::{select, time};
-const STATS_CALCULATION_INTERVAL: Duration = Duration::from_secs(10);
-const NUM_ITERATIONS: u64 = 5;
 
-#[derive(Debug, Clone)]
-struct Scenario {
-    submit_message_rpc_addrs: Vec<String>,
-    follow_blocks_rpc_addr: String,
-    submit_message_interval: Option<Duration>,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SubmitMessageConfig {
+    pub rpc_addrs: Vec<String>,
+
+    #[serde(with = "humantime_serde")]
+    pub interval: Duration,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FollowBlocksConfig {
+    pub rpc_addr: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Config {
+    pub submit_message: SubmitMessageConfig,
+    pub follow_blocks: FollowBlocksConfig,
+
+    #[serde(with = "humantime_serde")]
+    pub stats_calculation_interval: Duration,
+
+    pub num_iterations: u64,
+}
+
+#[derive(Parser)]
+pub struct CliArgs {
+    #[arg(long, help = "Path to the configuration file")]
+    config_path: String,
+}
+
+pub fn load_and_merge_config(config_path: &str) -> Result<Config, Box<dyn Error>> {
+    if !Path::new(config_path).exists() {
+        return Err(format!("Config file not found: {}", config_path).into());
+    }
+
+    let figment = Figment::new()
+        .merge(Toml::file(config_path))
+        .merge(Env::prefixed("PERFTEST_").split("__"));
+
+    let config: Config = figment.extract()?;
+    Ok(config)
 }
 
 fn start_submit_messages(
     messages_tx: mpsc::Sender<message::Message>,
-    scenario: Scenario,
+    config: Config,
 ) -> Vec<tokio::task::JoinHandle<()>> {
     let mut submit_message_handles = vec![];
 
-    for rpc_addr in scenario.submit_message_rpc_addrs {
+    for rpc_addr in config.submit_message.rpc_addrs {
         let messages_tx = messages_tx.clone();
         let private_key = SigningKey::from_bytes(
             &SecretKey::from_hex(
@@ -38,10 +80,7 @@ fn start_submit_messages(
             .unwrap(),
         );
         let submit_message_handle = tokio::spawn(async move {
-            let mut submit_message_timer = match scenario.submit_message_interval {
-                None => None,
-                Some(interval) => Some(time::interval(interval)),
-            };
+            let mut submit_message_timer = time::interval(config.submit_message.interval);
 
             println!("connecting to {}", &rpc_addr);
             let mut client = match SnapchainServiceClient::connect(rpc_addr.clone()).await {
@@ -53,12 +92,7 @@ fn start_submit_messages(
 
             let mut i = 1;
             loop {
-                match &mut submit_message_timer {
-                    None => (),
-                    Some(timer) => {
-                        timer.tick().await;
-                    }
-                };
+                submit_message_timer.tick().await;
                 let text = format!("For benchmarking {}", i);
                 let msg = compose_message(6833, text.as_str(), None, Some(private_key.clone()));
                 let message = send_message(&mut client, &msg).await.unwrap();
@@ -73,7 +107,7 @@ fn start_submit_messages(
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn Error>> {
     env::set_var("RUST_BACKTRACE", "1");
     panic::set_hook(Box::new(|panic_info| {
         eprintln!("Panic occurred: {}", panic_info);
@@ -82,93 +116,73 @@ async fn main() {
         process::exit(1);
     }));
 
-    let scenarios = [
-        // Scenario {
-        //     submit_message_rpc_addrs: vec![
-        //         "http://127.0.0.1:3383".to_string(),
-        //         "http://127.0.0.1:3384".to_string(),
-        //         "http://127.0.0.1:3385".to_string(),
-        //     ],
-        //     follow_blocks_rpc_addr: "http://127.0.0.1:3383".to_string(),
-        //     submit_message_interval: None, // Tight loop for submitting messages, no delay,
-        // },
-        Scenario {
-            submit_message_rpc_addrs: vec![
-                "http://127.0.0.1:3383".to_string(),
-                "http://127.0.0.1:3384".to_string(),
-                "http://127.0.0.1:3385".to_string(),
-            ],
-            follow_blocks_rpc_addr: "http://127.0.0.1:3383".to_string(),
-            submit_message_interval: Some(Duration::from_micros(500)),
-        },
-    ];
+    let cli_args = CliArgs::parse();
+    let cfg = load_and_merge_config(&cli_args.config_path)?;
 
-    for scenario in scenarios {
-        println!("Starting scenario {:#?}", scenario);
-        let (blocks_tx, mut blocks_rx) = mpsc::channel::<Block>(10_000_000);
+    println!("Starting scenario {:#?}", cfg);
+    let (blocks_tx, mut blocks_rx) = mpsc::channel::<Block>(10_000_000);
 
-        let (messages_tx, mut messages_rx) = mpsc::channel::<message::Message>(10_000_000);
-        let submit_message_handles = start_submit_messages(messages_tx, scenario.clone());
+    let (messages_tx, mut messages_rx) = mpsc::channel::<message::Message>(10_000_000);
+    let submit_message_handles = start_submit_messages(messages_tx, cfg.clone());
 
-        let follow_blocks_handle = tokio::spawn(async move {
-            let addr = scenario.follow_blocks_rpc_addr;
-            follow_blocks(addr, blocks_tx).await.unwrap()
-        });
+    let follow_blocks_handle = tokio::spawn(async move {
+        let addr = cfg.follow_blocks.rpc_addr.clone();
+        follow_blocks(addr, blocks_tx).await.unwrap()
+    });
 
-        let start = Instant::now();
-        let mut stats_calculation_timer = time::interval(STATS_CALCULATION_INTERVAL);
-        let mut block_count = 0;
-        let mut num_messages_confirmed = 0;
-        let mut num_messages_submitted = 0;
-        let mut pending_messages = HashSet::new();
-        let mut time_to_confirmation = vec![];
-        let mut block_times = vec![];
-        let mut last_block_time = current_time();
-        let mut iteration = 0;
-        loop {
-            select! {
-                Some(message) = messages_rx.recv() => {
-                    num_messages_submitted += 1;
-                    pending_messages.insert(hex::encode(message.hash));
-                },
-                Some(block) = blocks_rx.recv() => {
-                    let block_timestamp = block.header.as_ref().unwrap().timestamp;
-                    block_count += 1;
-                    block_times.push(block_timestamp - last_block_time);
-                    last_block_time = block_timestamp;
-                    for chunk in &block.shard_chunks {
-                        for tx in &chunk.transactions {
-                            for msg in &tx.user_messages {
-                                let msg_timestamp = msg.data.as_ref().unwrap().timestamp;
-                                time_to_confirmation.push(block_timestamp  - msg_timestamp as u64);
-                                num_messages_confirmed += 1;
-                                pending_messages.remove(&hex::encode(msg.hash.clone()));
-                            }
+    let start = Instant::now();
+    let mut stats_calculation_timer = time::interval(cfg.stats_calculation_interval);
+    let mut block_count = 0;
+    let mut num_messages_confirmed = 0;
+    let mut num_messages_submitted = 0;
+    let mut pending_messages = HashSet::new();
+    let mut time_to_confirmation = vec![];
+    let mut block_times = vec![];
+    let mut last_block_time = current_time();
+    let mut iteration = 0;
+    loop {
+        select! {
+            Some(message) = messages_rx.recv() => {
+                num_messages_submitted += 1;
+                pending_messages.insert(hex::encode(message.hash));
+            },
+            Some(block) = blocks_rx.recv() => {
+                let block_timestamp = block.header.as_ref().unwrap().timestamp;
+                block_count += 1;
+                block_times.push(block_timestamp - last_block_time);
+                last_block_time = block_timestamp;
+                for chunk in &block.shard_chunks {
+                    for tx in &chunk.transactions {
+                        for msg in &tx.user_messages {
+                            let msg_timestamp = msg.data.as_ref().unwrap().timestamp;
+                            time_to_confirmation.push(block_timestamp  - msg_timestamp as u64);
+                            num_messages_confirmed += 1;
+                            pending_messages.remove(&hex::encode(msg.hash.clone()));
                         }
                     }
                 }
-                time = stats_calculation_timer.tick() => {
-                    let avg_time_to_confirmation = if time_to_confirmation.len() > 0 {time_to_confirmation.iter().sum::<u64>() as f64 / time_to_confirmation.len() as f64} else {0f64};
-                    let max_time_to_confirmation = if time_to_confirmation.len() > 0 {time_to_confirmation.clone().into_iter().max().unwrap()} else {0};
-                    let avg_block_time = if block_times.len() > 0 {block_times.iter().sum::<u64>() as f64 / block_times.len() as f64} else {0f64};
-                    let max_block_time = if block_times.len() > 0 {block_times.clone().into_iter().max().unwrap()} else {0};
-                    let time_elapsed = time.duration_since(start).as_secs();
-                    let confirmed_msgs_per_sec = num_messages_confirmed as f64 / STATS_CALCULATION_INTERVAL.as_secs_f64();
-                    let submitted_msgs_per_sec = num_messages_submitted as f64 / STATS_CALCULATION_INTERVAL.as_secs_f64();
-                    println!("{:#?} (secs): Blocks produced: {:#?}, Msgs submitted/sec: {:#?}, Msgs confirmed/sec: {:#?}, Avg time to confirmation (secs): {:#?}, Max time to confirmation (secs): {:#?}, Avg block time (secs): {:#?}, Max block time (secs): {:#?}", time_elapsed, block_count, submitted_msgs_per_sec, confirmed_msgs_per_sec, avg_time_to_confirmation, max_time_to_confirmation, avg_block_time, max_block_time);
-                    block_count = 0;
-                    num_messages_confirmed= 0;
-                    num_messages_submitted = 0;
-                    time_to_confirmation.clear();
-                    block_times.clear();
-                    iteration += 1;
-                    if iteration > NUM_ITERATIONS {
-                        for submit_message_handle in submit_message_handles {
-                            submit_message_handle.abort();
-                        }
-                        follow_blocks_handle.abort();
-                        break;
+            }
+            time = stats_calculation_timer.tick() => {
+                let avg_time_to_confirmation = if time_to_confirmation.len() > 0 {time_to_confirmation.iter().sum::<u64>() as f64 / time_to_confirmation.len() as f64} else {0f64};
+                let max_time_to_confirmation = if time_to_confirmation.len() > 0 {time_to_confirmation.clone().into_iter().max().unwrap()} else {0};
+                let avg_block_time = if block_times.len() > 0 {block_times.iter().sum::<u64>() as f64 / block_times.len() as f64} else {0f64};
+                let max_block_time = if block_times.len() > 0 {block_times.clone().into_iter().max().unwrap()} else {0};
+                let time_elapsed = time.duration_since(start).as_secs();
+                let confirmed_msgs_per_sec = num_messages_confirmed as f64 / cfg.stats_calculation_interval.as_secs_f64();
+                let submitted_msgs_per_sec = num_messages_submitted as f64 / cfg.stats_calculation_interval.as_secs_f64();
+                println!("{:#?} (secs): Blocks produced: {:#?}, Msgs submitted/sec: {:#?}, Msgs confirmed/sec: {:#?}, Avg time to confirmation (secs): {:#?}, Max time to confirmation (secs): {:#?}, Avg block time (secs): {:#?}, Max block time (secs): {:#?}", time_elapsed, block_count, submitted_msgs_per_sec, confirmed_msgs_per_sec, avg_time_to_confirmation, max_time_to_confirmation, avg_block_time, max_block_time);
+                block_count = 0;
+                num_messages_confirmed= 0;
+                num_messages_submitted = 0;
+                time_to_confirmation.clear();
+                block_times.clear();
+                iteration += 1;
+                if iteration > cfg.num_iterations {
+                    for submit_message_handle in submit_message_handles {
+                        submit_message_handle.abort();
                     }
+                    follow_blocks_handle.abort();
+                    break Ok(());
                 }
             }
         }

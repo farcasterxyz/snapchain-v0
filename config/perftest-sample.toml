@@ -1,0 +1,13 @@
+stats_calculation_interval = "2s"
+num_iterations = 120
+
+[submit_message]
+rpc_addrs = [
+    "http://127.0.0.11:3383",
+    "http://127.0.0.12:3384",
+    "http://127.0.0.13:3385"
+]
+interval = "1000ms"
+
+[follow_blocks]
+rpc_addr = "http://127.0.0.11:3383"
