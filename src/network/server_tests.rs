@@ -11,6 +11,7 @@ mod tests {
     use crate::storage::db::{self, RocksDB, RocksDbTransactionBatch};
     use crate::storage::store::engine::{Senders, Stores};
     use crate::storage::store::BlockStore;
+    use crate::utils::statsd_wrapper::StatsdClientWrapper;
     use futures::StreamExt;
     use tempfile;
     use tokio::sync::{broadcast, mpsc};
@@ -88,6 +89,11 @@ mod tests {
         HashMap<u32, Senders>,
         MySnapchainService,
     ) {
+        let statsd_client = StatsdClientWrapper::new(
+            cadence::StatsdClient::builder("", cadence::NopMetricSink {}).build(),
+            true,
+        );
+
         let db1 = make_db("b1.db");
         let db2 = make_db("b2.db");
 
@@ -104,7 +110,12 @@ mod tests {
         (
             stores.clone(),
             senders.clone(),
-            MySnapchainService::new(BlockStore::new(make_db("blocks.db")), stores, senders),
+            MySnapchainService::new(
+                BlockStore::new(make_db("blocks.db")),
+                stores,
+                senders,
+                statsd_client,
+            ),
         )
     }
 
