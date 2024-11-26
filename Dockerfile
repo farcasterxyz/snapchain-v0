@@ -27,7 +27,7 @@ COPY Cargo.toml build.rs ./
 COPY src ./src
 
 ENV RUST_BACKTRACE=full
-RUN cargo build
+RUN cargo build --release --bins
 
 ## Pre-generate some configurations we can use
 # TOOD: consider doing something different here
