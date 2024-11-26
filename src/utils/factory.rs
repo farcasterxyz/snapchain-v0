@@ -41,6 +41,7 @@ pub mod messages_factory {
 
     pub fn create_message_with_data(
         fid: u32,
+        msg_type: MessageType,
         body: message::message_data::Body,
         timestamp: Option<u32>,
         private_key: Option<SigningKey>,
@@ -56,12 +57,6 @@ pub mod messages_factory {
         let network = FarcasterNetwork::Mainnet;
 
         let timestamp = timestamp.unwrap_or_else(|| farcaster_time());
-
-        let msg_type = match &body {
-            message::message_data::Body::CastAddBody(_) => MessageType::CastAdd,
-            message::message_data::Body::CastRemoveBody(_) => MessageType::CastRemove,
-            _ => panic!("Invalid message type"),
-        };
 
         let msg_data = MessageData {
             fid: fid as u64,
@@ -107,6 +102,7 @@ pub mod messages_factory {
             };
             create_message_with_data(
                 fid,
+                MessageType::CastAdd,
                 message::message_data::Body::CastAddBody(cast_add),
                 timestamp,
                 private_key,
@@ -124,7 +120,77 @@ pub mod messages_factory {
             };
             create_message_with_data(
                 fid,
+                MessageType::CastRemove,
                 message::message_data::Body::CastRemoveBody(cast_remove),
+                timestamp,
+                private_key,
+            )
+        }
+    }
+
+    pub mod links {
+        use message::{link_body::Target, LinkBody, LinkCompactStateBody};
+
+        use super::*;
+
+        pub fn create_link_add(
+            fid: u32,
+            link_type: String,
+            target_fid: u32,
+            timestamp: Option<u32>,
+            private_key: Option<SigningKey>,
+        ) -> message::Message {
+            let link_body = LinkBody {
+                r#type: link_type,
+                display_timestamp: None,
+                target: Some(Target::TargetFid(target_fid as u64)),
+            };
+            create_message_with_data(
+                fid,
+                MessageType::LinkAdd,
+                message::message_data::Body::LinkBody(link_body),
+                timestamp,
+                private_key,
+            )
+        }
+
+        pub fn create_link_remove(
+            fid: u32,
+            link_type: String,
+            target_fid: u32,
+            timestamp: Option<u32>,
+            private_key: Option<SigningKey>,
+        ) -> crate::proto::msg::Message {
+            let link_body = LinkBody {
+                r#type: link_type,
+                display_timestamp: None,
+                target: Some(Target::TargetFid(target_fid as u64)),
+            };
+            create_message_with_data(
+                fid,
+                MessageType::LinkRemove,
+                message::message_data::Body::LinkBody(link_body),
+                timestamp,
+                private_key,
+            )
+        }
+
+        pub fn create_link_compact_state(
+            fid: u32,
+            link_type: String,
+            target_fid: u32,
+            timestamp: Option<u32>,
+            private_key: Option<SigningKey>,
+        ) -> crate::proto::msg::Message {
+            let link_compact_state_body = LinkCompactStateBody {
+                r#type: link_type,
+                target_fids: vec![target_fid as u64],
+            };
+
+            create_message_with_data(
+                fid,
+                MessageType::LinkCompactState,
+                message::message_data::Body::LinkCompactStateBody(link_compact_state_body),
                 timestamp,
                 private_key,
             )
