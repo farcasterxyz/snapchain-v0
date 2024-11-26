@@ -127,6 +127,12 @@ impl Senders {
     }
 }
 
+struct TransactionCounts {
+    transactions: u64,
+    user_messages: u64,
+    system_messages: u64,
+}
+
 pub struct ShardEngine {
     shard_id: u32,
     pub db: Arc<RocksDB>,
@@ -161,6 +167,20 @@ impl ShardEngine {
         self.senders.messages_tx.clone()
     }
 
+    // statsd
+    fn count(&self, key: &str, count: u64) {
+        let key = format!("engine.{}", key);
+        self.statsd_client
+            .count_with_shard(self.shard_id, key.as_str(), count);
+    }
+
+    // statsd
+    fn gauge(&self, key: &str, value: u64) {
+        let key = format!("engine.{}", key);
+        self.statsd_client
+            .gauge_with_shard(self.shard_id, key.as_str(), value);
+    }
+
     pub fn get_stores(&self) -> Stores {
         self.stores.clone()
     }
@@ -188,11 +208,19 @@ impl ShardEngine {
             }
         }
 
+        self.count("prepare_proposal.recv_messages", messages.len() as u64);
+
         let mut snapchain_txns = self.create_transactions_from_mempool(messages);
         for snapchain_txn in &mut snapchain_txns {
             let (account_root, _events) = self.replay_snapchain_txn(&snapchain_txn, txn_batch)?;
             snapchain_txn.account_root = account_root;
         }
+
+        let count = Self::txn_counts(&snapchain_txns);
+
+        self.count("prepare_proposal.transactions", count.transactions);
+        self.count("prepare_proposal.user_messages", count.user_messages);
+        self.count("prepare_proposal.system_messages", count.system_messages);
 
         let new_root_hash = self.stores.trie.root_hash()?;
         let result = ShardStateChange {
@@ -248,8 +276,7 @@ impl ShardEngine {
         // TODO: this should probably operate automatically via drop trait
         self.stores.trie.reload(&self.db).unwrap();
 
-        self.statsd_client
-            .count_with_shard(self.shard_id, "propose", 1);
+        self.count("propose.invoked", 1);
         result
     }
 
@@ -426,15 +453,11 @@ impl ShardEngine {
         self.stores.trie.reload(&self.db).unwrap();
 
         if result {
-            self.statsd_client
-                .count_with_shard(self.shard_id, "validate.true", 1);
-            self.statsd_client
-                .count_with_shard(self.shard_id, "validate.false", 0);
+            self.count("validate.true", 1);
+            self.count("validate.false", 0);
         } else {
-            self.statsd_client
-                .count_with_shard(self.shard_id, "validate.false", 1);
-            self.statsd_client
-                .count_with_shard(self.shard_id, "validate.true", 0);
+            self.count("validate.false", 1);
+            self.count("validate.true", 0);
         }
 
         result
@@ -464,8 +487,7 @@ impl ShardEngine {
     }
 
     fn emit_commit_metrics(&mut self, shard_chunk: &&ShardChunk) -> Result<(), EngineError> {
-        self.statsd_client
-            .count_with_shard(self.shard_id, "commit", 1);
+        self.count("commit.invoked", 1);
 
         let block_number = &shard_chunk
             .header
@@ -475,42 +497,16 @@ impl ShardEngine {
             .unwrap()
             .block_number;
 
-        self.statsd_client
-            .gauge_with_shard(self.shard_id, "block_height", *block_number);
+        self.gauge("block_height", *block_number);
 
         let trie_size = self.stores.trie.items()?;
+        self.gauge("trie.num_items", trie_size as u64);
 
-        self.statsd_client
-            .gauge_with_shard(self.shard_id, "trie.num_items", trie_size as u64);
+        let counts = Self::txn_counts(&shard_chunk.transactions);
 
-        let (user_count, system_count) =
-            shard_chunk
-                .transactions
-                .iter()
-                .fold((0, 0), |(user_count, system_count), tx| {
-                    (
-                        user_count + tx.user_messages.len(),
-                        system_count + tx.system_messages.len(),
-                    )
-                });
-
-        self.statsd_client.count_with_shard(
-            self.shard_id,
-            "committed_transactions",
-            shard_chunk.transactions.len() as u64,
-        );
-
-        self.statsd_client.count_with_shard(
-            self.shard_id,
-            "committed_user_messages",
-            user_count as u64,
-        );
-
-        self.statsd_client.count_with_shard(
-            self.shard_id,
-            "committed_system_messages",
-            system_count as u64,
-        );
+        self.count("commit.transactions", counts.transactions);
+        self.count("commit.user_messages", counts.user_messages);
+        self.count("commit.system_messages", counts.system_messages);
 
         Ok(())
     }
@@ -571,6 +567,22 @@ impl ShardEngine {
         self.stores
             .onchain_event_store
             .get_onchain_events(event_type, fid)
+    }
+
+    fn txn_counts(txns: &[Transaction]) -> TransactionCounts {
+        let (user_count, system_count) =
+            txns.iter().fold((0, 0), |(user_count, system_count), tx| {
+                (
+                    user_count + tx.user_messages.len(),
+                    system_count + tx.system_messages.len(),
+                )
+            });
+
+        TransactionCounts {
+            transactions: txns.len() as u64,
+            user_messages: user_count as u64,
+            system_messages: system_count as u64,
+        }
     }
 }
 

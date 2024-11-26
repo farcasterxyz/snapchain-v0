@@ -12,6 +12,7 @@ use crate::storage::db::{PageOptions, RocksDB};
 use crate::storage::store::engine::{MempoolMessage, Senders, Stores};
 use crate::storage::store::shard::ShardStore;
 use crate::storage::store::BlockStore;
+use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use alloy::rpc::types::request;
 use futures::stream::select_all;
 use futures_util::pin_mut;
@@ -27,6 +28,7 @@ pub struct MySnapchainService {
     shard_stores: HashMap<u32, Stores>,
     shard_senders: HashMap<u32, Senders>,
     message_tx: mpsc::Sender<MempoolMessage>,
+    statsd_client: StatsdClientWrapper,
 }
 
 impl MySnapchainService {
@@ -34,6 +36,7 @@ impl MySnapchainService {
         block_store: BlockStore,
         shard_stores: HashMap<u32, Stores>,
         shard_senders: HashMap<u32, Senders>,
+        statsd_client: StatsdClientWrapper,
     ) -> Self {
         // TODO(aditi): This logic will change once a mempool exists
         let message_tx = shard_senders.get(&1u32).unwrap().messages_tx.clone();
@@ -43,6 +46,7 @@ impl MySnapchainService {
             shard_senders,
             shard_stores,
             message_tx,
+            statsd_client,
         }
     }
 }
@@ -53,18 +57,35 @@ impl SnapchainService for MySnapchainService {
         &self,
         request: Request<message::Message>,
     ) -> Result<Response<message::Message>, Status> {
-        let hash = request.get_ref().hash.encode_hex::<String>();
+        let start_time = std::time::Instant::now();
 
+        let hash = request.get_ref().hash.encode_hex::<String>();
         info!(hash, "Received call to [submit_message] RPC");
 
         let message = request.into_inner();
 
-        self.message_tx
+        let result = self
+            .message_tx
             .send(MempoolMessage::UserMessage(message.clone()))
-            .await
-            .unwrap(); // Do we need clone here? I think yes?
+            .await;
+
+        match result {
+            Ok(_) => {
+                self.statsd_client.count("rpc.submit_message.success", 1);
+            }
+            Err(_) => {
+                self.statsd_client.count("rpc.submit_message.failure", 1);
+                return Err(Status::internal("failed to submit message"));
+            }
+        }
+
+        let elapsed = start_time.elapsed().as_millis();
 
         let response = Response::new(message);
+
+        self.statsd_client
+            .time("rpc.submit_message.duration", elapsed as u64);
+
         Ok(response)
     }
 

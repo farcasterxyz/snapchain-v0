@@ -1,7 +1,6 @@
 use ed25519_dalek::{SecretKey, SigningKey};
 use hex;
 use hex::FromHex;
-use message::MessageData;
 use prost::Message as _;
 use snapchain::consensus::proposer::current_time;
 use snapchain::proto::msg as message;
@@ -10,6 +9,7 @@ use snapchain::proto::snapchain::Block;
 use snapchain::utils::cli::{compose_message, follow_blocks, send_message};
 use std::collections::HashSet;
 use std::time::Duration;
+use std::{env, panic, process};
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tokio::{select, time};
@@ -24,7 +24,7 @@ struct Scenario {
 }
 
 fn start_submit_messages(
-    messages_tx: tokio::sync::mpsc::Sender<message::Message>,
+    messages_tx: mpsc::Sender<message::Message>,
     scenario: Scenario,
 ) -> Vec<tokio::task::JoinHandle<()>> {
     let mut submit_message_handles = vec![];
@@ -42,9 +42,14 @@ fn start_submit_messages(
                 None => None,
                 Some(interval) => Some(time::interval(interval)),
             };
-            let mut client = SnapchainServiceClient::connect(rpc_addr.clone())
-                .await
-                .unwrap();
+
+            println!("connecting to {}", &rpc_addr);
+            let mut client = match SnapchainServiceClient::connect(rpc_addr.clone()).await {
+                Ok(client) => client,
+                Err(e) => {
+                    panic!("Error connecting to {}: {}", &rpc_addr, e);
+                }
+            };
 
             let mut i = 1;
             loop {
@@ -54,17 +59,9 @@ fn start_submit_messages(
                         timer.tick().await;
                     }
                 };
-                let message = send_message(
-                    &mut client,
-                    &compose_message(
-                        6833,
-                        format!("For benchmarking {}", i).as_str(),
-                        None,
-                        Some(private_key.clone()),
-                    ),
-                )
-                .await
-                .unwrap();
+                let text = format!("For benchmarking {}", i);
+                let msg = compose_message(6833, text.as_str(), None, Some(private_key.clone()));
+                let message = send_message(&mut client, &msg).await.unwrap();
                 messages_tx.send(message).await.unwrap();
                 i += 1;
             }
@@ -77,6 +74,14 @@ fn start_submit_messages(
 
 #[tokio::main]
 async fn main() {
+    env::set_var("RUST_BACKTRACE", "1");
+    panic::set_hook(Box::new(|panic_info| {
+        eprintln!("Panic occurred: {}", panic_info);
+        let backtrace = std::backtrace::Backtrace::capture();
+        eprintln!("Stack trace:\n{}", backtrace);
+        process::exit(1);
+    }));
+
     let scenarios = [
         // Scenario {
         //     submit_message_rpc_addrs: vec![
@@ -134,8 +139,7 @@ async fn main() {
                     for chunk in &block.shard_chunks {
                         for tx in &chunk.transactions {
                             for msg in &tx.user_messages {
-                                let msg_data = MessageData::decode(msg.data_bytes.as_ref().unwrap().as_slice()).unwrap();
-                                let msg_timestamp = msg_data.timestamp;
+                                let msg_timestamp = msg.data.as_ref().unwrap().timestamp;
                                 time_to_confirmation.push(block_timestamp  - msg_timestamp as u64);
                                 num_messages_confirmed += 1;
                                 pending_messages.remove(&hex::encode(msg.hash.clone()));
