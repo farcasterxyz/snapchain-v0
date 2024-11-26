@@ -6,13 +6,16 @@ use super::{make_fid_key, StoreEventHandler};
 use crate::core::error::HubError;
 use crate::proto::hub_event::hub_event::Body;
 use crate::proto::hub_event::{HubEvent, HubEventType, MergeOnChainEventBody};
-use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
+use crate::proto::onchain_event::{on_chain_event, OnChainEvent, OnChainEventType};
 use crate::storage::constants::{OnChainEventPostfix, RootPrefix, PAGE_SIZE_MAX};
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch, RocksdbError};
 use crate::storage::util::increment_vec_u8;
 use thiserror::Error;
 
-static PAGE_SIZE: usize = 100;
+static PAGE_SIZE: usize = 1000;
+
+const LEGACY_STORAGE_UNIT_CUTOFF_TIMESTAMP: u32 = 1724889600;
+const ONE_YEAR_IN_SECONDS: u32 = 365 * 24 * 60 * 60;
 
 #[derive(Error, Debug)]
 pub enum OnchainEventStorageError {
@@ -21,6 +24,9 @@ pub enum OnchainEventStorageError {
 
     #[error(transparent)]
     HubError(#[from] HubError),
+
+    #[error("Invalid event type calculating storage slots ")]
+    InvalidStorageRentEventType,
 }
 
 /** A page of messages returned from various APIs */
@@ -105,6 +111,69 @@ pub fn get_onchain_events(
     })
 }
 
+#[derive(Clone, Debug)]
+pub struct StorageSlot {
+    pub legacy_units: u32,
+    pub units: u32,
+    pub invalidate_at: u32,
+}
+
+impl StorageSlot {
+    pub fn new(legacy_units: u32, units: u32, invalidate_at: u32) -> StorageSlot {
+        StorageSlot {
+            legacy_units,
+            units,
+            invalidate_at,
+        }
+    }
+
+    pub fn from_event(
+        onchain_event: &OnChainEvent,
+    ) -> Result<StorageSlot, OnchainEventStorageError> {
+        if let Some(body) = &onchain_event.body {
+            return match body {
+                on_chain_event::Body::StorageRentEventBody(storage_rent_event) => {
+                    let slot;
+                    if onchain_event.block_timestamp < LEGACY_STORAGE_UNIT_CUTOFF_TIMESTAMP as u64 {
+                        slot = StorageSlot::new(
+                            storage_rent_event.units,
+                            0,
+                            onchain_event.block_timestamp as u32 + (ONE_YEAR_IN_SECONDS * 2),
+                        );
+                    } else {
+                        slot = StorageSlot::new(
+                            0,
+                            storage_rent_event.units,
+                            onchain_event.block_timestamp as u32 + ONE_YEAR_IN_SECONDS,
+                        );
+                    };
+                    Ok(slot)
+                }
+                _ => Err(OnchainEventStorageError::InvalidStorageRentEventType),
+            };
+        }
+        Err(OnchainEventStorageError::InvalidStorageRentEventType)
+    }
+
+    pub fn is_active(&self) -> bool {
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u32;
+        self.invalidate_at < current_time
+    }
+
+    pub fn merge(&mut self, other: &StorageSlot) -> bool {
+        if !other.is_active() {
+            return false;
+        }
+        self.legacy_units += other.legacy_units;
+        self.units += other.units;
+        self.invalidate_at = std::cmp::min(self.invalidate_at, other.invalidate_at);
+        true
+    }
+}
+
 #[derive(Clone)]
 pub struct OnchainEventStore {
     db: Arc<RocksDB>,
@@ -166,5 +235,17 @@ impl OnchainEventStore {
         }
 
         Ok(onchain_events)
+    }
+
+    pub fn get_storage_slot_for_fid(
+        &self,
+        fid: u32,
+    ) -> Result<StorageSlot, OnchainEventStorageError> {
+        let rent_events = self.get_onchain_events(OnChainEventType::EventTypeStorageRent, fid)?;
+        let mut storage_slot = StorageSlot::new(0, 0, 0);
+        for rent_event in rent_events {
+            storage_slot.merge(&StorageSlot::from_event(&rent_event)?);
+        }
+        Ok(storage_slot)
     }
 }

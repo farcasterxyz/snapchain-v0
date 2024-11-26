@@ -9,8 +9,9 @@ use crate::proto::rpc::{
     BlocksRequest, BlocksResponse, ShardChunksRequest, ShardChunksResponse, SubscribeRequest,
 };
 use crate::storage::db::{PageOptions, RocksDB};
-use crate::storage::store::engine::{MempoolMessage, Senders, Stores};
+use crate::storage::store::engine::{MempoolMessage, Senders};
 use crate::storage::store::shard::ShardStore;
+use crate::storage::store::stores::Stores;
 use crate::storage::store::BlockStore;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use alloy::rpc::types::request;

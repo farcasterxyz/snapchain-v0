@@ -9,6 +9,7 @@ mod tests {
     use crate::storage::db;
     use crate::storage::db::RocksDbTransactionBatch;
     use crate::storage::store::engine::{MempoolMessage, ShardEngine, ShardStateChange};
+    use crate::storage::store::stores::{Limits, StoreLimits};
     use crate::storage::trie::merkle_trie::TrieKey;
     use crate::utils::factory::{events_factory, messages_factory};
     use crate::utils::statsd_wrapper::StatsdClientWrapper;
@@ -29,7 +30,15 @@ mod tests {
         let db = db::RocksDB::new(db_path.to_str().unwrap());
         db.open().unwrap();
 
-        (ShardEngine::new(Arc::new(db), 1, statsd_client), dir)
+        let test_limits = StoreLimits {
+            limits: Limits::for_test(),
+            legacy_limits: Limits::zero(),
+        };
+
+        (
+            ShardEngine::new(Arc::new(db), 1, test_limits, statsd_client),
+            dir,
+        )
     }
 
     fn enable_logging() {

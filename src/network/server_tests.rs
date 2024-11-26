@@ -9,7 +9,8 @@ mod tests {
     use crate::proto::rpc::snapchain_service_server::SnapchainService;
     use crate::proto::rpc::SubscribeRequest;
     use crate::storage::db::{self, RocksDB, RocksDbTransactionBatch};
-    use crate::storage::store::engine::{Senders, Stores};
+    use crate::storage::store::engine::Senders;
+    use crate::storage::store::stores::Stores;
     use crate::storage::store::BlockStore;
     use crate::utils::statsd_wrapper::StatsdClientWrapper;
     use futures::StreamExt;
