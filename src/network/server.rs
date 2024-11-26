@@ -171,8 +171,9 @@ impl SnapchainService for MySnapchainService {
                 .unwrap();
 
                 for event in old_events.events {
-                    // TODO(aditi): Fix error handling
-                    server_tx.send(Ok(event)).await.unwrap();
+                    if let Err(err) = server_tx.send(Ok(event)).await {
+                        return Err(Status::from_error(Box::new(err)));
+                    }
                 }
 
                 page_token = old_events.next_page_token;
