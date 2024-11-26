@@ -420,6 +420,18 @@ impl ShardEngine {
             self.events_tx.send(event);
         }
         self.trie.reload(&self.db).unwrap();
+
+        self.emit_commit_metrics(&shard_chunk);
+
+        match self.shard_store.put_shard_chunk(shard_chunk) {
+            Err(err) => {
+                error!("Unable to write shard chunk to store {}", err)
+            }
+            Ok(()) => {}
+        }
+    }
+
+    fn emit_commit_metrics(&mut self, shard_chunk: &&ShardChunk) -> Result<(), EngineError> {
         self.statsd_client
             .count_with_shard(self.shard_id, "commit", 1);
 
@@ -430,14 +442,45 @@ impl ShardEngine {
             .height
             .unwrap()
             .block_number;
+
         self.statsd_client
             .gauge_with_shard(self.shard_id, "block_height", *block_number);
-        match self.shard_store.put_shard_chunk(shard_chunk) {
-            Err(err) => {
-                error!("Unable to write shard chunk to store {}", err)
-            }
-            Ok(()) => {}
-        }
+
+        let trie_size = self.trie.items()?;
+
+        self.statsd_client
+            .gauge_with_shard(self.shard_id, "trie.num_items", trie_size as u64);
+
+        let (user_count, system_count) =
+            shard_chunk
+                .transactions
+                .iter()
+                .fold((0, 0), |(user_count, system_count), tx| {
+                    (
+                        user_count + tx.user_messages.len(),
+                        system_count + tx.system_messages.len(),
+                    )
+                });
+
+        self.statsd_client.count_with_shard(
+            self.shard_id,
+            "committed_transactions",
+            shard_chunk.transactions.len() as u64,
+        );
+
+        self.statsd_client.count_with_shard(
+            self.shard_id,
+            "committed_user_messages",
+            user_count as u64,
+        );
+
+        self.statsd_client.count_with_shard(
+            self.shard_id,
+            "committed_system_messages",
+            system_count as u64,
+        );
+
+        Ok(())
     }
 
     pub fn commit_shard_chunk(&mut self, shard_chunk: &ShardChunk) {
