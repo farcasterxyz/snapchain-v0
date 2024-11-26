@@ -2,20 +2,18 @@
 mod tests {
     use std::sync::Arc;
 
-    use crate::proto::hub_event::{HubEvent, MergeMessageBody};
+    use crate::proto::hub_event::HubEvent;
     use crate::proto::msg as message;
     use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
     use crate::proto::snapchain::{Height, ShardChunk, ShardHeader, Transaction};
     use crate::storage::db;
     use crate::storage::db::RocksDbTransactionBatch;
     use crate::storage::store::engine::{MempoolMessage, ShardEngine, ShardStateChange};
-    use crate::storage::store::shard::ShardStore;
     use crate::storage::trie::merkle_trie::TrieKey;
     use crate::utils::factory::{events_factory, messages_factory};
     use crate::utils::statsd_wrapper::StatsdClientWrapper;
     use prost::Message as _;
     use tempfile;
-    use tokio::sync::broadcast;
     use tracing_subscriber::EnvFilter;
 
     const FID_FOR_TEST: u32 = 1234;
@@ -306,6 +304,52 @@ mod tests {
             engine.trie_key_exists(&TrieKey::for_message(&delete_cast)),
             true
         );
+    }
+
+    #[tokio::test]
+    async fn test_commit_link_messages() {
+        let timestamp = messages_factory::farcaster_time();
+        let target_fid = 15;
+        let (mut engine, _tmpdir) = new_engine();
+
+        let link_add = messages_factory::links::create_link_add(
+            FID_FOR_TEST,
+            "follow".to_string(),
+            target_fid,
+            Some(timestamp),
+            None,
+        );
+
+        commit_message(&mut engine, &link_add).await;
+
+        let link_result = engine.get_links_by_fid(FID_FOR_TEST);
+        assert_eq!(1, link_result.unwrap().messages_bytes.len());
+
+        let link_remove = messages_factory::links::create_link_remove(
+            FID_FOR_TEST,
+            "follow".to_string(),
+            target_fid,
+            Some(timestamp + 1),
+            None,
+        );
+
+        commit_message(&mut engine, &link_remove).await;
+
+        let link_result = engine.get_links_by_fid(FID_FOR_TEST);
+        assert_eq!(0, link_result.unwrap().messages_bytes.len());
+
+        let link_compact_state = messages_factory::links::create_link_compact_state(
+            FID_FOR_TEST,
+            "follow".to_string(),
+            target_fid,
+            Some(timestamp + 1),
+            None,
+        );
+
+        commit_message(&mut engine, &link_compact_state).await;
+
+        let link_result = engine.get_link_compact_state_messages_by_fid(FID_FOR_TEST);
+        assert_eq!(1, link_result.unwrap().messages_bytes.len());
     }
 
     #[tokio::test]

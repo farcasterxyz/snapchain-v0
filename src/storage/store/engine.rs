@@ -1,8 +1,9 @@
-use super::account::{CastStoreDef, OnchainEventStorageError};
+use super::account::{CastStoreDef, LinkStore, OnchainEventStorageError};
 use super::shard::ShardStore;
 use crate::core::error::HubError;
 use crate::core::types::Height;
 use crate::proto::hub_event::HubEvent;
+use crate::proto::msg::Message;
 use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
 use crate::proto::{hub_event, msg as message, snapchain};
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch};
@@ -89,6 +90,7 @@ pub struct ShardStateChange {
 pub struct Stores {
     pub shard_store: ShardStore,
     pub cast_store: Store<CastStoreDef>,
+    pub link_store: Store<LinkStore>,
     pub onchain_event_store: OnchainEventStore,
     pub(crate) trie: merkle_trie::MerkleTrie,
 }
@@ -101,11 +103,13 @@ impl Stores {
         let event_handler = StoreEventHandler::new(None, None, None);
         let shard_store = ShardStore::new(db.clone());
         let cast_store = CastStore::new(db.clone(), event_handler.clone(), 100);
+        let link_store = LinkStore::new(db.clone(), event_handler.clone(), 100);
         let onchain_event_store = OnchainEventStore::new(db.clone(), event_handler.clone());
         Stores {
             trie,
             shard_store,
             cast_store,
+            link_store,
             onchain_event_store,
         }
     }
@@ -380,14 +384,14 @@ impl ShardEngine {
         let mt = MessageType::try_from(data.r#type).or(Err(EngineError::InvalidMessageType))?;
 
         let event = match mt {
-            MessageType::CastAdd => self
+            MessageType::CastAdd | MessageType::CastRemove => self
                 .stores
                 .cast_store
                 .merge(msg, txn_batch)
                 .map_err(EngineError::new_store_error(msg.hash.clone())),
-            MessageType::CastRemove => self
+            MessageType::LinkAdd | MessageType::LinkRemove | MessageType::LinkCompactState => self
                 .stores
-                .cast_store
+                .link_store
                 .merge(msg, txn_batch)
                 .map_err(EngineError::new_store_error(msg.hash.clone())),
             unhandled_type => {
@@ -557,6 +561,21 @@ impl ShardEngine {
 
     pub fn get_casts_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
         CastStore::get_cast_adds_by_fid(&self.stores.cast_store, fid, &PageOptions::default())
+    }
+
+    pub fn get_links_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
+        self.stores
+            .link_store
+            .get_adds_by_fid::<fn(&Message) -> bool>(fid, &PageOptions::default(), None)
+    }
+
+    pub fn get_link_compact_state_messages_by_fid(
+        &self,
+        fid: u32,
+    ) -> Result<MessagesPage, HubError> {
+        self.stores
+            .link_store
+            .get_compact_state_messages_by_fid(fid, &PageOptions::default())
     }
 
     pub fn get_onchain_events(

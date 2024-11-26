@@ -1,27 +1,26 @@
+use tracing::warn;
+
+use super::{
+    get_many_messages_as_bytes, get_message, make_fid_key, make_message_primary_key, make_user_key,
+    store::{Store, StoreDef},
+    MessagesPage, StoreEventHandler, PAGE_SIZE_MAX, TS_HASH_LENGTH,
+};
+use crate::{
+    core::error::HubError,
+    proto::msg::{link_body::Target, SignatureScheme},
+    storage::util::vec_to_u8_24,
+};
+use crate::{proto::msg::message_data::Body, storage::db::PageOptions};
+use crate::{proto::msg::LinkBody, storage::util::increment_vec_u8};
+use crate::{
+    proto::msg::MessageData,
+    storage::constants::{RootPrefix, UserPostfix},
+};
+use crate::{
+    proto::msg::{Message, MessageType},
+    storage::db::{RocksDB, RocksDbTransactionBatch},
+};
 use std::{borrow::Borrow, convert::TryInto, sync::Arc};
-
-use crate::db::{RocksDB, RocksDbTransactionBatch};
-use crate::logger::LOGGER;
-use crate::protos::link_body::Target;
-use crate::protos::message_data::Body;
-use crate::protos::{message_data, LinkBody, Message, MessageData, MessageType};
-use crate::store::{
-    get_message, get_page_options, get_store, hub_error_to_js_throw, make_fid_key, make_user_key,
-    message, utils, HubError, IntoI32, IntoU8, MessagesPage, PageOptions, RootPrefix, Store,
-    StoreDef, StoreEventHandler, UserPostfix, PAGE_SIZE_MAX, TS_HASH_LENGTH,
-};
-use crate::{protos, THREAD_POOL};
-use neon::prelude::{JsPromise, JsString};
-use neon::types::buffer::TypedArray;
-use neon::{
-    context::{Context, FunctionContext},
-    result::JsResult,
-    types::{JsBox, JsNumber},
-};
-use prost::Message as _;
-use slog::{o, warn};
-
-use super::deferred_settle_messages;
 
 /**
  * LinkStore persists Link Messages in RocksDB using a two-phase CRDT set to guarantee
@@ -45,6 +44,7 @@ use super::deferred_settle_messages;
  * 2. fid:set:targetCastTsHash:linkType -> fid:tsHash (Set Index)
  * 3. linkTarget:linkType:targetCastTsHash -> fid:tsHash (Target Index)
  */
+#[derive(Clone)]
 pub struct LinkStore {
     prune_size_limit: u32,
 }
@@ -63,32 +63,8 @@ impl LinkStore {
         db: Arc<RocksDB>,
         store_event_handler: Arc<StoreEventHandler>,
         prune_size_limit: u32,
-    ) -> Store {
-        Store::new_with_store_def(
-            db,
-            store_event_handler,
-            Box::new(LinkStore { prune_size_limit }),
-        )
-    }
-
-    pub fn create_link_store(mut cx: FunctionContext) -> JsResult<JsBox<Arc<Store>>> {
-        let db_js_box = cx.argument::<JsBox<Arc<RocksDB>>>(0)?;
-        let db = (**db_js_box.borrow()).clone();
-
-        // Read the StoreEventHandler
-        let store_event_handler_js_box = cx.argument::<JsBox<Arc<StoreEventHandler>>>(1)?;
-        let store_event_handler = (**store_event_handler_js_box.borrow()).clone();
-
-        // Read the prune size limit and prune time limit from the options
-        let prune_size_limit = cx
-            .argument::<JsNumber>(2)
-            .map(|n| n.value(&mut cx) as u32)?;
-
-        Ok(cx.boxed(Arc::new(LinkStore::new(
-            db,
-            store_event_handler,
-            prune_size_limit,
-        ))))
+    ) -> Store<LinkStore> {
+        Store::new_with_store_def(db, store_event_handler, LinkStore { prune_size_limit })
     }
 
     /// Finds a LinkAdd Message by checking the Adds Set index.
@@ -100,16 +76,16 @@ impl LinkStore {
     /// * `r#type` - type of link that was added
     /// * `target` - id of the fid being linked to
     pub fn get_link_add(
-        store: &Store,
+        store: &Store<LinkStore>,
         fid: u32,
         r#type: String,
         target: Option<Target>,
     ) -> Result<Option<Message>, HubError> {
-        let partial_message = protos::Message {
+        let partial_message = Message {
             data: Some(MessageData {
                 fid: fid as u64,
                 r#type: MessageType::LinkAdd.into(),
-                body: Some(message_data::Body::LinkBody(LinkBody {
+                body: Some(Body::LinkBody(LinkBody {
                     r#type,
                     target,
                     ..Default::default()
@@ -131,14 +107,14 @@ impl LinkStore {
                 store.db().borrow(),
                 partial_message.data.as_ref().unwrap().fid as u32,
                 store.store_def().postfix(),
-                &utils::vec_to_u8_24(&message_ts_hash)?,
+                &vec_to_u8_24(&message_ts_hash)?,
             );
         }
         result
     }
 
     pub fn get_link_adds_by_fid(
-        store: &Store,
+        store: &Store<LinkStore>,
         fid: u32,
         r#type: String,
         page_options: &PageOptions,
@@ -151,9 +127,7 @@ impl LinkStore {
                     .data
                     .as_ref()
                     .is_some_and(|data| match data.body.as_ref() {
-                        Some(message_data::Body::LinkBody(body)) => {
-                            r#type.is_empty() || body.r#type == r#type
-                        }
+                        Some(Body::LinkBody(body)) => r#type.is_empty() || body.r#type == r#type,
                         _ => false,
                     })
             }),
@@ -161,7 +135,7 @@ impl LinkStore {
     }
 
     pub fn get_link_compact_state_message_by_fid(
-        store: &Store,
+        store: &Store<LinkStore>,
         fid: u32,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
@@ -169,21 +143,27 @@ impl LinkStore {
     }
 
     pub fn get_links_by_target(
-        store: &Store,
+        store: &Store<LinkStore>,
         target: &Target,
         r#type: String,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
-        let prefix: Vec<u8> = LinkStore::links_by_target_key(target, 0, None)?;
+        let start_prefix: Vec<u8> = LinkStore::links_by_target_key(target, 0, None)?;
+        let stop_target = match target {
+            Target::TargetFid(fid) => Target::TargetFid(fid + 1),
+        };
+        let stop_prefix = LinkStore::links_by_target_key(&stop_target, 0, None)?;
 
         let mut message_keys = vec![];
         let mut last_key = vec![];
 
-        store
-            .db()
-            .for_each_iterator_by_prefix(&prefix, page_options, |key, value| {
+        store.db().for_each_iterator_by_prefix(
+            Some(start_prefix.to_vec()),
+            Some(stop_prefix.to_vec()),
+            page_options,
+            |key, value| {
                 if r#type.is_empty() || value.eq(r#type.as_bytes()) {
-                    let ts_hash_offset = prefix.len();
+                    let ts_hash_offset = start_prefix.len();
                     let fid_offset: usize = ts_hash_offset + TS_HASH_LENGTH;
 
                     let fid =
@@ -191,11 +171,8 @@ impl LinkStore {
                     let ts_hash = key[ts_hash_offset..ts_hash_offset + TS_HASH_LENGTH]
                         .try_into()
                         .unwrap();
-                    let message_primary_key = crate::store::message::make_message_primary_key(
-                        fid,
-                        store.postfix(),
-                        Some(&ts_hash),
-                    );
+                    let message_primary_key =
+                        make_message_primary_key(fid, store.postfix(), Some(&ts_hash));
 
                     message_keys.push(message_primary_key.to_vec());
                     if message_keys.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
@@ -205,12 +182,12 @@ impl LinkStore {
                 }
 
                 Ok(false)
-            })?;
+            },
+        )?;
 
-        let messages_bytes =
-            message::get_many_messages_as_bytes(store.db().borrow(), message_keys)?;
+        let messages_bytes = get_many_messages_as_bytes(store.db().borrow(), message_keys)?;
         let next_page_token = if last_key.len() > 0 {
-            Some(last_key[prefix.len()..].to_vec())
+            Some(last_key.to_vec())
         } else {
             None
         };
@@ -230,16 +207,16 @@ impl LinkStore {
     /// * `r#type` - type of link that was added
     /// * `target` - id of the fid being linked to
     pub fn get_link_remove(
-        store: &Store,
+        store: &Store<LinkStore>,
         fid: u32,
         r#type: String,
         target: Option<Target>,
     ) -> Result<Option<Message>, HubError> {
-        let partial_message = protos::Message {
+        let partial_message = Message {
             data: Some(MessageData {
                 fid: fid as u64,
                 r#type: MessageType::LinkRemove.into(),
-                body: Some(message_data::Body::LinkBody(LinkBody {
+                body: Some(Body::LinkBody(LinkBody {
                     r#type,
                     target,
                     ..Default::default()
@@ -261,7 +238,7 @@ impl LinkStore {
                 store.db().borrow(),
                 partial_message.data.as_ref().unwrap().fid as u32,
                 store.store_def().postfix(),
-                &utils::vec_to_u8_24(&message_ts_hash)?,
+                &vec_to_u8_24(&message_ts_hash)?,
             );
         }
         result
@@ -502,46 +479,8 @@ impl LinkStore {
             })
     }
 
-    pub fn js_get_link_adds_by_fid(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let store = get_store(&mut cx)?;
-
-        let fid = cx.argument::<JsNumber>(0)?.value(&mut cx) as u32;
-        let link_type = cx.argument::<JsString>(1).map(|s| s.value(&mut cx))?;
-        let page_options = get_page_options(&mut cx, 2)?;
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        THREAD_POOL.lock().unwrap().execute(move || {
-            let messages = Self::get_link_adds_by_fid(&store, fid, link_type, &page_options);
-
-            deferred_settle_messages(deferred, &channel, messages);
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_get_link_removes_by_fid(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let store = get_store(&mut cx)?;
-
-        let fid = cx.argument::<JsNumber>(0)?.value(&mut cx) as u32;
-        let link_type = cx.argument::<JsString>(1).map(|s| s.value(&mut cx))?;
-        let page_options = get_page_options(&mut cx, 2)?;
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        THREAD_POOL.lock().unwrap().execute(move || {
-            let messages = Self::get_link_removes_by_fid(&store, fid, link_type, &page_options);
-
-            deferred_settle_messages(deferred, &channel, messages);
-        });
-
-        Ok(promise)
-    }
-
     pub fn get_link_removes_by_fid(
-        store: &Store,
+        store: &Store<LinkStore>,
         fid: u32,
         r#type: String,
         page_options: &PageOptions,
@@ -554,139 +493,11 @@ impl LinkStore {
                     .data
                     .as_ref()
                     .is_some_and(|data| match data.body.as_ref() {
-                        Some(message_data::Body::LinkBody(body)) => {
-                            r#type.is_empty() || body.r#type == r#type
-                        }
+                        Some(Body::LinkBody(body)) => r#type.is_empty() || body.r#type == r#type,
                         _ => false,
                     })
             }),
         )
-    }
-
-    pub fn js_get_link_add(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let channel = cx.channel();
-
-        let store = get_store(&mut cx)?;
-
-        let fid = cx.argument::<JsNumber>(0).unwrap().value(&mut cx) as u32;
-        let link_type = cx.argument::<JsString>(1).map(|s| s.value(&mut cx))?;
-        let target_fid = cx.argument::<JsNumber>(2).unwrap().value(&mut cx) as u32;
-
-        // target fid must be specified
-        if target_fid == 0 {
-            return cx.throw_error("target fid is required");
-        }
-
-        let target = Some(crate::protos::link_body::Target::TargetFid(
-            target_fid as u64,
-        ));
-
-        let result = match Self::get_link_add(&store, fid, link_type, target) {
-            Ok(Some(message)) => message.encode_to_vec(),
-            Ok(None) => cx.throw_error(format!(
-                "{}/{} for {}",
-                "not_found", "Link Add Message not found", fid
-            ))?,
-            Err(e) => return hub_error_to_js_throw(&mut cx, e),
-        };
-
-        let (deferred, promise) = cx.promise();
-        deferred.settle_with(&channel, move |mut cx| {
-            let mut js_buffer = cx.buffer(result.len())?;
-            js_buffer.as_mut_slice(&mut cx).copy_from_slice(&result);
-            Ok(js_buffer)
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_get_link_remove(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let channel = cx.channel();
-
-        let store = get_store(&mut cx)?;
-
-        let fid = cx.argument::<JsNumber>(0).unwrap().value(&mut cx) as u32;
-        let link_type = cx.argument::<JsString>(1).map(|s| s.value(&mut cx))?;
-
-        let target_fid = cx.argument::<JsNumber>(2).unwrap().value(&mut cx) as u32;
-
-        // target fid must be specified
-        if target_fid == 0 {
-            return cx.throw_error("target_fid is required");
-        }
-
-        let target = Some(crate::protos::link_body::Target::TargetFid(
-            target_fid as u64,
-        ));
-
-        let result = match Self::get_link_remove(&store, fid, link_type, target) {
-            Ok(Some(message)) => message.encode_to_vec(),
-            Ok(None) => cx.throw_error(format!(
-                "{}/{} for {}",
-                "not_found", "Link Remove Message not found", fid
-            ))?,
-            Err(e) => return hub_error_to_js_throw(&mut cx, e),
-        };
-
-        let (deferred, promise) = cx.promise();
-        deferred.settle_with(&channel, move |mut cx| {
-            let mut js_buffer = cx.buffer(result.len())?;
-            js_buffer.as_mut_slice(&mut cx).copy_from_slice(&result);
-            Ok(js_buffer)
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_get_links_by_target(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let store = get_store(&mut cx)?;
-
-        let target_fid = cx.argument::<JsNumber>(0).unwrap().value(&mut cx) as u32;
-        let link_type = cx.argument::<JsString>(1).map(|s| s.value(&mut cx))?;
-        let page_options = get_page_options(&mut cx, 2)?;
-
-        // target fid must be specified
-        if target_fid == 0 {
-            return cx.throw_error("target_fid is required");
-        }
-
-        let target = crate::protos::link_body::Target::TargetFid(target_fid as u64);
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        THREAD_POOL.lock().unwrap().execute(move || {
-            let messages = Self::get_links_by_target(&store, &target, link_type, &page_options);
-
-            deferred_settle_messages(deferred, &channel, messages);
-        });
-
-        Ok(promise)
-    }
-
-    pub fn js_get_link_compact_state_message_by_fid(
-        mut cx: FunctionContext,
-    ) -> JsResult<JsPromise> {
-        let store = get_store(&mut cx)?;
-
-        let fid = cx.argument::<JsNumber>(0).unwrap().value(&mut cx) as u32;
-        let page_options = get_page_options(&mut cx, 1)?;
-
-        // fid must be specified
-        if fid == 0 {
-            return cx.throw_error("fid is required");
-        }
-
-        let channel = cx.channel();
-        let (deferred, promise) = cx.promise();
-
-        THREAD_POOL.lock().unwrap().execute(move || {
-            let messages = Self::get_link_compact_state_message_by_fid(&store, fid, &page_options);
-
-            deferred_settle_messages(deferred, &channel, messages);
-        });
-
-        Ok(promise)
     }
 }
 
@@ -696,38 +507,38 @@ impl StoreDef for LinkStore {
     }
 
     fn add_message_type(&self) -> u8 {
-        MessageType::LinkAdd.into_u8()
+        MessageType::LinkAdd as u8
     }
 
     fn remove_message_type(&self) -> u8 {
-        MessageType::LinkRemove.into_u8()
+        MessageType::LinkRemove as u8
     }
 
     fn compact_state_message_type(&self) -> u8 {
-        MessageType::LinkCompactState.into_u8()
+        MessageType::LinkCompactState as u8
     }
 
     fn is_add_type(&self, message: &Message) -> bool {
-        message.signature_scheme == protos::SignatureScheme::Ed25519 as i32
+        message.signature_scheme == SignatureScheme::Ed25519 as i32
             && message.data.is_some()
             && message.data.as_ref().is_some_and(|data| {
-                data.r#type == MessageType::LinkAdd.into_i32() && data.body.is_some()
+                data.r#type == MessageType::LinkAdd as i32 && data.body.is_some()
             })
     }
 
     fn is_remove_type(&self, message: &Message) -> bool {
-        message.signature_scheme == protos::SignatureScheme::Ed25519 as i32
+        message.signature_scheme == SignatureScheme::Ed25519 as i32
             && message.data.is_some()
             && message.data.as_ref().is_some_and(|data| {
-                data.r#type == MessageType::LinkRemove.into_i32() && data.body.is_some()
+                data.r#type == MessageType::LinkRemove as i32 && data.body.is_some()
             })
     }
 
     fn is_compact_state_type(&self, message: &Message) -> bool {
-        message.signature_scheme == protos::SignatureScheme::Ed25519 as i32
+        message.signature_scheme == SignatureScheme::Ed25519 as i32
             && message.data.is_some()
             && message.data.as_ref().is_some_and(|data| {
-                data.r#type == MessageType::LinkCompactState.into_i32() && data.body.is_some()
+                data.r#type == MessageType::LinkCompactState as i32 && data.body.is_some()
             })
     }
 
@@ -822,14 +633,16 @@ impl StoreDef for LinkStore {
                 &db,
                 message.data.as_ref().unwrap().fid as u32,
                 self.postfix(),
-                &utils::vec_to_u8_24(&remove_ts_hash)?,
+                &vec_to_u8_24(&remove_ts_hash)?,
             )?;
 
             if maybe_existing_remove.is_some() {
                 conflicts.push(maybe_existing_remove.unwrap());
             } else {
-                warn!(LOGGER, "Message's ts_hash exists but message not found in store";
-                        o!("remove_ts_hash" => format!("{:x?}", remove_ts_hash.unwrap())));
+                warn!(
+                    "Message's ts_hash exists but message not found in store {:#?}",
+                    remove_ts_hash
+                );
             }
         }
 
@@ -864,12 +677,14 @@ impl StoreDef for LinkStore {
                 &db,
                 message.data.as_ref().unwrap().fid as u32,
                 self.postfix(),
-                &utils::vec_to_u8_24(&add_ts_hash)?,
+                &vec_to_u8_24(&add_ts_hash)?,
             )?;
 
             if maybe_existing_add.is_none() {
-                warn!(LOGGER, "Message's ts_hash exists but message not found in store";
-                    o!("add_ts_hash" => format!("{:x?}", add_ts_hash.unwrap())));
+                warn!(
+                    "Message's ts_hash exists but message not found in store {:#?}",
+                    add_ts_hash
+                );
             } else {
                 conflicts.push(maybe_existing_add.unwrap());
             }
