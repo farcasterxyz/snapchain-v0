@@ -2,12 +2,14 @@
 mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
+    use std::time::Duration;
 
     use crate::network::server::MySnapchainService;
     use crate::proto::hub_event::{HubEvent, HubEventType};
     use crate::proto::rpc::snapchain_service_server::SnapchainService;
     use crate::proto::rpc::SubscribeRequest;
-    use crate::storage::db;
+    use crate::storage::db::{self, RocksDB, RocksDbTransactionBatch};
+    use crate::storage::store::engine::{Senders, Stores};
     use crate::storage::store::BlockStore;
     use futures::StreamExt;
     use tempfile;
@@ -55,29 +57,102 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_subscribe_rpc() {
+    async fn write_events_to_db(db: Arc<RocksDB>, num_events: u64) {
+        let mut txn = RocksDbTransactionBatch::new();
+        for i in 0..num_events {
+            HubEvent::put_event_transaction(
+                &mut txn,
+                &HubEvent {
+                    r#type: HubEventType::MergeMessage as i32,
+                    id: i,
+                    body: None,
+                },
+            )
+            .unwrap();
+        }
+        db.commit(txn).unwrap();
+    }
+
+    fn make_db(filename: &str) -> Arc<RocksDB> {
         let dir = tempfile::TempDir::new().unwrap();
-        let db_path = dir.path().join("b.db");
+        let db_path = dir.path().join(filename);
 
         let db = Arc::new(db::RocksDB::new(db_path.to_str().unwrap()));
         db.open().unwrap();
-        let (events_tx1, _events_rx) = broadcast::channel(100);
-        let (events_tx2, _events_rx) = broadcast::channel(100);
-        let (msgs_tx, _msgs_rx) = mpsc::channel(100);
-        let mut shard_events = HashMap::new();
-        shard_events.insert(1, events_tx1.clone());
-        shard_events.insert(2, events_tx2.clone());
 
-        let service =
-            MySnapchainService::new(BlockStore::new(db), HashMap::new(), shard_events, msgs_tx);
+        db
+    }
+
+    fn make_server() -> (
+        HashMap<u32, Stores>,
+        HashMap<u32, Senders>,
+        MySnapchainService,
+    ) {
+        let db1 = make_db("b1.db");
+        let db2 = make_db("b2.db");
+
+        let (msgs_tx, _msgs_rx) = mpsc::channel(100);
+
+        let shard1_stores = Stores::new(db1);
+        let shard1_senders = Senders::new(msgs_tx.clone());
+
+        let shard2_stores = Stores::new(db2);
+        let shard2_senders = Senders::new(msgs_tx.clone());
+        let stores = HashMap::from([(1, shard1_stores), (2, shard2_stores)]);
+        let senders = HashMap::from([(1, shard1_senders), (2, shard2_senders)]);
+
+        (
+            stores.clone(),
+            senders.clone(),
+            MySnapchainService::new(BlockStore::new(make_db("blocks.db")), stores, senders),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_rpc() {
+        let (stores, senders, service) = make_server();
+
+        let num_shard1_pre_existing_events = 10;
+        let num_shard2_pre_existing_events = 20;
+
+        write_events_to_db(
+            stores.get(&1u32).unwrap().shard_store.db.clone(),
+            num_shard1_pre_existing_events,
+        )
+        .await;
+        write_events_to_db(
+            stores.get(&2u32).unwrap().shard_store.db.clone(),
+            num_shard2_pre_existing_events,
+        )
+        .await;
 
         let num_shard1_events = 5;
         let num_shard2_events = 10;
-        subscribe_and_listen(&service, 1, num_shard1_events).await;
-        subscribe_and_listen(&service, 2, num_shard2_events).await;
+        subscribe_and_listen(
+            &service,
+            1,
+            num_shard1_events + num_shard1_pre_existing_events,
+        )
+        .await;
+        subscribe_and_listen(
+            &service,
+            2,
+            num_shard2_events + num_shard2_pre_existing_events,
+        )
+        .await;
 
-        send_events(events_tx1.clone(), num_shard1_events).await;
-        send_events(events_tx2.clone(), num_shard2_events).await;
+        // Allow time for rpc handler to subscribe to event rx channels
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        send_events(
+            senders.get(&1u32).unwrap().events_tx.clone(),
+            num_shard1_events,
+        )
+        .await;
+        send_events(
+            senders.get(&2u32).unwrap().events_tx.clone(),
+            num_shard2_events,
+        )
+        .await;
     }
 }

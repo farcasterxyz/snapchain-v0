@@ -44,6 +44,7 @@ type Parent = message::cast_add_body::Parent;
  * 4. parentFid:parentTsHash:fid:tsHash -> fid:tsHash (Child Set Index)
  * 5. mentionFid:fid:tsHash -> fid:tsHash (Mentions Set Index)
  */
+#[derive(Clone)]
 pub struct CastStoreDef {
     prune_size_limit: u32,
 }
@@ -365,16 +366,12 @@ impl CastStore {
         db: Arc<RocksDB>,
         store_event_handler: Arc<StoreEventHandler>,
         prune_size_limit: u32,
-    ) -> Store {
-        Store::new_with_store_def(
-            db,
-            store_event_handler,
-            Box::new(CastStoreDef { prune_size_limit }),
-        )
+    ) -> Store<CastStoreDef> {
+        Store::new_with_store_def(db, store_event_handler, CastStoreDef { prune_size_limit })
     }
 
     pub fn get_cast_add(
-        store: &Store,
+        store: &Store<CastStoreDef>,
         fid: u32,
         hash: Vec<u8>,
     ) -> Result<Option<Message>, HubError> {
@@ -397,7 +394,7 @@ impl CastStore {
     }
 
     pub fn get_cast_remove(
-        store: &Store,
+        store: &Store<CastStoreDef>,
         fid: u32,
         hash: Vec<u8>,
     ) -> Result<Option<Message>, HubError> {
@@ -419,7 +416,7 @@ impl CastStore {
     }
 
     pub fn get_cast_adds_by_fid(
-        store: &Store,
+        store: &Store<CastStoreDef>,
         fid: u32,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
@@ -427,7 +424,7 @@ impl CastStore {
     }
 
     pub fn get_cast_removes_by_fid(
-        store: &Store,
+        store: &Store<CastStoreDef>,
         fid: u32,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
@@ -435,7 +432,7 @@ impl CastStore {
     }
 
     pub fn get_casts_by_parent(
-        store: &Store,
+        store: &Store<CastStoreDef>,
         parent: &Parent,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
@@ -483,7 +480,7 @@ impl CastStore {
     }
 
     pub fn get_casts_by_mention(
-        store: &Store,
+        store: &Store<CastStoreDef>,
         mention: u32,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {

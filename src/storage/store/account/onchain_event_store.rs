@@ -105,6 +105,7 @@ pub fn get_onchain_events(
     })
 }
 
+#[derive(Clone)]
 pub struct OnchainEventStore {
     db: Arc<RocksDB>,
     store_event_handler: Arc<StoreEventHandler>,

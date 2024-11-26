@@ -1,4 +1,4 @@
-use super::account::OnchainEventStorageError;
+use super::account::{CastStoreDef, OnchainEventStorageError};
 use super::shard::ShardStore;
 use crate::core::error::HubError;
 use crate::core::types::Height;
@@ -85,16 +85,54 @@ pub struct ShardStateChange {
     pub transactions: Vec<Transaction>,
 }
 
+#[derive(Clone)]
+pub struct Stores {
+    pub shard_store: ShardStore,
+    pub cast_store: Store<CastStoreDef>,
+    pub onchain_event_store: OnchainEventStore,
+    pub(crate) trie: merkle_trie::MerkleTrie,
+}
+
+impl Stores {
+    pub fn new(db: Arc<RocksDB>) -> Stores {
+        let mut trie = merkle_trie::MerkleTrie::new();
+        trie.initialize(&db).unwrap();
+
+        let event_handler = StoreEventHandler::new(None, None, None);
+        let shard_store = ShardStore::new(db.clone());
+        let cast_store = CastStore::new(db.clone(), event_handler.clone(), 100);
+        let onchain_event_store = OnchainEventStore::new(db.clone(), event_handler.clone());
+        Stores {
+            trie,
+            shard_store,
+            cast_store,
+            onchain_event_store,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Senders {
+    pub messages_tx: mpsc::Sender<MempoolMessage>,
+    pub events_tx: broadcast::Sender<HubEvent>,
+}
+
+impl Senders {
+    pub fn new(messages_tx: mpsc::Sender<MempoolMessage>) -> Senders {
+        let (events_tx, _events_rx) = broadcast::channel::<HubEvent>(100);
+        Senders {
+            events_tx,
+            messages_tx,
+        }
+    }
+}
+
 pub struct ShardEngine {
     shard_id: u32,
-    shard_store: ShardStore,
-    messages_rx: mpsc::Receiver<MempoolMessage>,
-    messages_tx: mpsc::Sender<MempoolMessage>,
-    events_tx: broadcast::Sender<HubEvent>,
-    pub(crate) trie: merkle_trie::MerkleTrie,
-    cast_store: Store,
     pub db: Arc<RocksDB>,
-    onchain_event_store: OnchainEventStore,
+    senders: Senders,
+    stores: Stores,
+    messages_rx: mpsc::Receiver<MempoolMessage>,
     statsd_client: StatsdClientWrapper,
 }
 
@@ -106,45 +144,33 @@ fn encode_vec(data: &[Vec<u8>]) -> String {
 }
 
 impl ShardEngine {
-    pub fn new(
-        shard_id: u32,
-        shard_store: ShardStore,
-        statsd_client: StatsdClientWrapper,
-        events_tx: broadcast::Sender<HubEvent>,
-    ) -> ShardEngine {
-        let db = &*shard_store.db;
-
+    pub fn new(db: Arc<RocksDB>, shard_id: u32, statsd_client: StatsdClientWrapper) -> ShardEngine {
         // TODO: adding the trie here introduces many calls that want to return errors. Rethink unwrap strategy.
-        let mut trie = merkle_trie::MerkleTrie::new();
-        trie.initialize(db).unwrap();
-
-        let event_handler = StoreEventHandler::new(None, None, None);
-        let db = shard_store.db.clone();
-        let cast_store = CastStore::new(shard_store.db.clone(), event_handler.clone(), 100);
-        let onchain_event_store =
-            OnchainEventStore::new(shard_store.db.clone(), event_handler.clone());
-
         let (messages_tx, messages_rx) = mpsc::channel::<MempoolMessage>(10_000);
         ShardEngine {
             shard_id,
-            shard_store,
+            stores: Stores::new(db.clone()),
+            senders: Senders::new(messages_tx),
             messages_rx,
-            messages_tx,
-            events_tx,
-            trie,
-            cast_store,
             db,
-            onchain_event_store,
             statsd_client,
         }
     }
 
     pub fn messages_tx(&self) -> mpsc::Sender<MempoolMessage> {
-        self.messages_tx.clone()
+        self.senders.messages_tx.clone()
+    }
+
+    pub fn get_stores(&self) -> Stores {
+        self.stores.clone()
+    }
+
+    pub fn get_senders(&self) -> Senders {
+        self.senders.clone()
     }
 
     pub(crate) fn trie_root_hash(&self) -> Vec<u8> {
-        self.trie.root_hash().unwrap()
+        self.stores.trie.root_hash().unwrap()
     }
 
     fn prepare_proposal(
@@ -168,7 +194,7 @@ impl ShardEngine {
             snapchain_txn.account_root = account_root;
         }
 
-        let new_root_hash = self.trie.root_hash()?;
+        let new_root_hash = self.stores.trie.root_hash()?;
         let result = ShardStateChange {
             shard_id,
             new_state_root: new_root_hash.clone(),
@@ -220,7 +246,7 @@ impl ShardEngine {
         let result = self.prepare_proposal(&mut txn, shard).unwrap(); //TODO: don't unwrap()
 
         // TODO: this should probably operate automatically via drop trait
-        self.trie.reload(&self.db).unwrap();
+        self.stores.trie.reload(&self.db).unwrap();
 
         self.statsd_client
             .count_with_shard(self.shard_id, "propose", 1);
@@ -239,7 +265,7 @@ impl ShardEngine {
             events.extend(txn_events);
         }
 
-        let root1 = self.trie.root_hash()?;
+        let root1 = self.stores.trie.root_hash()?;
 
         if &root1 != shard_root {
             return Err(EngineError::HashMismatch);
@@ -282,6 +308,7 @@ impl ShardEngine {
         for msg in &snapchain_txn.system_messages {
             if let Some(onchain_event) = &msg.on_chain_event {
                 let event = self
+                    .stores
                     .onchain_event_store
                     .merge_onchain_event(onchain_event.clone(), txn_batch);
 
@@ -298,7 +325,7 @@ impl ShardEngine {
             }
         }
 
-        let account_root = self.trie.get_hash(
+        let account_root = self.stores.trie.get_hash(
             &self.db,
             txn_batch,
             &TrieKey::for_fid(snapchain_txn.fid as u32),
@@ -327,10 +354,12 @@ impl ShardEngine {
 
         let event = match mt {
             MessageType::CastAdd => self
+                .stores
                 .cast_store
                 .merge(msg, txn_batch)
                 .map_err(EngineError::new_store_error(msg.hash.clone())),
             MessageType::CastRemove => self
+                .stores
                 .cast_store
                 .merge(msg, txn_batch)
                 .map_err(EngineError::new_store_error(msg.hash.clone())),
@@ -350,11 +379,14 @@ impl ShardEngine {
         match &event.body {
             Some(hub_event::hub_event::Body::MergeMessageBody(merge)) => {
                 if let Some(msg) = &merge.message {
-                    self.trie
-                        .insert(&self.db, txn_batch, vec![TrieKey::for_message(&msg)])?;
+                    self.stores.trie.insert(
+                        &self.db,
+                        txn_batch,
+                        vec![TrieKey::for_message(&msg)],
+                    )?;
                 }
                 for deleted_message in &merge.deleted_messages {
-                    self.trie.delete(
+                    self.stores.trie.delete(
                         &self.db,
                         txn_batch,
                         vec![TrieKey::for_message(&deleted_message)],
@@ -363,7 +395,7 @@ impl ShardEngine {
             }
             Some(hub_event::hub_event::Body::MergeOnChainEventBody(merge)) => {
                 if let Some(onchain_event) = &merge.on_chain_event {
-                    self.trie.insert(
+                    self.stores.trie.insert(
                         &self.db,
                         txn_batch,
                         vec![TrieKey::for_onchain_event(&onchain_event)],
@@ -391,7 +423,7 @@ impl ShardEngine {
             result = false;
         }
 
-        self.trie.reload(&*self.shard_store.db).unwrap();
+        self.stores.trie.reload(&self.db).unwrap();
 
         if result {
             self.statsd_client
@@ -417,13 +449,13 @@ impl ShardEngine {
         self.db.commit(txn).unwrap();
         for event in events {
             // An error here just means there are no active receivers, which is fine and will happen if there are no active subscribe rpcs
-            self.events_tx.send(event);
+            self.senders.events_tx.send(event);
         }
-        self.trie.reload(&self.db).unwrap();
+        self.stores.trie.reload(&self.db).unwrap();
 
         self.emit_commit_metrics(&shard_chunk);
 
-        match self.shard_store.put_shard_chunk(shard_chunk) {
+        match self.stores.shard_store.put_shard_chunk(shard_chunk) {
             Err(err) => {
                 error!("Unable to write shard chunk to store {}", err)
             }
@@ -446,7 +478,7 @@ impl ShardEngine {
         self.statsd_client
             .gauge_with_shard(self.shard_id, "block_height", *block_number);
 
-        let trie_size = self.trie.items()?;
+        let trie_size = self.stores.trie.items()?;
 
         self.statsd_client
             .gauge_with_shard(self.shard_id, "trie.num_items", trie_size as u64);
@@ -501,7 +533,8 @@ impl ShardEngine {
     }
 
     pub(crate) fn trie_key_exists(&mut self, sync_id: &Vec<u8>) -> bool {
-        self.trie
+        self.stores
+            .trie
             .exists(&self.db, sync_id.as_ref())
             .unwrap_or_else(|err| {
                 error!("Error checking if sync id exists: {:?}", err);
@@ -510,14 +543,14 @@ impl ShardEngine {
     }
 
     pub fn get_confirmed_height(&self) -> Height {
-        match self.shard_store.max_block_number() {
+        match self.stores.shard_store.max_block_number() {
             Ok(block_num) => Height::new(self.shard_id, block_num),
             Err(_) => Height::new(self.shard_id, 0),
         }
     }
 
     pub fn get_last_shard_chunk(&self) -> Option<ShardChunk> {
-        match self.shard_store.get_last_shard_chunk() {
+        match self.stores.shard_store.get_last_shard_chunk() {
             Ok(shard_chunk) => shard_chunk,
             Err(err) => {
                 error!("Unable to obtain last shard chunk {:#?}", err);
@@ -527,7 +560,7 @@ impl ShardEngine {
     }
 
     pub fn get_casts_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
-        CastStore::get_cast_adds_by_fid(&self.cast_store, fid, &PageOptions::default())
+        CastStore::get_cast_adds_by_fid(&self.stores.cast_store, fid, &PageOptions::default())
     }
 
     pub fn get_onchain_events(
@@ -535,7 +568,9 @@ impl ShardEngine {
         event_type: OnChainEventType,
         fid: u32,
     ) -> Result<Vec<OnChainEvent>, OnchainEventStorageError> {
-        self.onchain_event_store.get_onchain_events(event_type, fid)
+        self.stores
+            .onchain_event_store
+            .get_onchain_events(event_type, fid)
     }
 }
 

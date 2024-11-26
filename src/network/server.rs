@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::core::error::HubError;
 use crate::proto::hub_event::HubEvent;
@@ -7,7 +8,8 @@ use crate::proto::rpc::snapchain_service_server::SnapchainService;
 use crate::proto::rpc::{
     BlocksRequest, BlocksResponse, ShardChunksRequest, ShardChunksResponse, SubscribeRequest,
 };
-use crate::storage::store::engine::MempoolMessage;
+use crate::storage::db::{PageOptions, RocksDB};
+use crate::storage::store::engine::{MempoolMessage, Senders, Stores};
 use crate::storage::store::shard::ShardStore;
 use crate::storage::store::BlockStore;
 use alloy::rpc::types::request;
@@ -21,23 +23,25 @@ use tonic::{server, Request, Response, Status};
 use tracing::info;
 
 pub struct MySnapchainService {
-    message_tx: mpsc::Sender<MempoolMessage>,
     block_store: BlockStore,
-    shard_stores: HashMap<u32, ShardStore>,
-    shard_events: HashMap<u32, broadcast::Sender<HubEvent>>,
+    shard_stores: HashMap<u32, Stores>,
+    shard_senders: HashMap<u32, Senders>,
+    message_tx: mpsc::Sender<MempoolMessage>,
 }
 
 impl MySnapchainService {
     pub fn new(
         block_store: BlockStore,
-        shard_stores: HashMap<u32, ShardStore>,
-        shard_events: HashMap<u32, broadcast::Sender<HubEvent>>,
-        message_tx: mpsc::Sender<MempoolMessage>,
+        shard_stores: HashMap<u32, Stores>,
+        shard_senders: HashMap<u32, Senders>,
     ) -> Self {
+        // TODO(aditi): This logic will change once a mempool exists
+        let message_tx = shard_senders.get(&1u32).unwrap().messages_tx.clone();
+
         Self {
             block_store,
+            shard_senders,
             shard_stores,
-            shard_events,
             message_tx,
         }
     }
@@ -54,6 +58,7 @@ impl SnapchainService for MySnapchainService {
         info!(hash, "Received call to [submit_message] RPC");
 
         let message = request.into_inner();
+
         self.message_tx
             .send(MempoolMessage::UserMessage(message.clone()))
             .await
@@ -104,13 +109,16 @@ impl SnapchainService for MySnapchainService {
         info!( {shard_index, start_block_number, stop_block_number},
             "Received call to [get_shard_chunks] RPC");
 
-        let shard_store = self.shard_stores.get(&shard_index);
-        match shard_store {
+        let stores = self.shard_stores.get(&shard_index);
+        match stores {
             None => Err(Status::from_error(Box::new(
                 HubError::invalid_internal_state("Missing shard store"),
             ))),
-            Some(shard_store) => {
-                match shard_store.get_shard_chunks(start_block_number, stop_block_number) {
+            Some(stores) => {
+                match stores
+                    .shard_store
+                    .get_shard_chunks(start_block_number, stop_block_number)
+                {
                     Err(err) => Err(Status::from_error(Box::new(err))),
                     Ok(shard_chunks) => {
                         let response = Response::new(ShardChunksResponse { shard_chunks });
@@ -127,22 +135,63 @@ impl SnapchainService for MySnapchainService {
         &self,
         request: Request<SubscribeRequest>,
     ) -> Result<Response<Self::SubscribeStream>, Status> {
-        // TODO(aditi): Use [from_id]
-        // TODO(aditi): Read older events from the db
         // TODO(aditi): Rethink the channel size
         let (server_tx, client_rx) = mpsc::channel::<Result<HubEvent, Status>>(100);
         let events_txs = match request.get_ref().shard_index {
-            Some(shard_id) => match self.shard_events.get(&(shard_id as u32)) {
+            Some(shard_id) => match self.shard_senders.get(&(shard_id as u32)) {
                 None => {
                     return Err(Status::from_error(Box::new(
                         HubError::invalid_internal_state("Missing shard event tx"),
                     )))
                 }
-                Some(tx) => vec![tx.clone()],
+                Some(senders) => vec![senders.events_tx.clone()],
             },
-            None => self.shard_events.values().cloned().collect(),
+            None => self
+                .shard_senders
+                .values()
+                .map(|senders| senders.events_tx.clone())
+                .collect(),
         };
 
+        let shard_stores = match request.get_ref().shard_index {
+            Some(shard_id) => {
+                vec![self.shard_stores.get(&shard_id).unwrap()]
+            }
+            None => self.shard_stores.values().collect(),
+        };
+
+        let start_id = request.get_ref().from_id.unwrap_or(0);
+
+        let mut page_token = None;
+        for store in shard_stores {
+            loop {
+                // TODO(aditi): We should stop pulling the raw db out of the shard store and create a new store type for events to house the db.
+                let old_events = HubEvent::get_events(
+                    store.shard_store.db.clone(),
+                    start_id,
+                    None,
+                    Some(PageOptions {
+                        page_token: page_token.clone(),
+                        page_size: None,
+                        reverse: false,
+                    }),
+                )
+                .unwrap();
+
+                for event in old_events.events {
+                    if let Err(err) = server_tx.send(Ok(event)).await {
+                        return Err(Status::from_error(Box::new(err)));
+                    }
+                }
+
+                page_token = old_events.next_page_token;
+                if page_token.is_none() {
+                    break;
+                }
+            }
+        }
+
+        // TODO(aditi): It's possible that events show up between when we finish reading from the db and the subscription starts. We don't handle this case in the current hub code, but we may want to down the line.
         for event_tx in events_txs {
             let tx = server_tx.clone();
             tokio::spawn(async move {

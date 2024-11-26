@@ -48,6 +48,7 @@ pub struct TrieSnapshot {
     pub num_messages: usize,
 }
 
+#[derive(Clone)]
 pub struct MerkleTrie {
     root: Option<TrieNode>,
 }
