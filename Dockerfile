@@ -54,7 +54,12 @@ EOF
 WORKDIR /app
 COPY --from=builder /usr/src/app/src/proto /app/proto
 COPY --from=builder /usr/src/app/nodes /app/nodes
-COPY --from=builder /usr/src/app/target/debug/snapchain /app/
+COPY --from=builder \
+    /usr/src/app/target/release/snapchain \
+    /usr/src/app/target/release/follow_blocks \
+    /usr/src/app/target/release/setup_local_testnet \
+    /usr/src/app/target/release/submit_message \
+    /app/
 
 ENV RUSTFLAGS="-Awarnings"
 CMD ["./snapchain", "--id", "1"]
