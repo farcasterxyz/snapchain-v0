@@ -111,7 +111,6 @@ async fn main() {
         });
 
         let start = Instant::now();
-        let start_farcaster_time = current_time();
         let mut stats_calculation_timer = time::interval(STATS_CALCULATION_INTERVAL);
         let mut block_count = 0;
         let mut num_messages_confirmed = 0;
@@ -119,7 +118,7 @@ async fn main() {
         let mut pending_messages = HashSet::new();
         let mut time_to_confirmation = vec![];
         let mut block_times = vec![];
-        let mut last_block_time = start_farcaster_time;
+        let mut last_block_time = current_time();
         let mut iteration = 0;
         loop {
             select! {
@@ -129,19 +128,17 @@ async fn main() {
                 },
                 Some(block) = blocks_rx.recv() => {
                     let block_timestamp = block.header.as_ref().unwrap().timestamp;
-                    if block_timestamp > start_farcaster_time {
-                        block_count += 1;
-                        block_times.push(block_timestamp - last_block_time);
-                        last_block_time = block_timestamp;
-                        for chunk in &block.shard_chunks {
-                            for tx in &chunk.transactions {
-                                for msg in &tx.user_messages {
-                                    let msg_data = MessageData::decode(msg.data_bytes.as_ref().unwrap().as_slice()).unwrap();
-                                    let msg_timestamp = msg_data.timestamp;
-                                    time_to_confirmation.push(block_timestamp  - msg_timestamp as u64);
-                                    num_messages_confirmed += 1;
-                                    pending_messages.remove(&hex::encode(msg.hash.clone()));
-                                }
+                    block_count += 1;
+                    block_times.push(block_timestamp - last_block_time);
+                    last_block_time = block_timestamp;
+                    for chunk in &block.shard_chunks {
+                        for tx in &chunk.transactions {
+                            for msg in &tx.user_messages {
+                                let msg_data = MessageData::decode(msg.data_bytes.as_ref().unwrap().as_slice()).unwrap();
+                                let msg_timestamp = msg_data.timestamp;
+                                time_to_confirmation.push(block_timestamp  - msg_timestamp as u64);
+                                num_messages_confirmed += 1;
+                                pending_messages.remove(&hex::encode(msg.hash.clone()));
                             }
                         }
                     }
