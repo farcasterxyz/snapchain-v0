@@ -163,3 +163,64 @@ impl Stores {
         Ok(message_count >= max_messages as u64)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_limits() {
+        let limits = Limits::default();
+        assert_eq!(limits.casts, 2000);
+        assert_eq!(limits.links, 1000);
+        assert_eq!(limits.reactions, 1000);
+        assert_eq!(limits.user_data, 50);
+        assert_eq!(limits.user_name_proofs, 5);
+        assert_eq!(limits.verifications, 25);
+    }
+
+    #[test]
+    fn test_legacy_limits() {
+        let limits = Limits::legacy();
+        assert_eq!(limits.casts, 5000);
+        assert_eq!(limits.links, 2500);
+        assert_eq!(limits.reactions, 2500);
+        assert_eq!(limits.user_data, 50);
+        assert_eq!(limits.user_name_proofs, 5);
+        assert_eq!(limits.verifications, 25);
+    }
+
+    #[test]
+    fn test_limit_for_message() {
+        let limits = Limits::default();
+        assert_eq!(limits.for_message_type(MessageType::CastAdd), 2000);
+        assert_eq!(limits.for_message_type(MessageType::CastRemove), 2000);
+        assert_eq!(limits.for_message_type(MessageType::ReactionAdd), 1000);
+        assert_eq!(limits.for_message_type(MessageType::ReactionRemove), 1000);
+        assert_eq!(limits.for_message_type(MessageType::LinkCompactState), 1000);
+        assert_eq!(limits.for_message_type(MessageType::FrameAction), 0);
+        assert_eq!(limits.for_message_type(MessageType::None), 0);
+    }
+
+    #[test]
+    fn test_max_messages() {
+        let store_limits = &StoreLimits::default();
+        let legacy_limits = &store_limits.legacy_limits;
+        let limits = &store_limits.limits;
+        assert_eq!(
+            store_limits.max_messages(1, 0, MessageType::CastAdd),
+            limits.casts * 1
+        );
+        assert_eq!(
+            store_limits.max_messages(0, 1, MessageType::CastAdd),
+            legacy_limits.casts * 1
+        );
+
+        assert_eq!(
+            store_limits.max_messages(3, 2, MessageType::ReactionRemove),
+            (limits.links * 3) + (legacy_limits.links * 2)
+        );
+
+        assert_eq!(store_limits.max_messages(0, 0, MessageType::LinkAdd), 0);
+    }
+}

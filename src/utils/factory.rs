@@ -1,6 +1,6 @@
 use crate::core::types::FARCASTER_EPOCH;
 use crate::proto::msg as message;
-use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
+use crate::proto::onchain_event::{self, OnChainEvent, OnChainEventType};
 use ed25519_dalek::{SecretKey, Signer, SigningKey};
 use hex::FromHex;
 use message::CastType::Cast;
@@ -8,8 +8,32 @@ use message::MessageType;
 use message::{CastAddBody, FarcasterNetwork, MessageData};
 use prost::Message;
 
+pub mod time {
+    use super::*;
+
+    pub fn farcaster_time() -> u32 {
+        (current_timestamp() as u64 - FARCASTER_EPOCH) as u32
+    }
+
+    pub fn farcaster_time_with_offset(offset: i32) -> u32 {
+        (farcaster_time() as i32 + offset) as u32
+    }
+
+    pub fn current_timestamp() -> u32 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u32
+    }
+
+    pub fn current_timestamp_with_offset(offset: i32) -> u32 {
+        (current_timestamp() as i32 + offset as i32) as u32
+    }
+}
+
 pub mod events_factory {
     use super::*;
+    use crate::proto::onchain_event;
 
     pub fn create_onchain_event(fid: u32) -> OnChainEvent {
         OnChainEvent {
@@ -24,6 +48,60 @@ pub mod events_factory {
             tx_index: 0,
             version: 1,
             body: None,
+        }
+    }
+
+    pub fn create_rent_event(
+        fid: u32,
+        legacy_units: Option<u32>,
+        units: Option<u32>,
+        expired: bool,
+    ) -> OnChainEvent {
+        if legacy_units.is_some() && units.is_some() {
+            panic!("Cannot have both legacy_units and units");
+        }
+        let one_year_in_seconds = 365 * 24 * 60 * 60;
+        let rent_units;
+        let mut timestamp = time::current_timestamp_with_offset(-10);
+        if legacy_units.is_some() {
+            rent_units = legacy_units.unwrap();
+            if expired {
+                timestamp = timestamp - one_year_in_seconds * 3;
+            } else {
+                timestamp = timestamp - one_year_in_seconds;
+            }
+        } else if units.is_some() {
+            rent_units = units.unwrap();
+            if expired {
+                panic!("New units cannot be expired until 1 year from legacy cutoff");
+            }
+        } else {
+            // random number between 1 and 10
+            rent_units = rand::random::<u32>() % 10 + 1;
+            if expired {
+                panic!("New units cannot be expired until 1 year from legacy cutoff");
+            }
+        }
+
+        let rent_event_body = onchain_event::StorageRentEventBody {
+            expiry: 0, // This field is ignored, we use block_timestamp to calculate expiry
+            units: rent_units,
+            payer: rand::random::<[u8; 32]>().to_vec(),
+        };
+        OnChainEvent {
+            r#type: OnChainEventType::EventTypeStorageRent as i32,
+            chain_id: 10,
+            block_number: rand::random::<u32>(),
+            block_hash: vec![],
+            block_timestamp: timestamp as u64,
+            transaction_hash: rand::random::<[u8; 32]>().to_vec(),
+            log_index: 0,
+            fid: fid as u64,
+            tx_index: 0,
+            version: 1,
+            body: Some(onchain_event::on_chain_event::Body::StorageRentEventBody(
+                rent_event_body,
+            )),
         }
     }
 }

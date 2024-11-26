@@ -160,12 +160,16 @@ impl StorageSlot {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as u32;
-        self.invalidate_at < current_time
+        current_time < self.invalidate_at
     }
 
     pub fn merge(&mut self, other: &StorageSlot) -> bool {
         if !other.is_active() {
             return false;
+        }
+        if !self.is_active() {
+            *self = other.clone();
+            return true;
         }
         self.legacy_units += other.legacy_units;
         self.units += other.units;
@@ -176,7 +180,7 @@ impl StorageSlot {
 
 #[derive(Clone)]
 pub struct OnchainEventStore {
-    db: Arc<RocksDB>,
+    pub(crate) db: Arc<RocksDB>,
     store_event_handler: Arc<StoreEventHandler>,
 }
 
