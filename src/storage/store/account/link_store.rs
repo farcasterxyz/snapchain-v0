@@ -148,18 +148,22 @@ impl LinkStore {
         r#type: String,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
-        let prefix: Vec<u8> = LinkStore::links_by_target_key(target, 0, None)?;
+        let start_prefix: Vec<u8> = LinkStore::links_by_target_key(target, 0, None)?;
+        let stop_target = match target {
+            Target::TargetFid(fid) => Target::TargetFid(fid + 1),
+        };
+        let stop_prefix = LinkStore::links_by_target_key(&stop_target, 0, None)?;
 
         let mut message_keys = vec![];
         let mut last_key = vec![];
 
         store.db().for_each_iterator_by_prefix(
-            Some(prefix.to_vec()),
-            Some(increment_vec_u8(&prefix)),
+            Some(start_prefix.to_vec()),
+            Some(stop_prefix.to_vec()),
             page_options,
             |key, value| {
                 if r#type.is_empty() || value.eq(r#type.as_bytes()) {
-                    let ts_hash_offset = prefix.len();
+                    let ts_hash_offset = start_prefix.len();
                     let fid_offset: usize = ts_hash_offset + TS_HASH_LENGTH;
 
                     let fid =
@@ -183,7 +187,7 @@ impl LinkStore {
 
         let messages_bytes = get_many_messages_as_bytes(store.db().borrow(), message_keys)?;
         let next_page_token = if last_key.len() > 0 {
-            Some(last_key[prefix.len()..].to_vec())
+            Some(last_key.to_vec())
         } else {
             None
         };
