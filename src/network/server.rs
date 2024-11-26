@@ -157,6 +157,7 @@ impl SnapchainService for MySnapchainService {
         let mut page_token = None;
         for store in shard_stores {
             loop {
+                // TODO(aditi): We should stop pulling the raw db out of the shard store and create a new store type for events to house the db.
                 let old_events = HubEvent::get_events(
                     store.shard_store.db.clone(),
                     start_id,
