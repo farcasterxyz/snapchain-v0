@@ -160,7 +160,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let rpc_block_store = block_store.clone();
     tokio::spawn(async move {
-        let service = MySnapchainService::new(rpc_block_store, rpc_shard_stores, rpc_shard_senders);
+        let service = MySnapchainService::new(
+            rpc_block_store,
+            rpc_shard_stores,
+            rpc_shard_senders,
+            statsd_client.clone(),
+        );
 
         let resp = Server::builder()
             .add_service(SnapchainServiceServer::new(service))

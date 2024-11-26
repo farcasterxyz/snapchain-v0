@@ -24,10 +24,12 @@ async fn main() {
 
     let mut client = SnapchainServiceClient::connect(args.addr).await.unwrap();
 
-    send_message(
+    let resp = send_message(
         &mut client,
         &compose_message(6833, "Welcome from Rust!", None, Some(private_key)),
     )
     .await
     .unwrap();
+
+    println!("response: {:?}", resp);
 }

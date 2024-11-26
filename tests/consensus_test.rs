@@ -78,7 +78,7 @@ impl NodeForTest {
             Some(block_tx),
             block_store.clone(),
             make_tmp_path(),
-            statsd_client,
+            statsd_client.clone(),
         )
         .await;
 
@@ -112,8 +112,12 @@ impl NodeForTest {
         let grpc_shard_stores = node.shard_stores.clone();
         let grpc_shard_senders = node.shard_senders.clone();
         tokio::spawn(async move {
-            let service =
-                MySnapchainService::new(grpc_block_store, grpc_shard_stores, grpc_shard_senders);
+            let service = MySnapchainService::new(
+                grpc_block_store,
+                grpc_shard_stores,
+                grpc_shard_senders,
+                statsd_client.clone(),
+            );
 
             let grpc_socket_addr: SocketAddr = addr.parse().unwrap();
             let resp = Server::builder()

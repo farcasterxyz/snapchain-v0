@@ -1,4 +1,4 @@
-use cadence::{Counted, CountedExt, Gauged, StatsdClient};
+use cadence::{Counted, Gauged, StatsdClient, Timed};
 use std::sync::Arc;
 
 pub struct StatsdClientWrapper {
@@ -53,5 +53,9 @@ impl StatsdClientWrapper {
 
     pub fn gauge(&self, key: &str, value: u64) {
         _ = self.client.gauge(key, value)
+    }
+
+    pub fn time(&self, key: &str, value: u64) {
+        _ = self.client.time(key, value)
     }
 }

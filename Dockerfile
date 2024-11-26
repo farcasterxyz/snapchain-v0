@@ -59,6 +59,7 @@ COPY --from=builder \
     /usr/src/app/target/release/follow_blocks \
     /usr/src/app/target/release/setup_local_testnet \
     /usr/src/app/target/release/submit_message \
+    /usr/src/app/target/release/perftest \
     /app/
 
 ENV RUSTFLAGS="-Awarnings"
