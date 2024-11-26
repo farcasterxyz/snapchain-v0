@@ -573,7 +573,7 @@ impl ShardEngine {
             .get_adds_by_fid::<fn(&Message) -> bool>(fid, &PageOptions::default(), None)
     }
 
-    pub fn get_link_compact_state_message_by_fid(
+    pub fn get_link_compact_state_messages_by_fid(
         &self,
         fid: u32,
     ) -> Result<MessagesPage, HubError> {

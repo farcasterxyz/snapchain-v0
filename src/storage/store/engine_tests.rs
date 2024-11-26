@@ -348,7 +348,7 @@ mod tests {
 
         commit_message(&mut engine, &link_compact_state).await;
 
-        let link_result = engine.get_link_compact_state_message_by_fid(FID_FOR_TEST);
+        let link_result = engine.get_link_compact_state_messages_by_fid(FID_FOR_TEST);
         assert_eq!(1, link_result.unwrap().messages_bytes.len());
     }
 
