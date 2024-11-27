@@ -1,6 +1,6 @@
 use crate::core::types::FARCASTER_EPOCH;
 use crate::proto::msg as message;
-use crate::proto::onchain_event::{self, OnChainEvent, OnChainEventType};
+use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
 use ed25519_dalek::{SecretKey, Signer, SigningKey};
 use hex::FromHex;
 use message::CastType::Cast;

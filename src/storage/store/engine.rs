@@ -1,5 +1,4 @@
-use super::account::{CastStoreDef, LinkStore, OnchainEventStorageError};
-use super::shard::ShardStore;
+use super::account::OnchainEventStorageError;
 use crate::core::error::HubError;
 use crate::core::types::Height;
 use crate::proto::hub_event::HubEvent;
@@ -7,16 +6,13 @@ use crate::proto::msg::Message;
 use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
 use crate::proto::{hub_event, msg as message, snapchain};
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch};
-use crate::storage::store::account::{
-    CastStore, MessagesPage, OnchainEventStore, Store, StoreEventHandler,
-};
+use crate::storage::store::account::{CastStore, MessagesPage};
 use crate::storage::store::stores::{StoreLimits, Stores};
 use crate::storage::store::BlockStore;
 use crate::storage::trie;
-use crate::storage::trie::merkle_trie;
 use crate::storage::trie::merkle_trie::TrieKey;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
-use cadence::{Counted, CountedExt, Gauged};
+use cadence::{Counted, Gauged};
 use itertools::Itertools;
 use message::MessageType;
 use snapchain::{Block, ShardChunk, Transaction};
@@ -216,7 +212,7 @@ impl ShardEngine {
     // Groups messages by fid and creates a transaction for each fid
     fn create_transactions_from_mempool(
         &mut self,
-        mut messages: Vec<MempoolMessage>,
+        messages: Vec<MempoolMessage>,
     ) -> Vec<Transaction> {
         let mut transactions = vec![];
 

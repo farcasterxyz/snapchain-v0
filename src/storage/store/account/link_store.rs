@@ -5,13 +5,13 @@ use super::{
     store::{Store, StoreDef},
     MessagesPage, StoreEventHandler, PAGE_SIZE_MAX, TS_HASH_LENGTH,
 };
+use crate::proto::msg::LinkBody;
 use crate::{
     core::error::HubError,
     proto::msg::{link_body::Target, SignatureScheme},
     storage::util::vec_to_u8_24,
 };
 use crate::{proto::msg::message_data::Body, storage::db::PageOptions};
-use crate::{proto::msg::LinkBody, storage::util::increment_vec_u8};
 use crate::{
     proto::msg::MessageData,
     storage::constants::{RootPrefix, UserPostfix},

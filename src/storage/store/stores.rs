@@ -1,6 +1,9 @@
 use crate::proto::msg::MessageType;
 use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
-use crate::storage::store::account::{CastStore, CastStoreDef, IntoU8, LinkStore, OnchainEventStorageError, OnchainEventStore, Store, StoreEventHandler};
+use crate::storage::store::account::{
+    CastStore, CastStoreDef, IntoU8, LinkStore, OnchainEventStorageError, OnchainEventStore, Store,
+    StoreEventHandler,
+};
 use crate::storage::store::shard::ShardStore;
 use crate::storage::trie::merkle_trie;
 use crate::storage::trie::merkle_trie::TrieKey;

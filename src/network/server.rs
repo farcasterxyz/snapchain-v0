@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::core::error::HubError;
 use crate::proto::hub_event::HubEvent;
@@ -8,20 +7,15 @@ use crate::proto::rpc::snapchain_service_server::SnapchainService;
 use crate::proto::rpc::{
     BlocksRequest, BlocksResponse, ShardChunksRequest, ShardChunksResponse, SubscribeRequest,
 };
-use crate::storage::db::{PageOptions, RocksDB};
+use crate::storage::db::PageOptions;
 use crate::storage::store::engine::{MempoolMessage, Senders};
-use crate::storage::store::shard::ShardStore;
 use crate::storage::store::stores::Stores;
 use crate::storage::store::BlockStore;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
-use alloy::rpc::types::request;
-use futures::stream::select_all;
-use futures_util::pin_mut;
 use hex::ToHex;
-use tokio::select;
-use tokio::sync::{broadcast, mpsc};
-use tokio_stream::{wrappers::ReceiverStream, Stream};
-use tonic::{server, Request, Response, Status};
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
+use tonic::{Request, Response, Status};
 use tracing::info;
 
 pub struct MySnapchainService {
