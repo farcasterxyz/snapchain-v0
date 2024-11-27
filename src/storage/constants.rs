@@ -94,7 +94,12 @@ pub enum OnChainEventPostfix {
     OnChainEvents = 1,
 
     // Secondary indexes
+    #[allow(dead_code)] // TODO
     SignerByFid = 51,
+
+    #[allow(dead_code)] // TODO
     IdRegisterByFid = 52,
+
+    #[allow(dead_code)] // TODO
     IdRegisterByCustodyAddress = 53,
 }

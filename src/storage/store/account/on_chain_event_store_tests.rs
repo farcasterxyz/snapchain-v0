@@ -112,7 +112,6 @@ mod tests {
     #[test]
     fn test_storage_slot_with_mix_of_units() {
         let (store, _dir) = store();
-        let current_time = factory::time::current_timestamp();
 
         let expired_legacy_rent_event =
             factory::events_factory::create_rent_event(10, Some(1), None, true);

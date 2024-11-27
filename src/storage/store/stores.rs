@@ -60,6 +60,7 @@ impl Limits {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn zero() -> Limits {
         Limits {
             casts: 0,
@@ -71,6 +72,7 @@ impl Limits {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn for_test() -> Limits {
         Limits {
             casts: 4,

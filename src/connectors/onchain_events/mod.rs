@@ -104,6 +104,7 @@ pub enum SignerEvent {
 
 #[derive(Debug)]
 pub struct SignerMigratedEvent {
+    #[allow(dead_code)] // TODO
     migrated_at: u64,
 }
 
@@ -124,8 +125,13 @@ pub enum IdRegisterEvent {
 
 #[derive(Debug)]
 pub struct StorageRentEvent {
+    #[allow(dead_code)] // TODO
     payer: Address,
+
+    #[allow(dead_code)] // TODO
     units: u64,
+
+    #[allow(dead_code)] // TODO
     expiry: u64,
 }
 
@@ -139,14 +145,31 @@ pub enum EventType {
 
 #[derive(Debug)]
 pub struct Event {
+    #[allow(dead_code)] // TODO
     chain_id: u64,
+
+    #[allow(dead_code)] // TODO
     block_number: u64,
+
+    #[allow(dead_code)] // TODO
     block_hash: FixedBytes<32>,
+
+    #[allow(dead_code)] // TODO
     block_timestamp: u64,
+
+    #[allow(dead_code)] // TODO
     log_index: u64,
+
+    #[allow(dead_code)] // TODO
     fid: u64,
+
+    #[allow(dead_code)] // TODO
     tx_index: u64,
+
+    #[allow(dead_code)] // TODO
     version: u64,
+
+    #[allow(dead_code)] // TODO
     event_type: EventType,
 }
 

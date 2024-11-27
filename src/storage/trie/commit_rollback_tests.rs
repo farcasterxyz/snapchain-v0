@@ -4,7 +4,6 @@ mod tests {
     use crate::storage::trie::errors::TrieError;
     use crate::storage::trie::merkle_trie::MerkleTrie;
     use hex;
-    use rand::{seq::SliceRandom, thread_rng};
     use tempfile::TempDir;
 
     fn generate_hashes(seed: Vec<u8>, chain_size: usize) -> Vec<Vec<u8>> {
@@ -72,13 +71,6 @@ mod tests {
     fn test_merkle_trie_with_large_data() -> Result<(), TrieError> {
         let dir = TempDir::new().unwrap();
         let hashes1 = generate_hashes(vec![1], 10_000);
-
-        let hashes2 = {
-            let mut rng = thread_rng();
-            let mut hashes = hashes1.clone();
-            hashes.shuffle(&mut rng);
-            hashes
-        };
 
         {
             let db_path = dir.path().join("t1.db");

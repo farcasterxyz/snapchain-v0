@@ -2,12 +2,10 @@ use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use alloy::network;
 use hex;
 use libp2p::identity::ed25519::Keypair;
 use snapchain::network::server::MySnapchainService;
 use snapchain::node::snapchain_node::SnapchainNode;
-use snapchain::proto::msg as message;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::proto::snapchain::Block;
 use snapchain::storage::db::RocksDB;
@@ -143,6 +141,7 @@ impl NodeForTest {
         }
     }
 
+    #[allow(dead_code)] // TODO
     pub async fn recv_gossip_event(&mut self) -> Option<GossipEvent<SnapchainValidatorContext>> {
         self.gossip_rx.recv().await
     }
@@ -225,7 +224,7 @@ impl TestNetwork {
         Self { nodes }
     }
 
-    pub fn add_node(&mut self, new_node: NodeForTest) {
+    fn add_node(&mut self, new_node: NodeForTest) {
         for node in self.nodes.iter() {
             new_node.register_keypair(node.keypair.clone(), node.grpc_addr.clone());
             node.register_keypair(new_node.keypair.clone(), new_node.grpc_addr.clone());

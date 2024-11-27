@@ -30,12 +30,26 @@ struct TransfersData {
 #[derive(Deserialize, Debug)]
 struct Transfer {
     id: u64,
+
+    #[allow(dead_code)] // TODO
     timestamp: u64,
+
+    #[allow(dead_code)] // TODO
     username: String,
+
+    #[allow(dead_code)] // TODO
     owner: String,
+
+    #[allow(dead_code)] // TODO
     from: u64,
+
+    #[allow(dead_code)] // TODO
     to: u64,
+
+    #[allow(dead_code)] // TODO
     user_signature: String,
+
+    #[allow(dead_code)] // TODO
     server_signature: String,
 }
 
@@ -43,9 +57,6 @@ struct Transfer {
 enum FetchError {
     #[error("non-sequential IDs found")]
     NonSequentialIds { position: u64, id: u64 },
-
-    #[error("no new IDs found")]
-    NoNewIDs,
 
     #[error("stop fetching")]
     Stop,
@@ -112,7 +123,6 @@ impl Fetcher {
                     FetchError::Reqwest(request_error) => {
                         warn!(error = %request_error, "reqwest error fetching transfers");
                     }
-                    FetchError::NoNewIDs => {} // just sleep and retry
                     FetchError::Stop => {
                         info!(position = self.position, "stopped fetching transfers");
                         return;

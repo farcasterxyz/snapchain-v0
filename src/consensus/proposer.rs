@@ -27,6 +27,7 @@ pub fn current_time() -> u64 {
         - FARCASTER_EPOCH
 }
 
+#[allow(async_fn_in_trait)] // TODO
 pub trait Proposer {
     // Create a new block/shard chunk for the given height that will be proposed for confirmation to the other validators
     async fn propose_value(
@@ -77,7 +78,7 @@ impl ShardProposer {
     }
 
     async fn publish_new_shard_chunk(&self, shard_chunk: &ShardChunk) {
-        &self.tx_decision.send(shard_chunk.clone()).await;
+        let _ = &self.tx_decision.send(shard_chunk.clone()).await;
     }
 }
 
@@ -215,7 +216,9 @@ pub enum BlockProposerError {
 }
 
 pub struct BlockProposer {
+    #[allow(dead_code)] // TODO
     shard_id: SnapchainShard,
+
     address: Address,
     proposed_blocks: BTreeMap<ShardHash, FullProposal>,
     pending_chunks: BTreeMap<u64, Vec<ShardChunk>>,

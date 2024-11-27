@@ -41,6 +41,7 @@ mod tests {
         )
     }
 
+    #[allow(dead_code)]
     fn enable_logging() {
         let env_filter =
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
