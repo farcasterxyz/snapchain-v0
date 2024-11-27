@@ -396,6 +396,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_commit_user_data_messages() {
+        let timestamp = messages_factory::farcaster_time();
+        let (mut engine, _tmpdir) = new_engine();
+
+        let user_data_add = messages_factory::user_data::create_user_data_add(
+            FID_FOR_TEST,
+            message::UserDataType::Bio,
+            "Hi it's me".to_string(),
+            Some(timestamp),
+            None,
+        );
+
+        commit_message(&mut engine, &user_data_add).await;
+
+        let user_data_result = engine.get_user_data_by_fid(FID_FOR_TEST);
+        assert_eq!(1, user_data_result.unwrap().messages_bytes.len());
+    }
+
+    #[tokio::test]
     async fn test_account_roots() {
         let cast = messages_factory::casts::create_cast_add(FID_FOR_TEST, "msg1", None, None);
         let (mut engine, _tmpdir) = new_engine();

@@ -24,7 +24,7 @@ pub enum RootPrefix {
     // Network = 10,
 
     // /* Used to store fname server name proofs */
-    // FNameUserNameProof = 11,
+    FNameUserNameProof = 11,
 
     // /* Used to store on chain events */
     OnChainEvent = 12,
@@ -33,6 +33,9 @@ pub enum RootPrefix {
 
     // /* Used to index verifications by address */
     // VerificationByAddress = 14,
+
+    /* Used to index fname username proofs by fid */
+    FNameUserNameProofByFid = 15,
 }
 
 /** Copied from the JS code */

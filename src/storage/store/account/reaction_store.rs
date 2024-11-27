@@ -1,19 +1,17 @@
-use tracing::warn;
-
 use super::{
-    get_many_messages_as_bytes, get_message, make_cast_id_key, make_fid_key,
-    make_message_primary_key, make_user_key,
+    get_many_messages_as_bytes, make_cast_id_key, make_fid_key, make_message_primary_key,
+    make_user_key,
     store::{Store, StoreDef},
     MessagesPage, StoreEventHandler, PAGE_SIZE_MAX, TS_HASH_LENGTH,
 };
-use crate::{core::error::HubError, proto::msg::SignatureScheme, storage::util::vec_to_u8_24};
+use crate::{core::error::HubError, proto::msg::SignatureScheme};
 use crate::{proto::msg::message_data::Body, storage::db::PageOptions};
 use crate::{
     proto::msg::MessageData,
     storage::constants::{RootPrefix, UserPostfix},
 };
 use crate::{
-    proto::msg::{reaction_body::Target, LinkBody, ReactionBody, ReactionType},
+    proto::msg::{reaction_body::Target, ReactionBody, ReactionType},
     storage::util::increment_vec_u8,
 };
 use crate::{
