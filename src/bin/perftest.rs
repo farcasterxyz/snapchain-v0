@@ -33,6 +33,7 @@ pub struct SubmitMessageConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FollowBlocksConfig {
     pub rpc_addr: String,
+    pub enable: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -126,6 +127,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let submit_message_handles = start_submit_messages(messages_tx, cfg.clone());
 
     let follow_blocks_handle = tokio::spawn(async move {
+        if !cfg.follow_blocks.enable {
+            return;
+        }
         let addr = cfg.follow_blocks.rpc_addr.clone();
         follow_blocks(addr, blocks_tx).await.unwrap()
     });
@@ -177,7 +181,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 time_to_confirmation.clear();
                 block_times.clear();
                 iteration += 1;
-                if iteration > cfg.num_iterations {
+
+                // 0 iterations means go forever
+                if cfg.num_iterations > 0 && iteration > cfg.num_iterations {
                     for submit_message_handle in submit_message_handles {
                         submit_message_handle.abort();
                     }
