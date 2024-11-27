@@ -345,4 +345,58 @@ pub mod messages_factory {
             )
         }
     }
+
+    pub mod verifications {
+        use message::{
+            reaction_body::Target, ReactionBody, ReactionType, VerificationAddAddressBody,
+            VerificationRemoveBody,
+        };
+
+        use super::*;
+
+        pub fn create_verification_add(
+            fid: u32,
+            verification_type: u32,
+            address: String,
+            claim_signature: String,
+            block_hash: String,
+            timestamp: Option<u32>,
+            private_key: Option<SigningKey>,
+        ) -> message::Message {
+            let body = VerificationAddAddressBody {
+                address: address.encode_to_vec(),
+                claim_signature: claim_signature.encode_to_vec(),
+                block_hash: block_hash.encode_to_vec(),
+                verification_type,
+                chain_id: 0,
+                protocol: 0,
+            };
+            create_message_with_data(
+                fid,
+                MessageType::VerificationAddEthAddress,
+                message::message_data::Body::VerificationAddAddressBody(body),
+                timestamp,
+                private_key,
+            )
+        }
+
+        pub fn create_verification_remove(
+            fid: u32,
+            address: String,
+            timestamp: Option<u32>,
+            private_key: Option<SigningKey>,
+        ) -> message::Message {
+            let body = VerificationRemoveBody {
+                address: address.encode_to_vec(),
+                protocol: 0,
+            };
+            create_message_with_data(
+                fid,
+                MessageType::VerificationRemove,
+                message::message_data::Body::VerificationRemoveBody(body),
+                timestamp,
+                private_key,
+            )
+        }
+    }
 }
