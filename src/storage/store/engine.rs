@@ -271,13 +271,29 @@ impl ShardEngine {
     ) -> Result<Vec<HubEvent>, EngineError> {
         let mut events = vec![];
         for snapchain_txn in transactions {
-            let (_, txn_events) = self.replay_snapchain_txn(snapchain_txn, txn_batch)?;
+            let (account_root, txn_events) = self.replay_snapchain_txn(snapchain_txn, txn_batch)?;
+            // Reject early if account roots fail to match (shard roots will definitely fail)
+            if &account_root != &snapchain_txn.account_root {
+                warn!(
+                    fid = snapchain_txn.fid,
+                    new_account_root = hex::encode(&account_root),
+                    tx_account_root = hex::encode(&snapchain_txn.account_root),
+                    "Account root mismatch"
+                );
+                return Err(EngineError::HashMismatch);
+            }
             events.extend(txn_events);
         }
 
         let root1 = self.stores.trie.root_hash()?;
 
         if &root1 != shard_root {
+            warn!(
+                shard_id = self.shard_id,
+                new_shard_root = hex::encode(&root1),
+                tx_shard_root = hex::encode(shard_root),
+                "Shard root mismatch"
+            );
             return Err(EngineError::HashMismatch);
         }
 
@@ -295,6 +311,27 @@ impl ShardEngine {
         let mut system_messages_count = 0;
         let mut events = vec![];
         let mut message_types = HashSet::new();
+
+        // System messages first, then user messages and finally prunes
+        for msg in &snapchain_txn.system_messages {
+            if let Some(onchain_event) = &msg.on_chain_event {
+                let event = self
+                    .stores
+                    .onchain_event_store
+                    .merge_onchain_event(onchain_event.clone(), txn_batch);
+
+                match event {
+                    Ok(hub_event) => {
+                        self.update_trie(&hub_event, txn_batch)?;
+                        events.push(hub_event.clone());
+                        system_messages_count += 1;
+                    }
+                    Err(err) => {
+                        warn!("Error merging onchain event: {:?}", err);
+                    }
+                }
+            }
+        }
 
         for msg in &snapchain_txn.user_messages {
             // Errors are validated based on the shard root
@@ -338,26 +375,6 @@ impl ShardEngine {
             }
         }
 
-        for msg in &snapchain_txn.system_messages {
-            if let Some(onchain_event) = &msg.on_chain_event {
-                let event = self
-                    .stores
-                    .onchain_event_store
-                    .merge_onchain_event(onchain_event.clone(), txn_batch);
-
-                match event {
-                    Ok(hub_event) => {
-                        self.update_trie(&hub_event, txn_batch)?;
-                        events.push(hub_event.clone());
-                        system_messages_count += 1;
-                    }
-                    Err(err) => {
-                        warn!("Error merging onchain event: {:?}", err);
-                    }
-                }
-            }
-        }
-
         let account_root = self.stores.trie.get_hash(
             &self.db,
             txn_batch,
@@ -369,7 +386,8 @@ impl ShardEngine {
             num_system_messages = total_system_messages,
             user_messages_merged = user_messages_count,
             system_messages_merged = system_messages_count,
-            account_root = hex::encode(&account_root),
+            new_account_root = hex::encode(&account_root),
+            tx_account_root = hex::encode(&snapchain_txn.account_root),
             "Replayed transaction"
         );
 
@@ -425,27 +443,37 @@ impl ShardEngine {
         msg_type: MessageType,
         txn_batch: &mut RocksDbTransactionBatch,
     ) -> Result<Vec<HubEvent>, EngineError> {
+        let (current_count, max_count) = self
+            .stores
+            .get_usage(fid, msg_type, txn_batch)
+            .map_err(|_| EngineError::UsageCountError)?;
+
         let events = match msg_type {
-            MessageType::CastAdd | MessageType::CastRemove => {
-                let (current_count, max_count) = self
-                    .stores
-                    .get_usage(fid, msg_type, txn_batch)
-                    .map_err(|_| EngineError::UsageCountError)?;
-                self.stores
-                    .cast_store
-                    .prune_messages(fid, current_count, max_count, txn_batch)
-                    .map_err(EngineError::new_store_error(vec![]))
-            }
-            MessageType::LinkAdd | MessageType::LinkRemove | MessageType::LinkCompactState => {
-                let (current_count, max_count) = self
-                    .stores
-                    .get_usage(fid, msg_type, txn_batch)
-                    .map_err(|_| EngineError::UsageCountError)?;
-                self.stores
-                    .link_store
-                    .prune_messages(fid, current_count, max_count, txn_batch)
-                    .map_err(EngineError::new_store_error(vec![]))
-            }
+            MessageType::CastAdd | MessageType::CastRemove => self
+                .stores
+                .cast_store
+                .prune_messages(fid, current_count, max_count, txn_batch)
+                .map_err(EngineError::new_store_error(vec![])),
+            MessageType::LinkAdd | MessageType::LinkRemove | MessageType::LinkCompactState => self
+                .stores
+                .link_store
+                .prune_messages(fid, current_count, max_count, txn_batch)
+                .map_err(EngineError::new_store_error(vec![])),
+            MessageType::ReactionAdd | MessageType::ReactionRemove => self
+                .stores
+                .reaction_store
+                .prune_messages(fid, current_count, max_count, txn_batch)
+                .map_err(EngineError::new_store_error(vec![])),
+            MessageType::UserDataAdd => self
+                .stores
+                .user_data_store
+                .prune_messages(fid, current_count, max_count, txn_batch)
+                .map_err(EngineError::new_store_error(vec![])),
+            MessageType::VerificationAddEthAddress | MessageType::VerificationRemove => self
+                .stores
+                .verification_store
+                .prune_messages(fid, current_count, max_count, txn_batch)
+                .map_err(EngineError::new_store_error(vec![])),
             unhandled_type => {
                 return Err(EngineError::UnsupportedMessageType(unhandled_type));
             }

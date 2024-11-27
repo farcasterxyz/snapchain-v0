@@ -1,21 +1,17 @@
 use tracing::info;
 
 use super::{
-    get_many_messages_as_bytes, get_message, make_fid_key, make_message_primary_key, make_ts_hash,
-    make_user_key, message_decode, read_fid_key,
+    make_fid_key, make_ts_hash, make_user_key, message_decode, read_fid_key,
     store::{Store, StoreDef},
-    MessagesPage, StoreEventHandler, FID_BYTES, PAGE_SIZE_MAX, TS_HASH_LENGTH,
+    MessagesPage, StoreEventHandler, FID_BYTES, TS_HASH_LENGTH,
 };
+use crate::storage::util::increment_vec_u8;
 use crate::{
     core::error::HubError,
-    proto::msg::{
-        link_body::Target, Protocol, SignatureScheme, VerificationAddAddressBody,
-        VerificationRemoveBody,
-    },
-    storage::{store::account::delete_message_transaction, util::vec_to_u8_24},
+    proto::msg::{Protocol, SignatureScheme, VerificationAddAddressBody, VerificationRemoveBody},
+    storage::store::account::delete_message_transaction,
 };
 use crate::{proto::msg::message_data::Body, storage::db::PageOptions};
-use crate::{proto::msg::LinkBody, storage::util::increment_vec_u8};
 use crate::{
     proto::msg::MessageData,
     storage::constants::{RootPrefix, UserPostfix},
@@ -24,7 +20,7 @@ use crate::{
     proto::msg::{Message, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
-use std::{borrow::Borrow, convert::TryInto, sync::Arc};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct VerificationStoreDef {
