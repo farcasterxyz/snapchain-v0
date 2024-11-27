@@ -19,6 +19,9 @@ use super::account::{
 pub enum StoresError {
     #[error(transparent)]
     OnchainEventError(#[from] OnchainEventStorageError),
+
+    #[error("unsupported message type")]
+    UnsupportedMessageType(MessageType),
 }
 
 #[derive(Clone)]
@@ -160,17 +163,17 @@ impl Stores {
         }
     }
 
-    pub fn is_at_limit(
+    pub fn get_usage(
         &self,
         fid: u32,
         message_type: MessageType,
         txn_batch: &mut RocksDbTransactionBatch,
-    ) -> Result<bool, StoresError> {
+    ) -> Result<(u32, u32), StoresError> {
         let message_count = self.trie.get_count(
             &self.db,
             txn_batch,
             &TrieKey::for_message_type(fid, message_type.into_u8()),
-        );
+        ) as u32;
         let slot = self
             .onchain_event_store
             .get_storage_slot_for_fid(fid)
@@ -179,7 +182,7 @@ impl Stores {
             self.store_limits
                 .max_messages(slot.units, slot.legacy_units, message_type);
 
-        Ok(message_count >= max_messages as u64)
+        Ok((message_count, max_messages))
     }
 }
 

@@ -3,6 +3,7 @@ use super::errors::TrieError;
 use super::trie_node::{TrieNode, TIMESTAMP_LENGTH};
 use crate::proto::msg as message;
 use crate::proto::onchain_event;
+use crate::storage::store::account::IntoU8;
 use std::collections::HashMap;
 use tracing::info;
 
@@ -12,7 +13,7 @@ pub struct TrieKey {}
 
 impl TrieKey {
     pub fn for_message(msg: &message::Message) -> Vec<u8> {
-        let mut key = Self::for_message_type(msg.fid(), msg.msg_type());
+        let mut key = Self::for_message_type(msg.fid(), msg.msg_type().into_u8());
         key.extend_from_slice(&msg.hash);
         key
     }

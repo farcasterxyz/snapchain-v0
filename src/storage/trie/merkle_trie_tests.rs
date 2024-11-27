@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
+    use crate::storage::store::account::IntoU8;
     use crate::storage::trie::errors::TrieError;
     use crate::storage::trie::merkle_trie::{MerkleTrie, TrieKey};
     use crate::utils::factory::{events_factory, messages_factory};
@@ -175,14 +176,14 @@ mod tests {
         let message = messages_factory::casts::create_cast_add(1234, "test", None, None);
         let message_key = TrieKey::for_message(&message);
         assert_eq!(message_key[0..4], TrieKey::for_fid(1234));
-        assert_eq!(message_key[4], message.msg_type());
+        assert_eq!(message_key[4], message.msg_type().into_u8());
         assert_eq!(message_key[5..], message.hash);
 
         let delete_message =
             messages_factory::casts::create_cast_remove(321456, &message.hash, None, None);
         let delete_message_key = TrieKey::for_message(&delete_message);
         assert_eq!(delete_message_key[0..4], TrieKey::for_fid(321456));
-        assert_eq!(delete_message_key[4], delete_message.msg_type());
+        assert_eq!(delete_message_key[4], delete_message.msg_type().into_u8());
         assert_eq!(delete_message_key[5..], delete_message.hash);
 
         let event = events_factory::create_onchain_event(1234);

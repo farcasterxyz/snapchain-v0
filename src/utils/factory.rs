@@ -347,10 +347,7 @@ pub mod messages_factory {
     }
 
     pub mod verifications {
-        use message::{
-            reaction_body::Target, ReactionBody, ReactionType, VerificationAddAddressBody,
-            VerificationRemoveBody,
-        };
+        use message::{VerificationAddAddressBody, VerificationRemoveBody};
 
         use super::*;
 
