@@ -274,4 +274,50 @@ pub mod messages_factory {
             )
         }
     }
+
+    pub mod reactions {
+        use message::{reaction_body::Target, ReactionBody, ReactionType};
+
+        use super::*;
+
+        pub fn create_reaction_add(
+            fid: u32,
+            reaction_type: ReactionType,
+            target_url: String,
+            timestamp: Option<u32>,
+            private_key: Option<SigningKey>,
+        ) -> message::Message {
+            let reaction_body = ReactionBody {
+                r#type: reaction_type as i32,
+                target: Some(Target::TargetUrl(target_url)),
+            };
+            create_message_with_data(
+                fid,
+                MessageType::ReactionAdd,
+                message::message_data::Body::ReactionBody(reaction_body),
+                timestamp,
+                private_key,
+            )
+        }
+
+        pub fn create_reaction_remove(
+            fid: u32,
+            reaction_type: ReactionType,
+            target_url: String,
+            timestamp: Option<u32>,
+            private_key: Option<SigningKey>,
+        ) -> message::Message {
+            let reaction_body = ReactionBody {
+                r#type: reaction_type as i32,
+                target: Some(Target::TargetUrl(target_url)),
+            };
+            create_message_with_data(
+                fid,
+                MessageType::ReactionRemove,
+                message::message_data::Body::ReactionBody(reaction_body),
+                timestamp,
+                private_key,
+            )
+        }
+    }
 }

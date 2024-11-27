@@ -5,13 +5,13 @@ use super::{
     store::{Store, StoreDef},
     MessagesPage, StoreEventHandler, PAGE_SIZE_MAX, TS_HASH_LENGTH,
 };
-use crate::proto::msg::LinkBody;
 use crate::{
     core::error::HubError,
     proto::msg::{link_body::Target, SignatureScheme},
     storage::util::vec_to_u8_24,
 };
 use crate::{proto::msg::message_data::Body, storage::db::PageOptions};
+use crate::{proto::msg::LinkBody, storage::util::increment_vec_u8};
 use crate::{
     proto::msg::MessageData,
     storage::constants::{RootPrefix, UserPostfix},
@@ -149,17 +149,13 @@ impl LinkStore {
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
         let start_prefix: Vec<u8> = LinkStore::links_by_target_key(target, 0, None)?;
-        let stop_target = match target {
-            Target::TargetFid(fid) => Target::TargetFid(fid + 1),
-        };
-        let stop_prefix = LinkStore::links_by_target_key(&stop_target, 0, None)?;
 
         let mut message_keys = vec![];
         let mut last_key = vec![];
 
         store.db().for_each_iterator_by_prefix(
             Some(start_prefix.to_vec()),
-            Some(stop_prefix.to_vec()),
+            Some(increment_vec_u8(&start_prefix)),
             page_options,
             |key, value| {
                 if r#type.is_empty() || value.eq(r#type.as_bytes()) {
