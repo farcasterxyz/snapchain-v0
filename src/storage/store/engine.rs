@@ -1,5 +1,4 @@
-use super::account::{CastStoreDef, LinkStore, OnchainEventStorageError};
-use super::shard::ShardStore;
+use super::account::OnchainEventStorageError;
 use crate::core::error::HubError;
 use crate::core::types::Height;
 use crate::proto::hub_event::HubEvent;
@@ -7,15 +6,13 @@ use crate::proto::msg::Message;
 use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
 use crate::proto::{hub_event, msg as message, snapchain};
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch};
-use crate::storage::store::account::{
-    CastStore, MessagesPage, OnchainEventStore, Store, StoreEventHandler,
-};
+use crate::storage::store::account::{CastStore, MessagesPage};
+use crate::storage::store::stores::{StoreLimits, Stores};
 use crate::storage::store::BlockStore;
 use crate::storage::trie;
-use crate::storage::trie::merkle_trie;
 use crate::storage::trie::merkle_trie::TrieKey;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
-use cadence::{Counted, CountedExt, Gauged};
+use cadence::{Counted, Gauged};
 use itertools::Itertools;
 use message::MessageType;
 use snapchain::{Block, ShardChunk, Transaction};
@@ -87,35 +84,6 @@ pub struct ShardStateChange {
 }
 
 #[derive(Clone)]
-pub struct Stores {
-    pub shard_store: ShardStore,
-    pub cast_store: Store<CastStoreDef>,
-    pub link_store: Store<LinkStore>,
-    pub onchain_event_store: OnchainEventStore,
-    pub(crate) trie: merkle_trie::MerkleTrie,
-}
-
-impl Stores {
-    pub fn new(db: Arc<RocksDB>) -> Stores {
-        let mut trie = merkle_trie::MerkleTrie::new();
-        trie.initialize(&db).unwrap();
-
-        let event_handler = StoreEventHandler::new(None, None, None);
-        let shard_store = ShardStore::new(db.clone());
-        let cast_store = CastStore::new(db.clone(), event_handler.clone(), 100);
-        let link_store = LinkStore::new(db.clone(), event_handler.clone(), 100);
-        let onchain_event_store = OnchainEventStore::new(db.clone(), event_handler.clone());
-        Stores {
-            trie,
-            shard_store,
-            cast_store,
-            link_store,
-            onchain_event_store,
-        }
-    }
-}
-
-#[derive(Clone)]
 pub struct Senders {
     pub messages_tx: mpsc::Sender<MempoolMessage>,
     pub events_tx: broadcast::Sender<HubEvent>,
@@ -154,12 +122,17 @@ fn encode_vec(data: &[Vec<u8>]) -> String {
 }
 
 impl ShardEngine {
-    pub fn new(db: Arc<RocksDB>, shard_id: u32, statsd_client: StatsdClientWrapper) -> ShardEngine {
+    pub fn new(
+        db: Arc<RocksDB>,
+        shard_id: u32,
+        store_limits: StoreLimits,
+        statsd_client: StatsdClientWrapper,
+    ) -> ShardEngine {
         // TODO: adding the trie here introduces many calls that want to return errors. Rethink unwrap strategy.
         let (messages_tx, messages_rx) = mpsc::channel::<MempoolMessage>(10_000);
         ShardEngine {
             shard_id,
-            stores: Stores::new(db.clone()),
+            stores: Stores::new(db.clone(), store_limits),
             senders: Senders::new(messages_tx),
             messages_rx,
             db,
@@ -239,7 +212,7 @@ impl ShardEngine {
     // Groups messages by fid and creates a transaction for each fid
     fn create_transactions_from_mempool(
         &mut self,
-        mut messages: Vec<MempoolMessage>,
+        messages: Vec<MempoolMessage>,
     ) -> Vec<Transaction> {
         let mut transactions = vec![];
 

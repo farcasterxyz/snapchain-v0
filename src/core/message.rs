@@ -14,9 +14,9 @@ impl message::Message {
         }
     }
 
-    pub fn msg_type(&self) -> u32 {
+    pub fn msg_type(&self) -> u8 {
         if self.data.is_some() {
-            self.data.as_ref().unwrap().r#type as u32
+            self.data.as_ref().unwrap().r#type as u8
         } else {
             0
         }

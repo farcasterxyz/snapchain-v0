@@ -9,7 +9,8 @@ mod tests {
     use crate::proto::rpc::snapchain_service_server::SnapchainService;
     use crate::proto::rpc::SubscribeRequest;
     use crate::storage::db::{self, RocksDB, RocksDbTransactionBatch};
-    use crate::storage::store::engine::{Senders, Stores};
+    use crate::storage::store::engine::Senders;
+    use crate::storage::store::stores::{StoreLimits, Stores};
     use crate::storage::store::BlockStore;
     use crate::utils::statsd_wrapper::StatsdClientWrapper;
     use futures::StreamExt;
@@ -99,10 +100,10 @@ mod tests {
 
         let (msgs_tx, _msgs_rx) = mpsc::channel(100);
 
-        let shard1_stores = Stores::new(db1);
+        let shard1_stores = Stores::new(db1, StoreLimits::default());
         let shard1_senders = Senders::new(msgs_tx.clone());
 
-        let shard2_stores = Stores::new(db2);
+        let shard2_stores = Stores::new(db2, StoreLimits::default());
         let shard2_senders = Senders::new(msgs_tx.clone());
         let stores = HashMap::from([(1, shard1_stores), (2, shard2_stores)]);
         let senders = HashMap::from([(1, shard1_senders), (2, shard2_senders)]);

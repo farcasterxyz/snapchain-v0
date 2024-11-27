@@ -12,10 +12,15 @@ pub struct TrieKey {}
 
 impl TrieKey {
     pub fn for_message(msg: &message::Message) -> Vec<u8> {
-        let mut key = Vec::new();
-        key.extend_from_slice(&Self::for_fid(msg.fid()));
-        key.push(msg.msg_type() as u8);
+        let mut key = Self::for_message_type(msg.fid(), msg.msg_type());
         key.extend_from_slice(&msg.hash);
+        key
+    }
+
+    pub fn for_message_type(fid: u32, msg_type: u8) -> Vec<u8> {
+        let mut key = Vec::new();
+        key.extend_from_slice(&Self::for_fid(fid));
+        key.push(msg_type);
         key
     }
 
@@ -213,6 +218,17 @@ impl MerkleTrie {
         self.get_node(db, txn_batch, prefix)
             .map(|node| node.hash())
             .unwrap_or(vec![])
+    }
+
+    pub fn get_count(
+        &self,
+        db: &RocksDB,
+        txn_batch: &mut RocksDbTransactionBatch,
+        prefix: &[u8],
+    ) -> u64 {
+        self.get_node(db, txn_batch, prefix)
+            .map(|node| node.items())
+            .unwrap_or(0) as u64
     }
 
     pub fn root_hash(&self) -> Result<Vec<u8>, TrieError> {

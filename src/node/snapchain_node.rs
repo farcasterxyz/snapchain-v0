@@ -6,11 +6,11 @@ use crate::core::types::{
     SnapchainValidatorSet,
 };
 use crate::network::gossip::GossipEvent;
-use crate::proto::hub_event::HubEvent;
 use crate::proto::snapchain::{Block, ShardChunk};
 use crate::storage::db::RocksDB;
-use crate::storage::store::engine::{BlockEngine, MempoolMessage, Senders, ShardEngine, Stores};
-use crate::storage::store::shard::ShardStore;
+use crate::storage::store::engine::{BlockEngine, Senders, ShardEngine};
+use crate::storage::store::stores::StoreLimits;
+use crate::storage::store::stores::Stores;
 use crate::storage::store::BlockStore;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use libp2p::identity::ed25519::Keypair;
@@ -19,7 +19,7 @@ use malachite_metrics::Metrics;
 use ractor::ActorRef;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use tracing::warn;
 
 const MAX_SHARDS: u32 = 3;
@@ -83,7 +83,12 @@ impl SnapchainNode {
             let db = RocksDB::new(format!("{}/shard{}", rocksdb_dir, shard_id).as_str());
             db.open().unwrap();
 
-            let engine = ShardEngine::new(Arc::new(db), shard_id, statsd_client.clone());
+            let engine = ShardEngine::new(
+                Arc::new(db),
+                shard_id,
+                StoreLimits::default(),
+                statsd_client.clone(),
+            );
 
             shard_senders.insert(shard_id, engine.get_senders());
             shard_stores.insert(shard_id, engine.get_stores());
