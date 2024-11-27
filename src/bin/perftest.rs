@@ -6,7 +6,6 @@ use figment::{
 };
 use hex;
 use hex::FromHex;
-use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use snapchain::consensus::proposer::current_time;
 use snapchain::proto::msg as message;

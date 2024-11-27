@@ -857,6 +857,7 @@ impl<T: StoreDef + Clone> Store<T> {
         Ok(hub_event)
     }
 
+    #[allow(dead_code)] // TODO
     fn prune_messages(
         &self,
         fid: u32,

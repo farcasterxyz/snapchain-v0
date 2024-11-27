@@ -78,7 +78,7 @@ fn get_block_page_by_prefix(
             Ok(false) // Continue iterating
         },
     )
-    .map_err(|e| BlockStorageError::TooManyBlocksInResult)?; // TODO: Return the right error
+    .map_err(|_| BlockStorageError::TooManyBlocksInResult)?; // TODO: Return the right error
 
     let next_page_token = if last_key.len() > 0 {
         Some(last_key)

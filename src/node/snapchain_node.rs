@@ -29,7 +29,6 @@ pub struct SnapchainNode {
     pub shard_stores: HashMap<u32, Stores>,
     pub shard_senders: HashMap<u32, Senders>,
     pub address: Address,
-    statsd_client: StatsdClientWrapper,
 }
 
 impl SnapchainNode {
@@ -178,7 +177,6 @@ impl SnapchainNode {
         Self {
             consensus_actors,
             address: validator_address,
-            statsd_client,
             shard_senders,
             shard_stores,
         }

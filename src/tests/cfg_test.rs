@@ -42,7 +42,7 @@ mod tests {
         T: FnOnce(),
     {
         let mut restore: Vec<Env> = Vec::new();
-        for Env(key, val) in &envs {
+        for Env(key, _) in &envs {
             let existing = env::var(key);
             let to_push: Env = match existing {
                 Ok(val) => set(key, val.as_str()),

@@ -12,7 +12,6 @@ use crate::storage::store::BlockStore;
 use crate::storage::trie;
 use crate::storage::trie::merkle_trie::TrieKey;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
-use cadence::{Counted, Gauged};
 use itertools::Itertools;
 use message::MessageType;
 use snapchain::{Block, ShardChunk, Transaction};
@@ -114,13 +113,6 @@ pub struct ShardEngine {
     statsd_client: StatsdClientWrapper,
 }
 
-fn encode_vec(data: &[Vec<u8>]) -> String {
-    data.iter()
-        .map(|vec| hex::encode(vec))
-        .collect::<Vec<String>>()
-        .join(", ")
-}
-
 impl ShardEngine {
     pub fn new(
         db: Arc<RocksDB>,
@@ -166,6 +158,7 @@ impl ShardEngine {
         self.senders.clone()
     }
 
+    #[cfg(test)]
     pub(crate) fn trie_root_hash(&self) -> Vec<u8> {
         self.stores.trie.root_hash().unwrap()
     }
@@ -449,11 +442,11 @@ impl ShardEngine {
         self.db.commit(txn).unwrap();
         for event in events {
             // An error here just means there are no active receivers, which is fine and will happen if there are no active subscribe rpcs
-            self.senders.events_tx.send(event);
+            let _ = self.senders.events_tx.send(event);
         }
         self.stores.trie.reload(&self.db).unwrap();
 
-        self.emit_commit_metrics(&shard_chunk);
+        _ = self.emit_commit_metrics(&shard_chunk);
 
         match self.stores.shard_store.put_shard_chunk(shard_chunk) {
             Err(err) => {
@@ -505,6 +498,7 @@ impl ShardEngine {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn trie_key_exists(&mut self, sync_id: &Vec<u8>) -> bool {
         self.stores
             .trie

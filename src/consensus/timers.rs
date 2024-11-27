@@ -92,6 +92,7 @@ where
         );
     }
 
+    #[allow(dead_code)] // TODO
     /// Check if a timer with a given `key` is active, ie. it hasn't been canceled nor has it elapsed yet.
     pub fn is_timer_active(&self, key: &Key) -> bool {
         self.timers.contains_key(key)
@@ -210,7 +211,7 @@ mod tests {
         async fn handle(
             &self,
             _myself: ActorRef<TestMsg>,
-            TestMsg(elapsed): TestMsg,
+            TestMsg(_elapsed): TestMsg,
             _state: &mut (),
         ) -> Result<(), ractor::ActorProcessingErr> {
             Ok(())

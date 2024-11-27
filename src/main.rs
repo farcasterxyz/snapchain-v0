@@ -1,8 +1,5 @@
-use cadence::{Counted, CountedExt, Gauged};
 use malachite_metrics::{Metrics, SharedRegistry};
-use snapchain::proto::snapchain::Block;
 use snapchain::storage::store::BlockStore;
-use std::collections::HashMap;
 use std::error::Error;
 use std::net;
 use std::net::SocketAddr;

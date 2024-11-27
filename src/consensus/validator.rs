@@ -1,7 +1,7 @@
 use crate::consensus::proposer::{BlockProposer, Proposer, ShardProposer};
 use crate::core::types::{
-    Address, Height, ShardHash, ShardId, SnapchainShard, SnapchainValidator,
-    SnapchainValidatorContext, SnapchainValidatorSet,
+    Address, Height, ShardHash, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
+    SnapchainValidatorSet,
 };
 use crate::proto::snapchain::FullProposal;
 use malachite_common::{Round, ValidatorSet};
@@ -12,7 +12,10 @@ use tracing::error;
 
 pub struct ShardValidator {
     pub(crate) shard_id: SnapchainShard,
+
+    #[allow(dead_code)] // TODO
     address: Address,
+
     validator_set: SnapchainValidatorSet,
     confirmed_height: Option<Height>,
     current_round: Round,
