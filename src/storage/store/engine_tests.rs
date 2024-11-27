@@ -3,7 +3,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::proto::hub_event::HubEvent;
-    use crate::proto::msg as message;
+    use crate::proto::msg::{self as message, ReactionType};
     use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
     use crate::proto::snapchain::{Height, ShardChunk, ShardHeader, Transaction};
     use crate::storage::db;
@@ -360,6 +360,39 @@ mod tests {
 
         let link_result = engine.get_link_compact_state_messages_by_fid(FID_FOR_TEST);
         assert_eq!(1, link_result.unwrap().messages_bytes.len());
+    }
+
+    #[tokio::test]
+    async fn test_commit_reaction_messages() {
+        let timestamp = messages_factory::farcaster_time();
+        let target_url = "exampleurl".to_string();
+        let (mut engine, _tmpdir) = new_engine();
+
+        let reaction_add = messages_factory::reactions::create_reaction_add(
+            FID_FOR_TEST,
+            ReactionType::Like,
+            target_url.clone(),
+            Some(timestamp),
+            None,
+        );
+
+        commit_message(&mut engine, &reaction_add).await;
+
+        let reaction_result = engine.get_reactions_by_fid(FID_FOR_TEST);
+        assert_eq!(1, reaction_result.unwrap().messages_bytes.len());
+
+        let reaction_remove = messages_factory::reactions::create_reaction_remove(
+            FID_FOR_TEST,
+            ReactionType::Like,
+            target_url.clone(),
+            Some(timestamp),
+            None,
+        );
+
+        commit_message(&mut engine, &reaction_remove).await;
+
+        let reaction_result = engine.get_reactions_by_fid(FID_FOR_TEST);
+        assert_eq!(0, reaction_result.unwrap().messages_bytes.len());
     }
 
     #[tokio::test]

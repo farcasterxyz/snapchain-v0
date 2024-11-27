@@ -360,6 +360,11 @@ impl ShardEngine {
                 .link_store
                 .merge(msg, txn_batch)
                 .map_err(EngineError::new_store_error(msg.hash.clone())),
+            MessageType::ReactionAdd | MessageType::ReactionRemove => self
+                .stores
+                .reaction_store
+                .merge(msg, txn_batch)
+                .map_err(EngineError::new_store_error(msg.hash.clone())),
             unhandled_type => {
                 return Err(EngineError::UnsupportedMessageType(unhandled_type));
             }
@@ -543,6 +548,12 @@ impl ShardEngine {
         self.stores
             .link_store
             .get_compact_state_messages_by_fid(fid, &PageOptions::default())
+    }
+
+    pub fn get_reactions_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
+        self.stores
+            .reaction_store
+            .get_adds_by_fid::<fn(&Message) -> bool>(fid, &PageOptions::default(), None)
     }
 
     pub fn get_onchain_events(
