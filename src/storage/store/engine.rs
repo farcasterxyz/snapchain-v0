@@ -365,6 +365,11 @@ impl ShardEngine {
                 .reaction_store
                 .merge(msg, txn_batch)
                 .map_err(EngineError::new_store_error(msg.hash.clone())),
+            MessageType::UserDataAdd => self
+                .stores
+                .user_data_store
+                .merge(msg, txn_batch)
+                .map_err(EngineError::new_store_error(msg.hash.clone())),
             unhandled_type => {
                 return Err(EngineError::UnsupportedMessageType(unhandled_type));
             }
@@ -553,6 +558,12 @@ impl ShardEngine {
     pub fn get_reactions_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
         self.stores
             .reaction_store
+            .get_adds_by_fid::<fn(&Message) -> bool>(fid, &PageOptions::default(), None)
+    }
+
+    pub fn get_user_data_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
+        self.stores
+            .user_data_store
             .get_adds_by_fid::<fn(&Message) -> bool>(fid, &PageOptions::default(), None)
     }
 

@@ -222,7 +222,7 @@ where
     )?;
 
     let next_page_token = if last_key.len() > 0 {
-        Some(last_key[prefix.len()..].to_vec())
+        Some(last_key.to_vec())
     } else {
         None
     };

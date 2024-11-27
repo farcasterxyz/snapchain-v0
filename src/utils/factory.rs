@@ -320,4 +320,29 @@ pub mod messages_factory {
             )
         }
     }
+    pub mod user_data {
+        use message::{UserDataBody, UserDataType};
+
+        use super::*;
+
+        pub fn create_user_data_add(
+            fid: u32,
+            user_data_type: UserDataType,
+            value: String,
+            timestamp: Option<u32>,
+            private_key: Option<SigningKey>,
+        ) -> message::Message {
+            let user_data_body = UserDataBody {
+                r#type: user_data_type as i32,
+                value,
+            };
+            create_message_with_data(
+                fid,
+                MessageType::UserDataAdd,
+                message::message_data::Body::UserDataBody(user_data_body),
+                timestamp,
+                private_key,
+            )
+        }
+    }
 }

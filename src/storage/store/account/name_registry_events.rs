@@ -1,11 +1,15 @@
 use prost::Message;
 
 use crate::{
-    db::{RocksDB, RocksDbTransactionBatch},
-    protos::UserNameProof,
+    core::error::HubError,
+    proto::username_proof::UserNameProof,
+    storage::{
+        constants::RootPrefix,
+        db::{RocksDB, RocksDbTransactionBatch},
+    },
 };
 
-use super::{make_fid_key, HubError, RootPrefix};
+use super::make_fid_key;
 
 pub fn make_fname_username_proof_key(name: &[u8]) -> Vec<u8> {
     let mut key = Vec::with_capacity(1 + 32);
