@@ -149,7 +149,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         gossip_tx.clone(),
         None,
         block_store.clone(),
-        app_config.rocksdb_dir,
+        app_config.rocksdb_dir.clone(),
         statsd_client.clone(),
     )
     .await;
@@ -158,6 +158,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let rpc_shard_senders = node.shard_senders.clone();
 
     let rpc_block_store = block_store.clone();
+    let rocksdb_dir = app_config.rocksdb_dir.clone();
     tokio::spawn(async move {
         let service = MySnapchainService::new(
             rpc_block_store,
@@ -168,7 +169,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         let resp = Server::builder()
             .add_service(SnapchainServiceServer::new(service))
-            .add_service(AdminServiceServer::new(MyAdminService {}))
+            .add_service(AdminServiceServer::new(MyAdminService::new(rocksdb_dir)))
             .serve(grpc_socket_addr)
             .await;
 
