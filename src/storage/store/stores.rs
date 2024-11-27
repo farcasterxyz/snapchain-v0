@@ -10,7 +10,10 @@ use crate::storage::trie::merkle_trie::TrieKey;
 use std::sync::Arc;
 use thiserror::Error;
 
-use super::account::{ReactionStore, ReactionStoreDef, UserDataStore, UserDataStoreDef};
+use super::account::{
+    ReactionStore, ReactionStoreDef, UserDataStore, UserDataStoreDef, VerificationStore,
+    VerificationStoreDef,
+};
 
 #[derive(Error, Debug)]
 pub enum StoresError {
@@ -25,6 +28,7 @@ pub struct Stores {
     pub link_store: Store<LinkStore>,
     pub reaction_store: Store<ReactionStoreDef>,
     pub user_data_store: Store<UserDataStoreDef>,
+    pub verification_store: Store<VerificationStoreDef>,
     pub onchain_event_store: OnchainEventStore,
     db: Arc<RocksDB>,
     pub(crate) trie: merkle_trie::MerkleTrie,
@@ -140,6 +144,7 @@ impl Stores {
         let link_store = LinkStore::new(db.clone(), event_handler.clone(), 100);
         let reaction_store = ReactionStore::new(db.clone(), event_handler.clone(), 100);
         let user_data_store = UserDataStore::new(db.clone(), event_handler.clone(), 100);
+        let verification_store = VerificationStore::new(db.clone(), event_handler.clone(), 100);
         let onchain_event_store = OnchainEventStore::new(db.clone(), event_handler.clone());
         Stores {
             trie,
@@ -148,6 +153,7 @@ impl Stores {
             link_store,
             reaction_store,
             user_data_store,
+            verification_store,
             onchain_event_store,
             db: db.clone(),
             store_limits,

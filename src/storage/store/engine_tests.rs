@@ -415,6 +415,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_commit_verification_messages() {
+        let timestamp = messages_factory::farcaster_time();
+        let (mut engine, _tmpdir) = new_engine();
+        let address = "address".to_string();
+
+        let verification_add = messages_factory::verifications::create_verification_add(
+            FID_FOR_TEST,
+            0,
+            address.clone(),
+            "signature".to_string(),
+            "hash".to_string(),
+            Some(timestamp),
+            None,
+        );
+
+        commit_message(&mut engine, &verification_add).await;
+
+        let verification_result = engine.get_verifications_by_fid(FID_FOR_TEST);
+        assert_eq!(1, verification_result.unwrap().messages_bytes.len());
+
+        let verification_remove = messages_factory::verifications::create_verification_remove(
+            FID_FOR_TEST,
+            address.clone(),
+            Some(timestamp),
+            None,
+        );
+
+        commit_message(&mut engine, &verification_remove).await;
+
+        let verification_result = engine.get_verifications_by_fid(FID_FOR_TEST);
+        assert_eq!(0, verification_result.unwrap().messages_bytes.len());
+    }
+
+    #[tokio::test]
     async fn test_account_roots() {
         let cast = messages_factory::casts::create_cast_add(FID_FOR_TEST, "msg1", None, None);
         let (mut engine, _tmpdir) = new_engine();
