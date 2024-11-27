@@ -14,9 +14,9 @@ impl MyAdminService {
     }
 
     pub(crate) fn destroy_database(&self) -> Result<(), Status> {
-        std::fs::remove_dir_all(&self.db_dir)?;
-        std::fs::create_dir_all(&self.db_dir)?;
-        warn!("Cleared db at {}", self.db_dir);
+        let db_dir = &self.db_dir;
+        std::fs::remove_dir_all(db_dir)?;
+        warn!(db_dir, "cleared db");
         Ok(())
     }
 }
