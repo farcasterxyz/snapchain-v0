@@ -5,7 +5,9 @@ use super::{
     put_message_transaction, MessagesPage, StoreEventHandler, TS_HASH_LENGTH,
 };
 use crate::core::error::HubError;
-use crate::proto::hub_event::{hub_event, HubEvent, HubEventType, MergeMessageBody};
+use crate::proto::hub_event::{
+    hub_event, HubEvent, HubEventType, MergeMessageBody, PruneMessageBody,
+};
 use crate::storage::db::PageOptions;
 use crate::storage::util::increment_vec_u8;
 use crate::{
@@ -267,17 +269,15 @@ pub trait StoreDef: Send + Sync {
         }
     }
 
-    // fn prune_event_args(&self, message: &Message) -> HubEvent {
-    //     HubEvent {
-    //         r#type: HubEventType::PruneMessage as i32,
-    //         body: Some(hub_event::Body::PruneMessageBody(
-    //             protos::PruneMessageBody {
-    //                 message: Some(message.clone()),
-    //             },
-    //         )),
-    //         id: 0,
-    //     }
-    // }
+    fn prune_event_args(&self, message: &Message) -> HubEvent {
+        HubEvent {
+            r#type: HubEventType::PruneMessage as i32,
+            body: Some(hub_event::Body::PruneMessageBody(PruneMessageBody {
+                message: Some(message.clone()),
+            })),
+            id: 0,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -857,23 +857,16 @@ impl<T: StoreDef + Clone> Store<T> {
         Ok(hub_event)
     }
 
-    #[allow(dead_code)] // TODO
-    fn prune_messages(
+    pub fn prune_messages(
         &self,
         fid: u32,
-        cached_count: u64,
-        max_count: u64,
-    ) -> Result<Vec<u8>, HubError> {
-        let pruned_events = vec![];
+        current_count: u32,
+        max_count: u32,
+        txn: &mut RocksDbTransactionBatch,
+    ) -> Result<Vec<HubEvent>, HubError> {
+        let mut pruned_events = vec![];
 
-        let mut count = cached_count;
-        let max_message_count = if self.store_def.get_prune_size_limit() > 0 {
-            self.store_def.get_prune_size_limit() as u64
-        } else {
-            max_count
-        };
-
-        let mut txn = self.db.txn();
+        let mut count = current_count;
 
         let prefix = &make_message_primary_key(fid, self.store_def.postfix(), None);
         self.db.for_each_iterator_by_prefix(
@@ -881,7 +874,7 @@ impl<T: StoreDef + Clone> Store<T> {
             Some(increment_vec_u8(prefix)),
             &PageOptions::default(),
             |_key, value| {
-                if count <= max_message_count {
+                if count <= max_count {
                     return Ok(true); // Stop the iteration, nothing left to prune
                 }
 
@@ -896,29 +889,28 @@ impl<T: StoreDef + Clone> Store<T> {
                 } else if self.store_def.is_add_type(&message) {
                     let ts_hash =
                         make_ts_hash(message.data.as_ref().unwrap().timestamp, &message.hash)?;
-                    self.delete_add_transaction(&mut txn, &ts_hash, &message)?;
+                    self.delete_add_transaction(txn, &ts_hash, &message)?;
                 } else if self.store_def.remove_type_supported()
                     && self.store_def.is_remove_type(&message)
                 {
-                    self.delete_remove_transaction(&mut txn, &message)?;
+                    self.delete_remove_transaction(txn, &message)?;
                 }
 
                 // Event Handler
-                // let mut hub_event = self.store_def.prune_event_args(&message);
-                // let id = self
-                //     .store_event_handler
-                //     .commit_transaction(&mut txn, &mut hub_event)?;
+                let mut hub_event = self.store_def.prune_event_args(&message);
+                let id = self
+                    .store_event_handler
+                    .commit_transaction(txn, &mut hub_event)?;
 
                 count -= 1;
 
-                // hub_event.id = id;
-                // pruned_events.push(hub_event);
+                hub_event.id = id;
+                pruned_events.push(hub_event);
 
                 Ok(false) // Continue the iteration
             },
         )?;
 
-        self.db.commit(txn)?;
         Ok(pruned_events)
     }
 

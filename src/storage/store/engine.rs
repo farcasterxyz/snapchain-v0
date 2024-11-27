@@ -1,4 +1,4 @@
-use super::account::OnchainEventStorageError;
+use super::account::{IntoU8, OnchainEventStorageError};
 use crate::core::error::HubError;
 use crate::core::types::Height;
 use crate::proto::hub_event::HubEvent;
@@ -15,6 +15,7 @@ use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use itertools::Itertools;
 use message::MessageType;
 use snapchain::{Block, ShardChunk, Transaction};
+use std::collections::HashSet;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc};
@@ -42,6 +43,9 @@ enum EngineError {
 
     #[error("message has no data")]
     NoMessageData,
+
+    #[error("Unable to get usage count")]
+    UsageCountError,
 
     #[error("invalid message type")]
     InvalidMessageType,
@@ -281,6 +285,7 @@ impl ShardEngine {
         let mut user_messages_count = 0;
         let mut system_messages_count = 0;
         let mut events = vec![];
+        let mut message_types = HashSet::new();
 
         for msg in &snapchain_txn.user_messages {
             // Errors are validated based on the shard root
@@ -290,12 +295,37 @@ impl ShardEngine {
                     self.update_trie(&event, txn_batch)?;
                     events.push(event.clone());
                     user_messages_count += 1;
+                    let msg_type = MessageType::try_from(msg.msg_type() as i32)
+                        .or(Err(EngineError::InvalidMessageType))?;
+                    message_types.insert(msg_type);
                 }
                 Err(err) => {
                     warn!(
                         fid = msg.fid(),
                         hash = msg.hex_hash(),
                         "Error merging message: {:?}",
+                        err
+                    );
+                }
+            }
+        }
+
+        for msg_type in message_types {
+            let fid = snapchain_txn.fid as u32;
+            let result = self.prune_messages(fid, msg_type, txn_batch);
+            match result {
+                Ok(pruned_events) => {
+                    for event in pruned_events {
+                        self.update_trie(&event, txn_batch)?;
+                        events.push(event.clone());
+                    }
+                    info!(fid = fid, msg_type = msg_type.into_u8(), "Pruned messages");
+                }
+                Err(err) => {
+                    warn!(
+                        fid = fid,
+                        msg_type = msg_type.into_u8(),
+                        "Error pruning messages: {:?}",
                         err
                     );
                 }
@@ -383,6 +413,41 @@ impl ShardEngine {
         Ok(event)
     }
 
+    fn prune_messages(
+        &mut self,
+        fid: u32,
+        msg_type: MessageType,
+        txn_batch: &mut RocksDbTransactionBatch,
+    ) -> Result<Vec<HubEvent>, EngineError> {
+        let events = match msg_type {
+            MessageType::CastAdd | MessageType::CastRemove => {
+                let (current_count, max_count) = self
+                    .stores
+                    .get_usage(fid, msg_type, txn_batch)
+                    .map_err(|_| EngineError::UsageCountError)?;
+                self.stores
+                    .cast_store
+                    .prune_messages(fid, current_count, max_count, txn_batch)
+                    .map_err(EngineError::new_store_error(vec![]))
+            }
+            MessageType::LinkAdd | MessageType::LinkRemove | MessageType::LinkCompactState => {
+                let (current_count, max_count) = self
+                    .stores
+                    .get_usage(fid, msg_type, txn_batch)
+                    .map_err(|_| EngineError::UsageCountError)?;
+                self.stores
+                    .link_store
+                    .prune_messages(fid, current_count, max_count, txn_batch)
+                    .map_err(EngineError::new_store_error(vec![]))
+            }
+            unhandled_type => {
+                return Err(EngineError::UnsupportedMessageType(unhandled_type));
+            }
+        }?;
+
+        Ok(events)
+    }
+
     fn update_trie(
         &mut self,
         event: &hub_event::HubEvent,
@@ -411,6 +476,15 @@ impl ShardEngine {
                         &self.db,
                         txn_batch,
                         vec![TrieKey::for_onchain_event(&onchain_event)],
+                    )?;
+                }
+            }
+            Some(hub_event::hub_event::Body::PruneMessageBody(prune)) => {
+                if let Some(msg) = &prune.message {
+                    self.stores.trie.delete(
+                        &self.db,
+                        txn_batch,
+                        vec![TrieKey::for_message(&msg)],
                     )?;
                 }
             }
