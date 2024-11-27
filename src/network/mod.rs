@@ -1,3 +1,4 @@
+pub mod admin_server;
 pub mod gossip;
 pub mod server;
 

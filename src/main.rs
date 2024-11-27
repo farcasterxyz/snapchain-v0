@@ -15,10 +15,12 @@ use tracing_subscriber::EnvFilter;
 
 use snapchain::consensus::consensus::SystemMessage;
 use snapchain::core::types::proto;
+use snapchain::network::admin_server::MyAdminService;
 use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
 use snapchain::network::server::MySnapchainService;
 use snapchain::node::snapchain_node::SnapchainNode;
+use snapchain::proto::admin_rpc::admin_service_server::AdminServiceServer;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::storage::db::RocksDB;
 use snapchain::utils::statsd_wrapper::StatsdClientWrapper;
@@ -166,6 +168,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         let resp = Server::builder()
             .add_service(SnapchainServiceServer::new(service))
+            .add_service(AdminServiceServer::new(MyAdminService {}))
             .serve(grpc_socket_addr)
             .await;
 

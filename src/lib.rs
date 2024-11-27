@@ -14,6 +14,10 @@ pub mod proto {
         tonic::include_proto!("snapchain");
     }
 
+    pub mod admin_rpc {
+        tonic::include_proto!("admin_rpc");
+    }
+
     pub mod rpc {
         tonic::include_proto!("rpc");
     }
