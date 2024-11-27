@@ -15,10 +15,12 @@ use tracing_subscriber::EnvFilter;
 
 use snapchain::consensus::consensus::SystemMessage;
 use snapchain::core::types::proto;
+use snapchain::network::admin_server::MyAdminService;
 use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
 use snapchain::network::server::MySnapchainService;
 use snapchain::node::snapchain_node::SnapchainNode;
+use snapchain::proto::admin_rpc::admin_service_server::AdminServiceServer;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::storage::db::RocksDB;
 use snapchain::utils::statsd_wrapper::StatsdClientWrapper;
@@ -64,6 +66,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Ok(addr) => Ok((addr.ip().to_string(), addr.port())),
         Err(e) => Err(format!("invalid statsd address: {}", e)),
     }?;
+
+    let admin_service = {
+        let mut admin_service = MyAdminService::new(app_config.rocksdb_dir.clone().as_str());
+        admin_service.maybe_destroy_databases().unwrap();
+        admin_service
+    };
 
     let host = (statsd_host, statsd_port);
     let socket = net::UdpSocket::bind("0.0.0.0:0").unwrap();
@@ -147,7 +155,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         gossip_tx.clone(),
         None,
         block_store.clone(),
-        app_config.rocksdb_dir,
+        app_config.rocksdb_dir.clone(),
         statsd_client.clone(),
     )
     .await;
@@ -166,6 +174,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         let resp = Server::builder()
             .add_service(SnapchainServiceServer::new(service))
+            .add_service(AdminServiceServer::new(admin_service))
             .serve(grpc_socket_addr)
             .await;
 

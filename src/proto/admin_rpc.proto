@@ -1,0 +1,13 @@
+syntax = "proto3";
+package admin_rpc;
+
+message TerminateRequest {
+  bool destroy_database = 1;
+}
+
+message TerminateResponse {
+}
+
+service AdminService {
+  rpc Terminate(TerminateRequest) returns (TerminateResponse);
+}
