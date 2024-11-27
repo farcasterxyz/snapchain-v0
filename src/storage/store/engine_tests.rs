@@ -11,7 +11,7 @@ mod tests {
     use crate::storage::store::engine::{MempoolMessage, ShardEngine, ShardStateChange};
     use crate::storage::store::stores::{Limits, StoreLimits};
     use crate::storage::trie::merkle_trie::TrieKey;
-    use crate::utils::factory::{events_factory, messages_factory};
+    use crate::utils::factory::{self, events_factory, messages_factory};
     use crate::utils::statsd_wrapper::StatsdClientWrapper;
     use prost::Message as _;
     use tempfile;
@@ -39,6 +39,12 @@ mod tests {
             ShardEngine::new(Arc::new(db), 1, test_limits, statsd_client),
             dir,
         )
+    }
+
+    async fn register_user(fid: u32, engine: &mut ShardEngine) {
+        // TODO: Also need to do the id registration and signer registration
+        let storage_event = events_factory::create_rent_event(fid, None, Some(1), false);
+        commit_event(engine, &storage_event).await;
     }
 
     #[allow(dead_code)]
@@ -114,6 +120,28 @@ mod tests {
         (msg1, msg2)
     }
 
+    fn assert_merge_event(event: &HubEvent, merged_message: &message::Message) {
+        let generated_event = match &event.body {
+            Some(crate::proto::hub_event::hub_event::Body::MergeMessageBody(msg)) => msg,
+            _ => panic!("Unexpected event type: {:?}", event.body),
+        };
+        assert_eq!(
+            to_hex(&merged_message.hash),
+            to_hex(&generated_event.message.as_ref().unwrap().hash)
+        );
+    }
+
+    fn assert_prune_event(event: &HubEvent, pruned_message: &message::Message) {
+        let generated_event = match &event.body {
+            Some(crate::proto::hub_event::hub_event::Body::PruneMessageBody(msg)) => msg,
+            _ => panic!("Unexpected event type: {:?}", event.body),
+        };
+        assert_eq!(
+            to_hex(&pruned_message.hash),
+            to_hex(&generated_event.message.as_ref().unwrap().hash)
+        );
+    }
+
     fn validate_and_commit_state_change(
         engine: &mut ShardEngine,
         state_change: &ShardStateChange,
@@ -124,6 +152,7 @@ mod tests {
         let height = engine.get_confirmed_height();
         let chunk = state_change_to_shard_chunk(1, height.block_number + 1, state_change);
         engine.commit_shard_chunk(&chunk);
+        assert_eq!(state_change.new_state_root, engine.trie_root_hash());
         chunk
     }
 
@@ -136,13 +165,33 @@ mod tests {
             .unwrap();
         let state_change = engine.propose_state_change(1);
 
+        if state_change.transactions.is_empty() {
+            panic!("Failed to propose message");
+        }
+
+        validate_and_commit_state_change(engine, &state_change)
+    }
+
+    async fn commit_event(engine: &mut ShardEngine, event: &OnChainEvent) -> ShardChunk {
+        let messages_tx = engine.messages_tx();
+
+        messages_tx
+            .send(MempoolMessage::ValidatorMessage(
+                crate::proto::snapchain::ValidatorMessage {
+                    on_chain_event: Some(event.clone()),
+                    fname_transfer: None,
+                },
+            ))
+            .await
+            .unwrap();
+        let state_change = engine.propose_state_change(1);
+
         validate_and_commit_state_change(engine, &state_change)
     }
 
     #[tokio::test]
     async fn test_engine_basic_propose() {
         let (mut engine, _tmpdir) = new_engine();
-        let (msg1, _) = entities();
         let messages_tx = engine.messages_tx();
 
         // State root starts empty
@@ -157,9 +206,14 @@ mod tests {
         // Root hash is not updated until commit
         assert_eq!("", to_hex(&engine.trie_root_hash()));
 
-        // Propose a message
+        // Propose a message that doesn't require storage
         messages_tx
-            .send(MempoolMessage::UserMessage(msg1.clone()))
+            .send(MempoolMessage::ValidatorMessage(
+                crate::proto::snapchain::ValidatorMessage {
+                    on_chain_event: Some(events_factory::create_onchain_event(FID_FOR_TEST)),
+                    fname_transfer: None,
+                },
+            ))
             .await
             .unwrap();
 
@@ -167,10 +221,7 @@ mod tests {
 
         assert_eq!(1, state_change.shard_id);
         assert_eq!(state_change.transactions.len(), 1);
-        assert_eq!(
-            "9d9ff2bff951492db0c42511f23230d6e819ab15",
-            to_hex(&state_change.new_state_root)
-        );
+        assert_eq!(40, to_hex(&state_change.new_state_root).len());
         // Root hash is not updated until commit
         assert_eq!("", to_hex(&engine.trie_root_hash()));
     }
@@ -219,8 +270,16 @@ mod tests {
         // enable_logging();
         let (msg1, _) = entities();
         let (mut engine, _tmpdir) = new_engine();
+        register_user(FID_FOR_TEST, &mut engine).await;
         let messages_tx = engine.messages_tx();
         let mut event_rx = engine.get_senders().events_tx.subscribe();
+
+        // Registering a user generates events
+        let initial_events_count = HubEvent::get_events(engine.db.clone(), 0, None, None)
+            .unwrap()
+            .events
+            .len();
+        assert_eq!(1, initial_events_count);
 
         messages_tx
             .send(MempoolMessage::UserMessage(msg1.clone()))
@@ -237,7 +296,7 @@ mod tests {
 
         // No events are generated either
         let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
-        assert_eq!(0, events.events.len());
+        assert_eq!(initial_events_count, events.events.len());
 
         // And it's not inserted into the trie
         assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&msg1)), false);
@@ -260,17 +319,11 @@ mod tests {
 
         // And events are generated
         let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
-        assert_eq!(1, events.events.len());
-        assert_eq!(event_rx.recv().await.unwrap(), events.events[0]);
+        assert_eq!(initial_events_count + 1, events.events.len());
+        let generated_event = event_rx.recv().await.unwrap();
+        assert_eq!(generated_event, events.events[initial_events_count]);
 
-        let generated_event = match events.events[0].clone().body {
-            Some(crate::proto::hub_event::hub_event::Body::MergeMessageBody(msg)) => msg,
-            _ => panic!("Unexpected event type"),
-        };
-        assert_eq!(
-            to_hex(&msg1.hash),
-            to_hex(&generated_event.message.unwrap().hash)
-        );
+        assert_merge_event(&generated_event, &msg1);
 
         // The message exists in the trie
         assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&msg1)), true);
@@ -282,6 +335,7 @@ mod tests {
         let cast =
             messages_factory::casts::create_cast_add(FID_FOR_TEST, "msg1", Some(timestamp), None);
         let (mut engine, _tmpdir) = new_engine();
+        register_user(FID_FOR_TEST, &mut engine).await;
 
         commit_message(&mut engine, &cast).await;
 
@@ -321,6 +375,7 @@ mod tests {
         let timestamp = messages_factory::farcaster_time();
         let target_fid = 15;
         let (mut engine, _tmpdir) = new_engine();
+        register_user(FID_FOR_TEST, &mut engine).await;
 
         let link_add = messages_factory::links::create_link_add(
             FID_FOR_TEST,
@@ -367,6 +422,7 @@ mod tests {
         let timestamp = messages_factory::farcaster_time();
         let target_url = "exampleurl".to_string();
         let (mut engine, _tmpdir) = new_engine();
+        register_user(FID_FOR_TEST, &mut engine).await;
 
         let reaction_add = messages_factory::reactions::create_reaction_add(
             FID_FOR_TEST,
@@ -399,6 +455,7 @@ mod tests {
     async fn test_commit_user_data_messages() {
         let timestamp = messages_factory::farcaster_time();
         let (mut engine, _tmpdir) = new_engine();
+        register_user(FID_FOR_TEST, &mut engine).await;
 
         let user_data_add = messages_factory::user_data::create_user_data_add(
             FID_FOR_TEST,
@@ -418,6 +475,7 @@ mod tests {
     async fn test_commit_verification_messages() {
         let timestamp = messages_factory::farcaster_time();
         let (mut engine, _tmpdir) = new_engine();
+        register_user(FID_FOR_TEST, &mut engine).await;
         let address = "address".to_string();
 
         let verification_add = messages_factory::verifications::create_verification_add(
@@ -465,6 +523,7 @@ mod tests {
         assert_eq!(account_root.len(), 0);
         assert_eq!(shard_root.len(), 0);
 
+        register_user(FID_FOR_TEST, &mut engine).await;
         commit_message(&mut engine, &cast).await;
 
         let updated_account_root =
@@ -477,10 +536,8 @@ mod tests {
         assert_eq!(updated_account_root.len() > 0, true);
         assert_ne!(updated_shard_root, shard_root);
 
-        let another_fid_cast =
-            messages_factory::casts::create_cast_add(FID_FOR_TEST + 1, "msg2", None, None);
-
-        commit_message(&mut engine, &another_fid_cast).await;
+        let another_fid_event = events_factory::create_onchain_event(FID_FOR_TEST + 1);
+        commit_event(&mut engine, &another_fid_event).await;
 
         let account_root_another_fid =
             engine
@@ -505,24 +562,13 @@ mod tests {
         let (msg1, msg2) = entities();
         let (mut engine, _tmpdir) = new_engine();
         let messages_tx = engine.messages_tx();
-        let expected_roots = vec![
-            "",
-            "9d9ff2bff951492db0c42511f23230d6e819ab15",
-            "89506154d345eaf8ef9d0bdf5756b08feb97411b",
-        ];
-
-        /* note: Hard-coded expected_roots is going to be fragile for some time.
-        This is by design during initial development. Any time these hashes change,
-        we'll want to investigate and verify that things are working as expected.
-        At some point this will become unwieldy and we'll have confidence that our
-        state changes are working as expected and at that point feel free to just check
-        that the root hash in the merkle trie matches the hash in the state change struct,
-        or otherwise refactor to taste.
-        */
+        let mut previous_root = "".to_string();
 
         let height = engine.get_confirmed_height();
         assert_eq!(height.shard_index, 1);
         assert_eq!(height.block_number, 0);
+
+        register_user(FID_FOR_TEST, &mut engine).await;
 
         {
             messages_tx
@@ -538,11 +584,12 @@ mod tests {
             let prop_msg = &state_change.transactions[0].user_messages[0];
             assert_eq!(to_hex(&prop_msg.hash), to_hex(&msg1.hash));
 
-            assert_eq!(expected_roots[1], to_hex(&state_change.new_state_root));
+            assert_ne!(previous_root, to_hex(&state_change.new_state_root));
+            previous_root = to_hex(&state_change.new_state_root);
 
             validate_and_commit_state_change(&mut engine, &state_change);
 
-            assert_eq!(expected_roots[1], to_hex(&engine.trie_root_hash()));
+            assert_eq!(previous_root, to_hex(&engine.trie_root_hash()));
 
             let height = engine.get_confirmed_height();
             assert_eq!(height.shard_index, 1);
@@ -563,11 +610,12 @@ mod tests {
             let prop_msg = &state_change.transactions[0].user_messages[0];
             assert_eq!(to_hex(&prop_msg.hash), to_hex(&msg2.hash));
 
-            assert_eq!(expected_roots[2], to_hex(&state_change.new_state_root));
+            assert_ne!(previous_root, to_hex(&state_change.new_state_root));
+            previous_root = to_hex(&state_change.new_state_root);
 
             validate_and_commit_state_change(&mut engine, &state_change);
 
-            assert_eq!(expected_roots[2], to_hex(&engine.trie_root_hash()));
+            assert_eq!(previous_root, to_hex(&engine.trie_root_hash()));
 
             let height = engine.get_confirmed_height();
             assert_eq!(height.shard_index, 1);
@@ -580,8 +628,9 @@ mod tests {
         // enable_logging();
         let (msg1, msg2) = entities();
         let (mut engine, _tmpdir) = new_engine();
+        register_user(FID_FOR_TEST, &mut engine).await;
         let messages_tx = engine.messages_tx();
-        let expected_roots = vec!["", "89506154d345eaf8ef9d0bdf5756b08feb97411b"];
+        let mut previous_root = "".to_string();
 
         {
             messages_tx
@@ -604,11 +653,14 @@ mod tests {
             let prop_msg_2 = &state_change.transactions[0].user_messages[1];
             assert_eq!(to_hex(&prop_msg_2.hash), to_hex(&msg2.hash));
 
-            assert_eq!(expected_roots[1], to_hex(&state_change.new_state_root));
+            // State root has changed
+            assert_ne!(previous_root, to_hex(&state_change.new_state_root));
+            previous_root = to_hex(&state_change.new_state_root);
 
             validate_and_commit_state_change(&mut engine, &state_change);
 
-            assert_eq!(expected_roots[1], to_hex(&engine.trie_root_hash()));
+            // Committed state root is the same as what was proposed
+            assert_eq!(previous_root, to_hex(&engine.trie_root_hash()));
 
             let height = engine.get_confirmed_height();
             assert_eq!(height.shard_index, 1);
@@ -664,5 +716,195 @@ mod tests {
             to_hex(&onchain_event.transaction_hash),
             to_hex(&generated_event.on_chain_event.unwrap().transaction_hash)
         );
+    }
+
+    #[tokio::test]
+    async fn test_messages_not_merged_with_no_storage() {
+        let (mut engine, _tmpdir) = new_engine();
+
+        let cast_add =
+            messages_factory::casts::create_cast_add(FID_FOR_TEST + 1, "no storage", None, None);
+
+        assert_eq!("", to_hex(&engine.trie_root_hash()));
+        let messages_tx = engine.messages_tx();
+
+        messages_tx
+            .send(MempoolMessage::UserMessage(cast_add.clone()))
+            .await
+            .unwrap();
+        let state_change = engine.propose_state_change(1);
+
+        assert_eq!(0, state_change.transactions.len());
+        assert_eq!("", to_hex(&state_change.new_state_root));
+    }
+
+    #[tokio::test]
+    async fn test_messages_pruned_with_exceeded_storage() {
+        let (mut engine, _tmpdir) = new_engine();
+        register_user(FID_FOR_TEST, &mut engine).await;
+        let mut event_rx = engine.get_senders().events_tx.subscribe();
+        let current_time = factory::time::farcaster_time();
+        let cast1 = messages_factory::casts::create_cast_add(
+            FID_FOR_TEST,
+            "msg1",
+            Some(current_time),
+            None,
+        );
+        let cast2 = messages_factory::casts::create_cast_add(
+            FID_FOR_TEST,
+            "msg2",
+            Some(current_time + 1),
+            None,
+        );
+        let cast3 = messages_factory::casts::create_cast_add(
+            FID_FOR_TEST,
+            "msg3",
+            Some(current_time + 2),
+            None,
+        );
+        let cast4 = messages_factory::casts::create_cast_add(
+            FID_FOR_TEST,
+            "msg4",
+            Some(current_time + 3),
+            None,
+        );
+        let cast5 = messages_factory::casts::create_cast_add(
+            FID_FOR_TEST,
+            "msg5",
+            Some(current_time + 4),
+            None,
+        );
+
+        // Default size in tests is 4 casts, so first four messages should merge without issues
+        commit_message(&mut engine, &cast1).await;
+        assert_merge_event(&event_rx.try_recv().unwrap(), &cast1);
+        commit_message(&mut engine, &cast2).await;
+        assert_merge_event(&event_rx.try_recv().unwrap(), &cast2);
+        commit_message(&mut engine, &cast3).await;
+        assert_merge_event(&event_rx.try_recv().unwrap(), &cast3);
+        commit_message(&mut engine, &cast4).await;
+        assert_merge_event(&event_rx.try_recv().unwrap(), &cast4);
+
+        // Fifth message should be merged, but should cause cast1 to be pruned
+        commit_message(&mut engine, &cast5).await;
+        assert_merge_event(&event_rx.try_recv().unwrap(), &cast5);
+        assert_prune_event(&event_rx.try_recv().unwrap(), &cast1);
+
+        // Prunes are reflected in the trie
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast1)), false);
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast2)), true);
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast3)), true);
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast4)), true);
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast5)), true);
+    }
+
+    #[tokio::test]
+    async fn test_messages_partially_merged_with_insufficient_storage() {
+        let (mut engine, _tmpdir) = new_engine();
+        register_user(FID_FOR_TEST, &mut engine).await;
+        let mut event_rx = engine.get_senders().events_tx.subscribe();
+        let current_time = factory::time::farcaster_time();
+        let cast1 = messages_factory::casts::create_cast_add(
+            FID_FOR_TEST,
+            "msg1",
+            Some(current_time),
+            None,
+        );
+        let cast2 = messages_factory::casts::create_cast_add(
+            FID_FOR_TEST,
+            "msg2",
+            Some(current_time + 1),
+            None,
+        );
+        let cast3 = messages_factory::casts::create_cast_add(
+            FID_FOR_TEST,
+            "msg3",
+            Some(current_time + 2),
+            None,
+        );
+        let cast4 = messages_factory::casts::create_cast_add(
+            FID_FOR_TEST,
+            "msg4",
+            Some(current_time + 3),
+            None,
+        );
+        let cast5 = messages_factory::casts::create_cast_add(
+            FID_FOR_TEST,
+            "msg5",
+            Some(current_time + 4),
+            None,
+        );
+        let cast6 = messages_factory::casts::create_cast_add(
+            FID_FOR_TEST,
+            "msg6",
+            Some(current_time + 5),
+            None,
+        );
+
+        let messages_tx = engine.messages_tx();
+
+        // Send first three messages in one block, which should mean there is 1 message left in storage
+        messages_tx
+            .send(MempoolMessage::UserMessage(cast1.clone()))
+            .await
+            .unwrap();
+        messages_tx
+            .send(MempoolMessage::UserMessage(cast2.clone()))
+            .await
+            .unwrap();
+        messages_tx
+            .send(MempoolMessage::UserMessage(cast3.clone()))
+            .await
+            .unwrap();
+        let state_change = engine.propose_state_change(1);
+        validate_and_commit_state_change(&mut engine, &state_change);
+        assert_merge_event(&event_rx.try_recv().unwrap(), &cast1);
+        assert_merge_event(&event_rx.try_recv().unwrap(), &cast2);
+        assert_merge_event(&event_rx.try_recv().unwrap(), &cast3);
+
+        // Now send the last three messages, all of them should be merged, and the first two should be pruned
+        messages_tx
+            .send(MempoolMessage::UserMessage(cast4.clone()))
+            .await
+            .unwrap();
+        messages_tx
+            .send(MempoolMessage::UserMessage(cast5.clone()))
+            .await
+            .unwrap();
+        messages_tx
+            .send(MempoolMessage::UserMessage(cast6.clone()))
+            .await
+            .unwrap();
+
+        let state_change = engine.propose_state_change(1);
+        let chunk = validate_and_commit_state_change(&mut engine, &state_change);
+        assert_merge_event(&event_rx.try_recv().unwrap(), &cast4);
+        assert_merge_event(&event_rx.try_recv().unwrap(), &cast5);
+        assert_merge_event(&event_rx.try_recv().unwrap(), &cast6);
+
+        assert_prune_event(&event_rx.try_recv().unwrap(), &cast1);
+        assert_prune_event(&event_rx.try_recv().unwrap(), &cast2);
+
+        let user_messages = chunk.transactions[0]
+            .user_messages
+            .iter()
+            .map(|m| to_hex(&m.hash))
+            .collect::<Vec<String>>();
+        assert_eq!(
+            user_messages,
+            vec![
+                to_hex(&cast4.hash),
+                to_hex(&cast5.hash),
+                to_hex(&cast6.hash)
+            ]
+        );
+
+        // Prunes are reflected in the trie
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast1)), false);
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast2)), false);
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast3)), true);
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast4)), true);
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast5)), true);
+        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast6)), true);
     }
 }

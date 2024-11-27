@@ -1,4 +1,5 @@
 use crate::proto::msg as message;
+use crate::proto::msg::MessageType;
 use crate::proto::snapchain;
 
 impl message::Message {
@@ -14,11 +15,11 @@ impl message::Message {
         }
     }
 
-    pub fn msg_type(&self) -> u8 {
+    pub fn msg_type(&self) -> MessageType {
         if self.data.is_some() {
-            self.data.as_ref().unwrap().r#type as u8
+            MessageType::try_from(self.data.as_ref().unwrap().r#type).unwrap_or(MessageType::None)
         } else {
-            0
+            MessageType::None
         }
     }
 

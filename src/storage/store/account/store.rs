@@ -868,6 +868,10 @@ impl<T: StoreDef + Clone> Store<T> {
 
         let mut count = current_count;
 
+        if count <= max_count {
+            return Ok(pruned_events); // Nothing to prune
+        }
+
         let prefix = &make_message_primary_key(fid, self.store_def.postfix(), None);
         self.db.for_each_iterator_by_prefix(
             Some(prefix.to_vec()),

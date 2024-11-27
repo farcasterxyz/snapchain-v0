@@ -184,7 +184,7 @@ impl ShardEngine {
 
         self.count("prepare_proposal.recv_messages", messages.len() as u64);
 
-        let mut snapchain_txns = self.create_transactions_from_mempool(messages);
+        let mut snapchain_txns = self.create_transactions_from_mempool(messages)?;
         for snapchain_txn in &mut snapchain_txns {
             let (account_root, _events) = self.replay_snapchain_txn(&snapchain_txn, txn_batch)?;
             snapchain_txn.account_root = account_root;
@@ -210,7 +210,7 @@ impl ShardEngine {
     fn create_transactions_from_mempool(
         &mut self,
         messages: Vec<MempoolMessage>,
-    ) -> Vec<Transaction> {
+    ) -> Result<Vec<Transaction>, EngineError> {
         let mut transactions = vec![];
 
         let grouped_messages = messages.iter().into_group_map_by(|msg| msg.fid());
@@ -222,17 +222,26 @@ impl ShardEngine {
                 system_messages: vec![],
                 user_messages: vec![],
             };
+            let storage_slot = self
+                .stores
+                .onchain_event_store
+                .get_storage_slot_for_fid(fid)?;
             for msg in messages {
                 match msg {
                     MempoolMessage::ValidatorMessage(msg) => {
                         transaction.system_messages.push(msg.clone());
                     }
                     MempoolMessage::UserMessage(msg) => {
-                        transaction.user_messages.push(msg.clone());
+                        // Only include messages for users that have storage
+                        if storage_slot.is_active() {
+                            transaction.user_messages.push(msg.clone());
+                        }
                     }
                 }
             }
-            transactions.push(transaction);
+            if !transaction.user_messages.is_empty() || !transaction.system_messages.is_empty() {
+                transactions.push(transaction);
+            }
         }
         info!(
             transactions = transactions.len(),
@@ -240,7 +249,7 @@ impl ShardEngine {
             fids = unique_fids,
             "Created transactions from mempool"
         );
-        transactions
+        Ok(transactions)
     }
 
     pub fn propose_state_change(&mut self, shard: u32) -> ShardStateChange {
@@ -295,9 +304,7 @@ impl ShardEngine {
                     self.update_trie(&event, txn_batch)?;
                     events.push(event.clone());
                     user_messages_count += 1;
-                    let msg_type = MessageType::try_from(msg.msg_type() as i32)
-                        .or(Err(EngineError::InvalidMessageType))?;
-                    message_types.insert(msg_type);
+                    message_types.insert(msg.msg_type());
                 }
                 Err(err) => {
                     warn!(
@@ -319,7 +326,6 @@ impl ShardEngine {
                         self.update_trie(&event, txn_batch)?;
                         events.push(event.clone());
                     }
-                    info!(fid = fid, msg_type = msg_type.into_u8(), "Pruned messages");
                 }
                 Err(err) => {
                     warn!(
@@ -445,6 +451,12 @@ impl ShardEngine {
             }
         }?;
 
+        info!(
+            fid = fid,
+            msg_type = msg_type.into_u8(),
+            count = events.len(),
+            "Pruned messages"
+        );
         Ok(events)
     }
 
