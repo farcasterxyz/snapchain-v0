@@ -4,9 +4,8 @@ use crate::core::error::HubError;
 use crate::proto::hub_event::HubEvent;
 use crate::proto::msg as message;
 use crate::proto::rpc::snapchain_service_server::SnapchainService;
-use crate::proto::rpc::{
-    BlocksRequest, BlocksResponse, ShardChunksRequest, ShardChunksResponse, SubscribeRequest,
-};
+use crate::proto::rpc::{BlocksRequest, ShardChunksRequest, ShardChunksResponse, SubscribeRequest};
+use crate::proto::snapchain::Block;
 use crate::storage::db::PageOptions;
 use crate::storage::store::engine::{MempoolMessage, Senders};
 use crate::storage::store::stores::Stores;
@@ -15,7 +14,7 @@ use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use hex::ToHex;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::{Request, Response, Status};
+use tonic::{server, Request, Response, Status};
 use tracing::info;
 
 pub struct MySnapchainService {
@@ -84,25 +83,55 @@ impl SnapchainService for MySnapchainService {
         Ok(response)
     }
 
+    type GetBlocksStream = ReceiverStream<Result<Block, Status>>;
+
     async fn get_blocks(
         &self,
         request: Request<BlocksRequest>,
-    ) -> Result<Response<BlocksResponse>, Status> {
+    ) -> Result<Response<Self::GetBlocksStream>, Status> {
         let start_block_number = request.get_ref().start_block_number;
         let stop_block_number = request.get_ref().stop_block_number;
+        // TODO(aditi): Rethink the channel size
+        let (server_tx, client_rx) = mpsc::channel::<Result<Block, Status>>(100);
 
         info!( {start_block_number, stop_block_number}, "Received call to [get_blocks] RPC");
 
-        match self
-            .block_store
-            .get_blocks(start_block_number, stop_block_number)
-        {
-            Err(err) => Err(Status::from_error(Box::new(err))),
-            Ok(blocks) => {
-                let response = Response::new(BlocksResponse { blocks });
-                Ok(response)
+        let block_store = self.block_store.clone();
+
+        tokio::spawn(async move {
+            let mut next_page_token = None;
+            loop {
+                match block_store.get_blocks(
+                    start_block_number,
+                    stop_block_number,
+                    &PageOptions {
+                        page_size: Some(100),
+                        page_token: next_page_token,
+                        reverse: false,
+                    },
+                ) {
+                    Err(err) => {
+                        server_tx.send(Err(Status::from_error(Box::new(err)))).await;
+                        break;
+                    }
+                    Ok(block_page) => {
+                        for block in block_page.blocks {
+                            if let Err(err) = server_tx.send(Ok(block)).await {
+                                break;
+                            }
+                        }
+
+                        if block_page.next_page_token.is_none() {
+                            break;
+                        } else {
+                            next_page_token = block_page.next_page_token;
+                        }
+                    }
+                }
             }
-        }
+        });
+
+        Ok(Response::new(ReceiverStream::new(client_rx)))
     }
 
     async fn get_shard_chunks(

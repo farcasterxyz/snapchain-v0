@@ -185,28 +185,13 @@ impl BlockStore {
         &self,
         start_block_number: u64,
         stop_block_number: Option<u64>,
-    ) -> Result<Vec<Block>, BlockStorageError> {
-        let mut blocks = vec![];
-        let mut next_page_token = None;
-        loop {
-            let block_page = get_blocks_in_range(
-                &self.db,
-                &PageOptions {
-                    page_size: Some(PAGE_SIZE),
-                    page_token: next_page_token,
-                    reverse: false,
-                },
-                start_block_number,
-                stop_block_number,
-            )?;
-            blocks.extend(block_page.blocks);
-            if block_page.next_page_token.is_none() {
-                break;
-            } else {
-                next_page_token = block_page.next_page_token
-            }
-        }
-
-        Ok(blocks)
+        page_options: &PageOptions,
+    ) -> Result<BlockPage, BlockStorageError> {
+        get_blocks_in_range(
+            &self.db,
+            page_options,
+            start_block_number,
+            stop_block_number,
+        )
     }
 }
