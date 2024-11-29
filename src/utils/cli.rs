@@ -1,4 +1,3 @@
-use crate::consensus::proposer::current_time;
 use crate::proto::msg as message;
 use crate::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 use crate::proto::{rpc, snapchain::Block};
@@ -42,9 +41,9 @@ pub async fn follow_blocks(
 
     loop {
         let msg = rpc::BlocksRequest {
+            shard_id: 0,
             start_block_number: i,
             stop_block_number: Some(i + FETCH_SIZE),
-            start_timestamp: Some(current_time()),
         };
 
         let request = tonic::Request::new(msg);

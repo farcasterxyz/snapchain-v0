@@ -392,9 +392,9 @@ impl Proposer for BlockProposer {
                 let destination_addr = format!("http://{}", rpc_address.clone());
                 let mut rpc_client = SnapchainServiceClient::connect(destination_addr).await?;
                 let request = Request::new(BlocksRequest {
+                    shard_id: self.shard_id.shard_id(),
                     start_block_number: prev_block_number + 1,
                     stop_block_number: None,
-                    start_timestamp: None,
                 });
                 let missing_blocks = rpc_client.get_blocks(request).await?;
                 for block in missing_blocks.get_ref().blocks.clone() {

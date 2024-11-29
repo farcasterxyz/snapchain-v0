@@ -90,7 +90,6 @@ impl SnapchainService for MySnapchainService {
     ) -> Result<Response<BlocksResponse>, Status> {
         let start_block_number = request.get_ref().start_block_number;
         let stop_block_number = request.get_ref().stop_block_number;
-        let start_timestamp = request.get_ref().start_timestamp;
 
         info!( {start_block_number, stop_block_number}, "Received call to [get_blocks] RPC");
 
@@ -100,13 +99,6 @@ impl SnapchainService for MySnapchainService {
         {
             Err(err) => Err(Status::from_error(Box::new(err))),
             Ok(blocks) => {
-                let blocks = match start_timestamp {
-                    None => blocks,
-                    Some(start_timestamp) => blocks
-                        .into_iter()
-                        .filter(|block| block.header.as_ref().unwrap().timestamp >= start_timestamp)
-                        .collect(),
-                };
                 let response = Response::new(BlocksResponse { blocks });
                 Ok(response)
             }
