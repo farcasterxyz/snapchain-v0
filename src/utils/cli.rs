@@ -44,7 +44,7 @@ pub async fn follow_blocks(
         let msg = rpc::BlocksRequest {
             start_block_number: i,
             stop_block_number: Some(i + FETCH_SIZE),
-            start_timestamp: Some(current_time()),
+            start_timestamp: None,
         };
 
         let request = tonic::Request::new(msg);
