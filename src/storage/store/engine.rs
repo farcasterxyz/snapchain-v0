@@ -4,7 +4,7 @@ use crate::core::types::Height;
 use crate::proto::hub_event::HubEvent;
 use crate::proto::msg::Message;
 use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
-use crate::proto::{hub_event, msg as message, snapchain};
+use crate::proto::{hub_event, msg as message, onchain_event, snapchain};
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch};
 use crate::storage::store::account::{CastStore, MessagesPage};
 use crate::storage::store::stores::{StoreLimits, Stores};
@@ -309,8 +309,13 @@ impl ShardEngine {
         let total_system_messages = snapchain_txn.system_messages.len();
         let mut user_messages_count = 0;
         let mut system_messages_count = 0;
+        let mut onchain_events_count = 0;
+        let mut merged_messages_count = 0;
+        let mut pruned_messages_count = 0;
+        let mut revoked_messages_count = 0;
         let mut events = vec![];
         let mut message_types = HashSet::new();
+        let mut revoked_signers = HashSet::new();
 
         // System messages first, then user messages and finally prunes
         for msg in &snapchain_txn.system_messages {
@@ -322,13 +327,49 @@ impl ShardEngine {
 
                 match event {
                     Ok(hub_event) => {
+                        onchain_events_count += 1;
                         self.update_trie(&hub_event, txn_batch)?;
                         events.push(hub_event.clone());
                         system_messages_count += 1;
+                        match &onchain_event.body {
+                            Some(onchain_event::on_chain_event::Body::SignerEventBody(
+                                signer_event,
+                            )) => {
+                                if signer_event.event_type
+                                    == onchain_event::SignerEventType::Remove as i32
+                                {
+                                    revoked_signers.insert(signer_event.key.clone());
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                     Err(err) => {
                         warn!("Error merging onchain event: {:?}", err);
                     }
+                }
+            }
+        }
+
+        for key in revoked_signers {
+            let result = self
+                .stores
+                .revoke_messages(snapchain_txn.fid as u32, &key, txn_batch);
+            match result {
+                Ok(revoke_events) => {
+                    for event in revoke_events {
+                        revoked_messages_count += 1;
+                        self.update_trie(&event, txn_batch)?;
+                        events.push(event.clone());
+                    }
+                }
+                Err(err) => {
+                    warn!(
+                        fid = snapchain_txn.fid,
+                        key = hex::encode(key),
+                        "Error revoking signer: {:?}",
+                        err
+                    );
                 }
             }
         }
@@ -338,6 +379,7 @@ impl ShardEngine {
             let result = self.merge_message(msg, txn_batch);
             match result {
                 Ok(event) => {
+                    merged_messages_count += 1;
                     self.update_trie(&event, txn_batch)?;
                     events.push(event.clone());
                     user_messages_count += 1;
@@ -360,6 +402,7 @@ impl ShardEngine {
             match result {
                 Ok(pruned_events) => {
                     for event in pruned_events {
+                        pruned_messages_count += 1;
                         self.update_trie(&event, txn_batch)?;
                         events.push(event.clone());
                     }
@@ -386,6 +429,10 @@ impl ShardEngine {
             num_system_messages = total_system_messages,
             user_messages_merged = user_messages_count,
             system_messages_merged = system_messages_count,
+            onchain_events_merged = onchain_events_count,
+            messages_merged = merged_messages_count,
+            messages_pruned = pruned_messages_count,
+            messages_revoked = revoked_messages_count,
             new_account_root = hex::encode(&account_root),
             tx_account_root = hex::encode(&snapchain_txn.account_root),
             "Replayed transaction"
@@ -521,6 +568,15 @@ impl ShardEngine {
             }
             Some(hub_event::hub_event::Body::PruneMessageBody(prune)) => {
                 if let Some(msg) = &prune.message {
+                    self.stores.trie.delete(
+                        &self.db,
+                        txn_batch,
+                        vec![TrieKey::for_message(&msg)],
+                    )?;
+                }
+            }
+            Some(hub_event::hub_event::Body::RevokeMessageBody(revoke)) => {
+                if let Some(msg) = &revoke.message {
                     self.stores.trie.delete(
                         &self.db,
                         txn_batch,

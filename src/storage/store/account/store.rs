@@ -6,7 +6,7 @@ use super::{
 };
 use crate::core::error::HubError;
 use crate::proto::hub_event::{
-    hub_event, HubEvent, HubEventType, MergeMessageBody, PruneMessageBody,
+    hub_event, HubEvent, HubEventType, MergeMessageBody, PruneMessageBody, RevokeMessageBody,
 };
 use crate::storage::db::PageOptions;
 use crate::storage::util::increment_vec_u8;
@@ -235,17 +235,15 @@ pub trait StoreDef: Send + Sync {
         bytes_compare(&a_ts_hash[4..24], &b_ts_hash[4..24])
     }
 
-    // fn revoke_event_args(&self, message: &Message) -> HubEvent {
-    //     HubEvent {
-    //         r#type: HubEventType::RevokeMessage as i32,
-    //         body: Some(hub_event::Body::RevokeMessageBody(
-    //             protos::RevokeMessageBody {
-    //                 message: Some(message.clone()),
-    //             },
-    //         )),
-    //         id: 0,
-    //     }
-    // }
+    fn revoke_event_args(&self, message: &Message) -> HubEvent {
+        HubEvent {
+            r#type: HubEventType::RevokeMessage as i32,
+            body: Some(hub_event::Body::RevokeMessageBody(RevokeMessageBody {
+                message: Some(message.clone()),
+            })),
+            id: 0,
+        }
+    }
 
     fn merge_event_args(&self, message: &Message, merge_conflicts: Vec<Message>) -> HubEvent {
         HubEvent {
@@ -592,19 +590,20 @@ impl<T: StoreDef + Clone> Store<T> {
         }
     }
 
-    pub fn revoke(&self, message: &Message) -> Result<Vec<u8>, HubError> {
-        // Start a transaction
-        let mut txn = self.db.txn();
-
+    pub fn revoke(
+        &self,
+        message: &Message,
+        txn: &mut RocksDbTransactionBatch,
+    ) -> Result<HubEvent, HubError> {
         // Get the message ts_hash
         let ts_hash = make_ts_hash(message.data.as_ref().unwrap().timestamp, &message.hash)?;
 
         if self.store_def().is_compact_state_type(message) {
-            self.delete_compact_state_transaction(&mut txn, message)?;
+            self.delete_compact_state_transaction(txn, message)?;
         } else if self.store_def.is_add_type(message) {
-            self.delete_add_transaction(&mut txn, &ts_hash, message)?;
+            self.delete_add_transaction(txn, &ts_hash, message)?;
         } else if self.store_def.remove_type_supported() && self.store_def.is_remove_type(message) {
-            self.delete_remove_transaction(&mut txn, message)?;
+            self.delete_remove_transaction(txn, message)?;
         } else {
             return Err(HubError {
                 code: "bad_request.invalid_param".to_string(),
@@ -612,22 +611,14 @@ impl<T: StoreDef + Clone> Store<T> {
             });
         }
 
-        // let mut hub_event = self.store_def.revoke_event_args(message);
-        //
-        // let id = self
-        //     .store_event_handler
-        //     .commit_transaction(&mut txn, &mut hub_event)?;
+        let mut hub_event = self.store_def.revoke_event_args(message);
 
-        // Commit the transaction
-        self.db.commit(txn)?;
+        let id = self
+            .store_event_handler
+            .commit_transaction(txn, &mut hub_event)?;
+        hub_event.id = id;
 
-        // hub_event.id = id;
-
-        // Serialize the hub_event
-        // let hub_event_bytes = hub_event.encode_to_vec();
-
-        // Ok(hub_event_bytes)
-        Ok(vec![]) // TODO: Use actual event
+        Ok(hub_event)
     }
 
     fn read_compact_state_details(
@@ -916,6 +907,46 @@ impl<T: StoreDef + Clone> Store<T> {
         )?;
 
         Ok(pruned_events)
+    }
+
+    pub fn revoke_messages_by_signer(
+        &self,
+        fid: u32,
+        key: &Vec<u8>,
+        txn: &mut RocksDbTransactionBatch,
+    ) -> Result<Vec<HubEvent>, HubError> {
+        let mut revoke_events = vec![];
+
+        let prefix = &make_message_primary_key(fid, self.store_def.postfix(), None);
+        self.db.for_each_iterator_by_prefix(
+            Some(prefix.to_vec()),
+            Some(increment_vec_u8(prefix)),
+            &PageOptions::default(),
+            |_key, value| {
+                // Value is a message, so try to decode it
+                let message = message_decode(value)?;
+
+                if bytes_compare(&message.signer, key) == 0 {
+                    let result = self.revoke(&message, txn);
+                    match result {
+                        Ok(event) => {
+                            revoke_events.push(event);
+                        }
+                        Err(e) => {
+                            warn!(
+                                fid = fid,
+                                hash = message.hex_hash(),
+                                error = format!("{:?}", e),
+                                "Error revoking message, skipping"
+                            );
+                        }
+                    }
+                }
+                Ok(false) // Continue the iteration
+            },
+        )?;
+
+        Ok(revoke_events)
     }
 
     pub fn get_all_messages_by_fid(

@@ -1,9 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use crate::proto::hub_event::HubEvent;
     use crate::proto::msg::{self as message, ReactionType};
+    use crate::proto::onchain_event;
     use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
     use crate::proto::snapchain::{Height, ShardChunk, ShardHeader, Transaction};
     use crate::storage::db;
@@ -13,7 +12,9 @@ mod tests {
     use crate::storage::trie::merkle_trie::TrieKey;
     use crate::utils::factory::{self, events_factory, messages_factory};
     use crate::utils::statsd_wrapper::StatsdClientWrapper;
+    use ed25519_dalek::SigningKey;
     use prost::Message as _;
+    use std::sync::Arc;
     use tempfile;
     use tracing_subscriber::EnvFilter;
 
@@ -142,6 +143,34 @@ mod tests {
         );
     }
 
+    fn assert_revoke_event(event: &HubEvent, revoked_message: &message::Message) {
+        let generated_event = match &event.body {
+            Some(crate::proto::hub_event::hub_event::Body::RevokeMessageBody(msg)) => msg,
+            _ => panic!("Unexpected event type: {:?}", event.body),
+        };
+        assert_eq!(
+            to_hex(&revoked_message.hash),
+            to_hex(&generated_event.message.as_ref().unwrap().hash)
+        );
+    }
+
+    fn assert_onchain_hub_event(event: &HubEvent, onchain_event: &OnChainEvent) {
+        let generated_event = match &event.body {
+            Some(crate::proto::hub_event::hub_event::Body::MergeOnChainEventBody(onchain)) => {
+                onchain
+            }
+            _ => panic!("Unexpected event type: {:?}", event.body),
+        }
+        .on_chain_event
+        .as_ref()
+        .unwrap();
+        assert_eq!(
+            to_hex(&onchain_event.transaction_hash),
+            to_hex(&generated_event.transaction_hash)
+        );
+        assert_eq!(&onchain_event.r#type, &generated_event.r#type);
+    }
+
     fn validate_and_commit_state_change(
         engine: &mut ShardEngine,
         state_change: &ShardStateChange,
@@ -169,7 +198,13 @@ mod tests {
             panic!("Failed to propose message");
         }
 
-        validate_and_commit_state_change(engine, &state_change)
+        let chunk = validate_and_commit_state_change(engine, &state_change);
+        assert_eq!(
+            state_change.new_state_root,
+            chunk.header.as_ref().unwrap().shard_root
+        );
+        assert!(engine.trie_key_exists(&TrieKey::for_message(msg)));
+        chunk
     }
 
     async fn commit_event(engine: &mut ShardEngine, event: &OnChainEvent) -> ShardChunk {
@@ -906,5 +941,73 @@ mod tests {
         assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast4)), true);
         assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast5)), true);
         assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast6)), true);
+    }
+
+    #[tokio::test]
+    async fn test_revoking_a_signer_deletes_all_messages_from_that_signer() {
+        let (mut engine, _tmpdir) = new_engine();
+        let signer = &SigningKey::generate(&mut rand::rngs::OsRng);
+        let another_signer = &SigningKey::generate(&mut rand::rngs::OsRng);
+        let timestamp = factory::time::farcaster_time();
+        let msg1 = messages_factory::casts::create_cast_add(
+            FID_FOR_TEST,
+            "msg1",
+            Some(timestamp),
+            Some(signer),
+        );
+        let msg2 = messages_factory::casts::create_cast_add(
+            FID_FOR_TEST,
+            "msg2",
+            Some(timestamp + 1),
+            Some(signer),
+        );
+        let same_fid_different_signer = messages_factory::casts::create_cast_add(
+            FID_FOR_TEST,
+            "msg3",
+            None,
+            Some(another_signer),
+        );
+        let different_fid_same_signer =
+            messages_factory::casts::create_cast_add(FID_FOR_TEST + 1, "msg4", None, Some(signer));
+        register_user(FID_FOR_TEST, &mut engine).await;
+        register_user(FID_FOR_TEST + 1, &mut engine).await;
+        let mut event_rx = engine.get_senders().events_tx.subscribe();
+
+        commit_message(&mut engine, &msg1).await;
+        let _ = &event_rx.try_recv().unwrap(); // Ignore merge event
+        commit_message(&mut engine, &msg2).await;
+        let _ = &event_rx.try_recv().unwrap(); // Ignore merge event
+        commit_message(&mut engine, &same_fid_different_signer).await;
+        let _ = &event_rx.try_recv().unwrap(); // Ignore merge event
+        commit_message(&mut engine, &different_fid_same_signer).await;
+        let _ = &event_rx.try_recv().unwrap(); // Ignore merge event
+
+        // All 4 messages exist
+        let messages = engine.get_casts_by_fid(FID_FOR_TEST).unwrap();
+        assert_eq!(3, messages.messages_bytes.len());
+        let messages = engine.get_casts_by_fid(FID_FOR_TEST + 1).unwrap();
+        assert_eq!(1, messages.messages_bytes.len());
+
+        // Revoke a single signer
+        let public_key = signer.verifying_key().as_bytes().to_vec();
+        let revoke_event = events_factory::create_signer_event(
+            FID_FOR_TEST,
+            public_key,
+            onchain_event::SignerEventType::Remove,
+        );
+        commit_event(&mut engine, &revoke_event).await;
+        assert_onchain_hub_event(&event_rx.try_recv().unwrap(), &revoke_event);
+        assert_revoke_event(&event_rx.try_recv().unwrap(), &msg1);
+        assert_revoke_event(&event_rx.try_recv().unwrap(), &msg2);
+
+        assert_eq!(event_rx.try_recv().is_err(), true); // No more events
+
+        // Only the messages from the revoked signer are deleted
+        let messages = engine.get_casts_by_fid(FID_FOR_TEST).unwrap();
+        assert_eq!(1, messages.messages_bytes.len());
+
+        // Different Fid with the same signer is unaffected
+        let messages = engine.get_casts_by_fid(FID_FOR_TEST + 1).unwrap();
+        assert_eq!(1, messages.messages_bytes.len());
     }
 }

@@ -10,7 +10,7 @@ use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::proto::snapchain::Block;
 use snapchain::storage::db::RocksDB;
 use snapchain::storage::store::BlockStore;
-use snapchain::utils::cli;
+use snapchain::utils::factory::messages_factory;
 use snapchain::utils::statsd_wrapper::StatsdClientWrapper;
 use snapchain::{
     consensus::consensus::ConsensusMsg,
@@ -327,7 +327,12 @@ async fn test_basic_consensus() {
             messages_tx1
                 .send(
                     snapchain::storage::store::engine::MempoolMessage::UserMessage(
-                        cli::compose_message(321, format!("Cast {}", i).as_str(), None, None),
+                        messages_factory::casts::create_cast_add(
+                            321,
+                            format!("Cast {}", i).as_str(),
+                            None,
+                            None,
+                        ),
                     ),
                 )
                 .await
