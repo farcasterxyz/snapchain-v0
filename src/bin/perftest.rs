@@ -94,7 +94,7 @@ fn start_submit_messages(
             loop {
                 submit_message_timer.tick().await;
                 let text = format!("For benchmarking {}", i);
-                let msg = compose_message(6833, text.as_str(), None, Some(private_key.clone()));
+                let msg = compose_message(6833, text.as_str(), None, Some(&private_key));
                 let message = send_message(&mut client, &msg).await.unwrap();
                 messages_tx.send(message).await.unwrap();
                 i += 1;

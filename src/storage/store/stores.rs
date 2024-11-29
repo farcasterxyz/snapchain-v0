@@ -1,3 +1,9 @@
+use super::account::{
+    ReactionStore, ReactionStoreDef, UserDataStore, UserDataStoreDef, VerificationStore,
+    VerificationStoreDef,
+};
+use crate::core::error::HubError;
+use crate::proto::hub_event::HubEvent;
 use crate::proto::msg::MessageType;
 use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
 use crate::storage::store::account::{
@@ -10,11 +16,6 @@ use crate::storage::trie::merkle_trie::TrieKey;
 use std::sync::Arc;
 use thiserror::Error;
 
-use super::account::{
-    ReactionStore, ReactionStoreDef, UserDataStore, UserDataStoreDef, VerificationStore,
-    VerificationStoreDef,
-};
-
 #[derive(Error, Debug)]
 pub enum StoresError {
     #[error(transparent)]
@@ -22,6 +23,12 @@ pub enum StoresError {
 
     #[error("unsupported message type")]
     UnsupportedMessageType(MessageType),
+
+    #[error("store error")]
+    StoreError {
+        inner: HubError, // TODO: move away from HubError when we can
+        hash: Vec<u8>,
+    },
 }
 
 #[derive(Clone)]
@@ -183,6 +190,57 @@ impl Stores {
                 .max_messages(slot.units, slot.legacy_units, message_type);
 
         Ok((message_count, max_messages))
+    }
+
+    pub fn revoke_messages(
+        &self,
+        fid: u32,
+        key: &Vec<u8>,
+        txn_batch: &mut RocksDbTransactionBatch,
+    ) -> Result<Vec<HubEvent>, StoresError> {
+        let mut revoke_events = Vec::new();
+        // TODO: Dedup once we have a unified interface for stores
+        revoke_events.extend(
+            self.cast_store
+                .revoke_messages_by_signer(fid, key, txn_batch)
+                .map_err(|e| StoresError::StoreError {
+                    inner: e,
+                    hash: key.clone(),
+                })?,
+        );
+        revoke_events.extend(
+            self.link_store
+                .revoke_messages_by_signer(fid, key, txn_batch)
+                .map_err(|e| StoresError::StoreError {
+                    inner: e,
+                    hash: key.clone(),
+                })?,
+        );
+        revoke_events.extend(
+            self.reaction_store
+                .revoke_messages_by_signer(fid, key, txn_batch)
+                .map_err(|e| StoresError::StoreError {
+                    inner: e,
+                    hash: key.clone(),
+                })?,
+        );
+        revoke_events.extend(
+            self.user_data_store
+                .revoke_messages_by_signer(fid, key, txn_batch)
+                .map_err(|e| StoresError::StoreError {
+                    inner: e,
+                    hash: key.clone(),
+                })?,
+        );
+        revoke_events.extend(
+            self.verification_store
+                .revoke_messages_by_signer(fid, key, txn_batch)
+                .map_err(|e| StoresError::StoreError {
+                    inner: e,
+                    hash: key.clone(),
+                })?,
+        );
+        Ok(revoke_events)
     }
 }
 

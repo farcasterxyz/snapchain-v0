@@ -104,6 +104,35 @@ pub mod events_factory {
             )),
         }
     }
+
+    pub fn create_signer_event(
+        fid: u32,
+        signer: Vec<u8>,
+        event_type: onchain_event::SignerEventType,
+    ) -> OnChainEvent {
+        let signer_event_body = onchain_event::SignerEventBody {
+            key: signer,
+            event_type: event_type as i32,
+            metadata: vec![],
+            key_type: 1,
+            metadata_type: 1,
+        };
+        OnChainEvent {
+            r#type: OnChainEventType::EventTypeSigner as i32,
+            chain_id: 10,
+            block_number: rand::random::<u32>(),
+            block_hash: vec![],
+            block_timestamp: time::current_timestamp_with_offset(-10) as u64,
+            transaction_hash: rand::random::<[u8; 32]>().to_vec(),
+            log_index: 0,
+            fid: fid as u64,
+            tx_index: 0,
+            version: 1,
+            body: Some(onchain_event::on_chain_event::Body::SignerEventBody(
+                signer_event_body,
+            )),
+        }
+    }
 }
 
 pub mod messages_factory {
@@ -122,16 +151,17 @@ pub mod messages_factory {
         msg_type: MessageType,
         body: message::message_data::Body,
         timestamp: Option<u32>,
-        private_key: Option<SigningKey>,
+        private_key: Option<&SigningKey>,
     ) -> message::Message {
-        let key = private_key.unwrap_or_else(|| {
-            SigningKey::from_bytes(
+        let key = match private_key {
+            Some(key) => key,
+            None => &SigningKey::from_bytes(
                 &SecretKey::from_hex(
                     "1000000000000000000000000000000000000000000000000000000000000000",
                 )
                 .unwrap(),
-            )
-        });
+            ),
+        };
         let network = FarcasterNetwork::Mainnet;
 
         let timestamp = timestamp.unwrap_or_else(|| farcaster_time());
@@ -167,7 +197,7 @@ pub mod messages_factory {
             fid: u32,
             text: &str,
             timestamp: Option<u32>,
-            private_key: Option<SigningKey>,
+            private_key: Option<&SigningKey>,
         ) -> message::Message {
             let cast_add = CastAddBody {
                 text: text.to_string(),
@@ -191,7 +221,7 @@ pub mod messages_factory {
             fid: u32,
             target_hash: &Vec<u8>,
             timestamp: Option<u32>,
-            private_key: Option<SigningKey>,
+            private_key: Option<&SigningKey>,
         ) -> crate::proto::msg::Message {
             let cast_remove = CastRemoveBody {
                 target_hash: target_hash.clone(),
@@ -216,7 +246,7 @@ pub mod messages_factory {
             link_type: String,
             target_fid: u32,
             timestamp: Option<u32>,
-            private_key: Option<SigningKey>,
+            private_key: Option<&SigningKey>,
         ) -> message::Message {
             let link_body = LinkBody {
                 r#type: link_type,
@@ -237,7 +267,7 @@ pub mod messages_factory {
             link_type: String,
             target_fid: u32,
             timestamp: Option<u32>,
-            private_key: Option<SigningKey>,
+            private_key: Option<&SigningKey>,
         ) -> crate::proto::msg::Message {
             let link_body = LinkBody {
                 r#type: link_type,
@@ -258,7 +288,7 @@ pub mod messages_factory {
             link_type: String,
             target_fid: u32,
             timestamp: Option<u32>,
-            private_key: Option<SigningKey>,
+            private_key: Option<&SigningKey>,
         ) -> crate::proto::msg::Message {
             let link_compact_state_body = LinkCompactStateBody {
                 r#type: link_type,
@@ -285,7 +315,7 @@ pub mod messages_factory {
             reaction_type: ReactionType,
             target_url: String,
             timestamp: Option<u32>,
-            private_key: Option<SigningKey>,
+            private_key: Option<&SigningKey>,
         ) -> message::Message {
             let reaction_body = ReactionBody {
                 r#type: reaction_type as i32,
@@ -305,7 +335,7 @@ pub mod messages_factory {
             reaction_type: ReactionType,
             target_url: String,
             timestamp: Option<u32>,
-            private_key: Option<SigningKey>,
+            private_key: Option<&SigningKey>,
         ) -> message::Message {
             let reaction_body = ReactionBody {
                 r#type: reaction_type as i32,
@@ -330,7 +360,7 @@ pub mod messages_factory {
             user_data_type: UserDataType,
             value: String,
             timestamp: Option<u32>,
-            private_key: Option<SigningKey>,
+            private_key: Option<&SigningKey>,
         ) -> message::Message {
             let user_data_body = UserDataBody {
                 r#type: user_data_type as i32,
@@ -358,7 +388,7 @@ pub mod messages_factory {
             claim_signature: String,
             block_hash: String,
             timestamp: Option<u32>,
-            private_key: Option<SigningKey>,
+            private_key: Option<&SigningKey>,
         ) -> message::Message {
             let body = VerificationAddAddressBody {
                 address: address.encode_to_vec(),
@@ -381,7 +411,7 @@ pub mod messages_factory {
             fid: u32,
             address: String,
             timestamp: Option<u32>,
-            private_key: Option<SigningKey>,
+            private_key: Option<&SigningKey>,
         ) -> message::Message {
             let body = VerificationRemoveBody {
                 address: address.encode_to_vec(),

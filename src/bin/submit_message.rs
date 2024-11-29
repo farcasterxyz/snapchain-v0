@@ -26,7 +26,7 @@ async fn main() {
 
     let resp = send_message(
         &mut client,
-        &compose_message(6833, "Welcome from Rust!", None, Some(private_key)),
+        &compose_message(6833, "Welcome from Rust!", None, Some(&private_key)),
     )
     .await
     .unwrap();

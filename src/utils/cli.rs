@@ -26,7 +26,7 @@ pub fn compose_message(
     fid: u32,
     text: &str,
     timestamp: Option<u32>,
-    private_key: Option<SigningKey>,
+    private_key: Option<&SigningKey>,
 ) -> message::Message {
     messages_factory::casts::create_cast_add(fid, text, timestamp, private_key)
 }
