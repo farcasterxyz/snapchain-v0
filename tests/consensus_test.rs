@@ -8,7 +8,7 @@ use snapchain::network::server::MySnapchainService;
 use snapchain::node::snapchain_node::SnapchainNode;
 use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::proto::snapchain::Block;
-use snapchain::storage::db::RocksDB;
+use snapchain::storage::db::{PageOptions, RocksDB};
 use snapchain::storage::store::BlockStore;
 use snapchain::utils::factory::messages_factory;
 use snapchain::utils::statsd_wrapper::StatsdClientWrapper;
@@ -170,8 +170,11 @@ impl NodeForTest {
     }
 
     pub async fn num_blocks(&self) -> usize {
-        let blocks = self.block_store.get_blocks(0, None).unwrap();
-        blocks.len()
+        let blocks_page = self
+            .block_store
+            .get_blocks(0, None, &PageOptions::default())
+            .unwrap();
+        blocks_page.blocks.len()
     }
 
     pub async fn num_shard_chunks(&self) -> usize {
@@ -186,8 +189,9 @@ impl NodeForTest {
     pub async fn total_messages(&self) -> usize {
         let messages = self
             .block_store
-            .get_blocks(0, None)
+            .get_blocks(0, None, &PageOptions::default())
             .unwrap()
+            .blocks
             .into_iter()
             .map(|b| b.shard_chunks[0].transactions[0].user_messages.len());
 

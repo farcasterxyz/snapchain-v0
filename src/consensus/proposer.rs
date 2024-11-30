@@ -6,6 +6,7 @@ use crate::proto::rpc::{BlocksRequest, ShardChunksRequest};
 use crate::proto::snapchain::{Block, BlockHeader, FullProposal, ShardChunk, ShardHeader};
 use crate::storage::store::engine::{BlockEngine, ShardEngine, ShardStateChange};
 use crate::storage::store::BlockStorageError;
+use futures::StreamExt;
 use malachite_common::{Round, Validity};
 use prost::Message;
 use std::collections::BTreeMap;
@@ -396,8 +397,8 @@ impl Proposer for BlockProposer {
                     start_block_number: prev_block_number + 1,
                     stop_block_number: None,
                 });
-                let missing_blocks = rpc_client.get_blocks(request).await?;
-                for block in missing_blocks.get_ref().blocks.clone() {
+                let mut missing_blocks_rx = rpc_client.get_blocks(request).await?;
+                while let Ok(Some(block)) = missing_blocks_rx.get_mut().message().await {
                     self.engine.commit_block(block.clone());
                 }
             }

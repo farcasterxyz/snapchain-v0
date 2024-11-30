@@ -47,17 +47,12 @@ pub async fn follow_blocks(
         };
 
         let request = tonic::Request::new(msg);
-        let response = client.get_blocks(request).await?;
-
-        let inner = response.into_inner();
-        if inner.blocks.is_empty() {
-            time::sleep(time::Duration::from_millis(10)).await;
-            continue;
-        }
-
-        for block in &inner.blocks {
+        let mut response = client.get_blocks(request).await?.into_inner();
+        while let Ok(Some(block)) = response.message().await {
             block_tx.send(block.clone()).await.unwrap();
             i += 1;
         }
+
+        time::sleep(time::Duration::from_millis(10)).await;
     }
 }
