@@ -7,11 +7,14 @@ use figment::{
 use hex;
 use hex::FromHex;
 use serde::{Deserialize, Serialize};
-use snapchain::consensus::proposer::current_time;
-use snapchain::proto::msg as message;
 use snapchain::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 use snapchain::proto::snapchain::Block;
 use snapchain::utils::cli::{compose_message, follow_blocks, send_message};
+use snapchain::{
+    consensus::proposer::current_time, proto::admin_rpc::admin_service_client::AdminServiceClient,
+    utils::cli::compose_rent_event,
+};
+use snapchain::{proto::msg as message, utils::cli::send_on_chain_event};
 use std::collections::HashSet;
 use std::error::Error;
 use std::path::Path;
@@ -89,6 +92,18 @@ fn start_submit_messages(
                     panic!("Error connecting to {}: {}", &rpc_addr, e);
                 }
             };
+
+            let mut admin_client = match AdminServiceClient::connect(rpc_addr.clone()).await {
+                Ok(client) => client,
+                Err(e) => {
+                    panic!("Error connecting to {}: {}", &rpc_addr, e);
+                }
+            };
+
+            let rent_event = compose_rent_event(6833);
+            send_on_chain_event(&mut admin_client, rent_event)
+                .await
+                .unwrap();
 
             let mut i = 1;
             loop {

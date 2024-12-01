@@ -14,7 +14,7 @@ use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use hex::ToHex;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::{server, Request, Response, Status};
+use tonic::{Request, Response, Status};
 use tracing::info;
 
 pub struct MySnapchainService {
