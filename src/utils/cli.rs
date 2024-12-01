@@ -36,7 +36,7 @@ pub async fn send_on_chain_event(
 }
 
 pub fn compose_rent_event(fid: u32) -> OnChainEvent {
-    factory::events_factory::create_rent_event(fid, Some(10), Some(10), false)
+    factory::events_factory::create_rent_event(fid, None, Some(10), false)
 }
 
 pub fn compose_message(
