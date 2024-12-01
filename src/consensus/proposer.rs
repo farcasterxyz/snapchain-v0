@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tokio::{select, time};
 use tonic::Request;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
 
@@ -390,6 +390,7 @@ impl Proposer for BlockProposer {
         match &validator.rpc_address {
             None => return Ok(()),
             Some(rpc_address) => {
+                info!({ rpc_address }, "Starting block sync against a validator");
                 let destination_addr = format!("http://{}", rpc_address.clone());
                 let mut rpc_client = SnapchainServiceClient::connect(destination_addr).await?;
                 let request = Request::new(BlocksRequest {
@@ -398,9 +399,12 @@ impl Proposer for BlockProposer {
                     stop_block_number: None,
                 });
                 let mut missing_blocks_rx = rpc_client.get_blocks(request).await?;
+                let mut num_blocks_synced = 0;
                 while let Ok(Some(block)) = missing_blocks_rx.get_mut().message().await {
                     self.engine.commit_block(block.clone());
+                    num_blocks_synced += 1;
                 }
+                info!({ rpc_address, num_blocks_synced }, "Finished block sync against a validator");
             }
         }
 
