@@ -1,4 +1,6 @@
+use crate::proto::admin_rpc::admin_service_client::AdminServiceClient;
 use crate::proto::msg as message;
+use crate::proto::onchain_event::OnChainEvent;
 use crate::proto::rpc::snapchain_service_client::SnapchainServiceClient;
 use crate::proto::{rpc, snapchain::Block};
 use crate::utils::factory::messages_factory;
@@ -7,6 +9,8 @@ use std::error::Error;
 use tokio::sync::mpsc;
 use tokio::time;
 use tonic::transport::Channel;
+
+use super::factory;
 
 const FETCH_SIZE: u64 = 100;
 
@@ -20,6 +24,19 @@ pub async fn send_message(
     let response = client.submit_message(request).await?;
     // println!("{}", serde_json::to_string(&response.get_ref()).unwrap());
     Ok(response.into_inner())
+}
+
+pub async fn send_on_chain_event(
+    client: &mut AdminServiceClient<Channel>,
+    onchain_event: OnChainEvent,
+) -> Result<OnChainEvent, Box<dyn Error>> {
+    let request = tonic::Request::new(onchain_event.clone());
+    let response = client.submit_on_chain_event(request).await?;
+    Ok(response.into_inner())
+}
+
+pub fn compose_rent_event(fid: u32) -> OnChainEvent {
+    factory::events_factory::create_rent_event(fid, Some(10), Some(10), false)
 }
 
 pub fn compose_message(

@@ -1,6 +1,8 @@
 syntax = "proto3";
 package admin_rpc;
 
+import "onchain_event.proto";
+
 message TerminateRequest {
   bool destroy_database = 1;
 }
@@ -10,4 +12,5 @@ message TerminateResponse {
 
 service AdminService {
   rpc Terminate(TerminateRequest) returns (TerminateResponse);
+  rpc SubmitOnChainEvent(onchain_event.OnChainEvent) returns (onchain_event.OnChainEvent);
 }

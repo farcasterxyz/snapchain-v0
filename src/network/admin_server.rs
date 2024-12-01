@@ -1,15 +1,21 @@
-use crate::proto::admin_rpc;
 use crate::proto::admin_rpc::admin_service_server::AdminService;
+use crate::proto::onchain_event;
+use crate::proto::snapchain::ValidatorMessage;
+use crate::proto::{admin_rpc, onchain_event::OnChainEvent};
+use crate::storage::store::engine::{MempoolMessage, Senders};
 use rocksdb;
+use std::collections::HashMap;
 use std::{io, path, process};
 use thiserror::Error;
+use tokio::sync::mpsc;
 use tonic::{Request, Response, Status};
-use tracing::warn;
+use tracing::{info, warn};
 
 pub struct MyAdminService {
     db_dir: String,
     admin_db_dir: String,
     db: Option<rocksdb::TransactionDB>,
+    message_tx: mpsc::Sender<MempoolMessage>,
 }
 
 #[derive(Debug, Error)]
@@ -24,15 +30,19 @@ pub enum AdminServiceError {
 const DB_DESTROY_KEY: &[u8] = b"__destroy_all_databases_on_start__";
 
 impl MyAdminService {
-    pub fn new(db_dir: &str) -> Self {
+    pub fn new(db_dir: &str, shard_senders: HashMap<u32, Senders>) -> Self {
         let admin_db_dir = path::Path::new(db_dir)
             .join("admin")
             .to_string_lossy()
             .into_owned();
+
+        // TODO(aditi): This logic will change once a mempool exists
+        let message_tx = shard_senders.get(&1u32).unwrap().messages_tx.clone();
         Self {
             db_dir: db_dir.to_string(),
             admin_db_dir,
             db: None,
+            message_tx,
         }
     }
 
@@ -91,5 +101,29 @@ impl AdminService for MyAdminService {
 
         let response = Response::new(admin_rpc::TerminateResponse {});
         Ok(response)
+    }
+
+    async fn submit_on_chain_event(
+        &self,
+        request: Request<OnChainEvent>,
+    ) -> Result<Response<OnChainEvent>, Status> {
+        info!("Received call to [submit_on_chain_event] RPC");
+
+        let onchain_event = request.into_inner();
+
+        let result = self
+            .message_tx
+            .send(MempoolMessage::ValidatorMessage(ValidatorMessage {
+                on_chain_event: Some(onchain_event.clone()),
+                fname_transfer: None,
+            }))
+            .await;
+        match result {
+            Ok(()) => {
+                let response = Response::new(onchain_event);
+                Ok(response)
+            }
+            Err(err) => Err(Status::from_error(Box::new(err))),
+        }
     }
 }
