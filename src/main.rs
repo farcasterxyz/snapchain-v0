@@ -154,19 +154,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )
     .await;
 
+    let admin_service = {
+        let mut admin_service = MyAdminService::new(
+            app_config.rocksdb_dir.clone().as_str(),
+            node.shard_senders.clone(),
+        );
+        admin_service.maybe_destroy_databases().unwrap();
+        admin_service
+    };
+
     let rpc_shard_stores = node.shard_stores.clone();
     let rpc_shard_senders = node.shard_senders.clone();
 
     let rpc_block_store = block_store.clone();
     tokio::spawn(async move {
-        let admin_service = {
-            let mut admin_service = MyAdminService::new(
-                app_config.rocksdb_dir.clone().as_str(),
-                rpc_shard_senders.clone(),
-            );
-            admin_service.maybe_destroy_databases().unwrap();
-            admin_service
-        };
         let service = MySnapchainService::new(
             rpc_block_store,
             rpc_shard_stores,
