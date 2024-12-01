@@ -15,7 +15,7 @@ use tracing_subscriber::EnvFilter;
 
 use snapchain::consensus::consensus::SystemMessage;
 use snapchain::core::types::proto;
-use snapchain::network::admin_server::MyAdminService;
+use snapchain::network::admin_server::{DbManager, MyAdminService};
 use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
 use snapchain::network::server::MySnapchainService;
@@ -66,6 +66,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Ok(addr) => Ok((addr.ip().to_string(), addr.port())),
         Err(e) => Err(format!("invalid statsd address: {}", e)),
     }?;
+
+    let mut db_manager = DbManager::new(app_config.rocksdb_dir.clone().as_str());
+    db_manager.maybe_destroy_databases().unwrap();
 
     let host = (statsd_host, statsd_port);
     let socket = net::UdpSocket::bind("0.0.0.0:0").unwrap();
@@ -154,19 +157,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )
     .await;
 
+    let admin_service = MyAdminService::new(db_manager, node.shard_senders.clone());
+
     let rpc_shard_stores = node.shard_stores.clone();
     let rpc_shard_senders = node.shard_senders.clone();
 
     let rpc_block_store = block_store.clone();
     tokio::spawn(async move {
-        let admin_service = {
-            let mut admin_service = MyAdminService::new(
-                app_config.rocksdb_dir.clone().as_str(),
-                rpc_shard_senders.clone(),
-            );
-            admin_service.maybe_destroy_databases().unwrap();
-            admin_service
-        };
         let service = MySnapchainService::new(
             rpc_block_store,
             rpc_shard_stores,

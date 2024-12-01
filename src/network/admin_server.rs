@@ -11,38 +11,23 @@ use tokio::sync::mpsc;
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
-pub struct MyAdminService {
+pub struct DbManager {
     db_dir: String,
     admin_db_dir: String,
     db: Option<rocksdb::TransactionDB>,
-    message_tx: mpsc::Sender<MempoolMessage>,
 }
 
-#[derive(Debug, Error)]
-pub enum AdminServiceError {
-    #[error(transparent)]
-    RocksDBError(#[from] rocksdb::Error),
-
-    #[error(transparent)]
-    IoError(#[from] io::Error),
-}
-
-const DB_DESTROY_KEY: &[u8] = b"__destroy_all_databases_on_start__";
-
-impl MyAdminService {
-    pub fn new(db_dir: &str, shard_senders: HashMap<u32, Senders>) -> Self {
+impl DbManager {
+    pub fn new(db_dir: &str) -> Self {
         let admin_db_dir = path::Path::new(db_dir)
             .join("admin")
             .to_string_lossy()
             .into_owned();
 
-        // TODO(aditi): This logic will change once a mempool exists
-        let message_tx = shard_senders.get(&1u32).unwrap().messages_tx.clone();
         Self {
             db_dir: db_dir.to_string(),
             admin_db_dir,
             db: None,
-            message_tx,
         }
     }
 
@@ -76,6 +61,33 @@ impl MyAdminService {
     }
 }
 
+pub struct MyAdminService {
+    db_manager: DbManager,
+    message_tx: mpsc::Sender<MempoolMessage>,
+}
+
+#[derive(Debug, Error)]
+pub enum AdminServiceError {
+    #[error(transparent)]
+    RocksDBError(#[from] rocksdb::Error),
+
+    #[error(transparent)]
+    IoError(#[from] io::Error),
+}
+
+const DB_DESTROY_KEY: &[u8] = b"__destroy_all_databases_on_start__";
+
+impl MyAdminService {
+    pub fn new(db_manager: DbManager, shard_senders: HashMap<u32, Senders>) -> Self {
+        // TODO(aditi): This logic will change once a mempool exists
+        let message_tx = shard_senders.get(&1u32).unwrap().messages_tx.clone();
+        Self {
+            db_manager,
+            message_tx,
+        }
+    }
+}
+
 #[tonic::async_trait]
 impl AdminService for MyAdminService {
     async fn terminate(
@@ -85,7 +97,7 @@ impl AdminService for MyAdminService {
         let destroy_database = request.get_ref().destroy_database;
 
         if destroy_database {
-            if let Err(err) = self.schedule_destruction() {
+            if let Err(err) = self.db_manager.schedule_destruction() {
                 const TEXT: &str = "failed to schedule database destruction";
                 warn!(err = err.to_string(), TEXT);
                 return Err(Status::internal(format!("{}: {}", TEXT, err)));
