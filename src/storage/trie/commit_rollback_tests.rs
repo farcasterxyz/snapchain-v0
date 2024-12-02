@@ -30,13 +30,7 @@ mod tests {
         t.initialize(db)?;
 
         let mut txn_batch = RocksDbTransactionBatch::new();
-        t.insert(
-            db,
-            &mut txn_batch,
-            vec![
-                vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            ],
-        )?;
+        t.insert(db, &mut txn_batch, vec![vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0]])?;
 
         t.print();
         Ok(())
