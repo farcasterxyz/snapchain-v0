@@ -111,12 +111,12 @@ impl SnapchainService for MySnapchainService {
                     },
                 ) {
                     Err(err) => {
-                        server_tx.send(Err(Status::from_error(Box::new(err)))).await;
+                        _ = server_tx.send(Err(Status::from_error(Box::new(err)))).await;
                         break;
                     }
                     Ok(block_page) => {
                         for block in block_page.blocks {
-                            if let Err(err) = server_tx.send(Ok(block)).await {
+                            if let Err(_) = server_tx.send(Ok(block)).await {
                                 break;
                             }
                         }
