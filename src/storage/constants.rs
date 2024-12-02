@@ -36,6 +36,9 @@ pub enum RootPrefix {
 
     /* Used to index fname username proofs by fid */
     FNameUserNameProofByFid = 15,
+
+    /* Used to index user submitted username proofs */
+    UserNameProofByName = 16,
 }
 
 /** Copied from the JS code */

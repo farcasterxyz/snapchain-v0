@@ -1,25 +1,27 @@
 use super::{
-    get_message, hub_error_to_js_throw, make_fid_key, make_user_key, read_fid_key,
+    get_message, make_fid_key, make_user_key, read_fid_key,
     store::{Store, StoreDef},
-    utils::{self, encode_messages_to_js_object, get_page_options, get_store},
-    HubError, IntoU8, MessagesPage, PageOptions, RootPrefix, StoreEventHandler, UserPostfix,
-    TS_HASH_LENGTH,
+    IntoU8, MessagesPage, StoreEventHandler, TS_HASH_LENGTH,
 };
-use crate::protos::{
-    hub_event, message_data::Body, HubEvent, HubEventType, MergeUserNameProofBody, UserNameType,
-};
-use crate::{
-    db::{RocksDB, RocksDbTransactionBatch},
-    protos::{self, Message, MessageType},
-};
-use neon::{
-    context::{Context, FunctionContext},
-    result::JsResult,
-    types::{buffer::TypedArray, JsBox, JsBuffer, JsNumber, JsPromise},
-};
-use prost::Message as _;
-use std::{borrow::Borrow as _, sync::Arc};
 
+use crate::storage::constants::{RootPrefix, UserPostfix};
+use crate::storage::db::PageOptions;
+
+use crate::proto::hub_event;
+
+use crate::proto::msg::message_data::Body;
+use crate::proto::username_proof::UserNameType;
+use hub_event::{HubEvent, HubEventType, MergeUserNameProofBody};
+
+use crate::core::error::HubError;
+use crate::storage::util;
+use crate::{
+    proto::{self, msg::Message, msg::MessageType},
+    storage::db::{RocksDB, RocksDbTransactionBatch},
+};
+use std::sync::Arc;
+
+#[derive(Clone)]
 pub struct UsernameProofStoreDef {
     prune_size_limit: u32,
 }
@@ -99,7 +101,7 @@ impl StoreDef for UsernameProofStoreDef {
     }
 
     fn is_add_type(&self, message: &Message) -> bool {
-        message.signature_scheme == protos::SignatureScheme::Ed25519 as i32
+        message.signature_scheme == proto::msg::SignatureScheme::Ed25519 as i32
             && message.data.is_some()
             && message.data.as_ref().unwrap().r#type == MessageType::UsernameProof.into_u8() as i32
             && message.data.as_ref().unwrap().body.is_some()
@@ -219,7 +221,7 @@ impl StoreDef for UsernameProofStoreDef {
                         db,
                         fid,
                         self.postfix(),
-                        &utils::vec_to_u8_24(&existing_message_ts_hash)?,
+                        &util::vec_to_u8_24(&existing_message_ts_hash)?,
                     ) {
                         let message_compare = self.message_compare(
                             self.add_message_type(),
@@ -289,7 +291,7 @@ impl StoreDef for UsernameProofStoreDef {
 
         HubEvent {
             r#type: HubEventType::MergeUsernameProof as i32,
-            body: Some(hub_event::Body::MergeUsernameProofBody(
+            body: Some(hub_event::hub_event::Body::MergeUsernameProofBody(
                 MergeUserNameProofBody {
                     username_proof: None,
                     deleted_username_proof: username_proof_body,
@@ -329,7 +331,7 @@ impl StoreDef for UsernameProofStoreDef {
 
         HubEvent {
             r#type: HubEventType::MergeUsernameProof as i32,
-            body: Some(hub_event::Body::MergeUsernameProofBody(
+            body: Some(hub_event::hub_event::Body::MergeUsernameProofBody(
                 MergeUserNameProofBody {
                     username_proof: username_proof_body,
                     deleted_username_proof: deleted_proof_body,
@@ -374,19 +376,19 @@ impl UsernameProofStore {
         db: Arc<RocksDB>,
         store_event_handler: Arc<StoreEventHandler>,
         prune_size_limit: u32,
-    ) -> Store {
+    ) -> Store<UsernameProofStoreDef> {
         Store::new_with_store_def(
             db,
             store_event_handler,
-            Box::new(UsernameProofStoreDef { prune_size_limit }),
+            UsernameProofStoreDef { prune_size_limit },
         )
     }
 
     pub fn get_username_proof(
-        store: &Store,
+        store: &Store<UsernameProofStoreDef>,
         name: &Vec<u8>,
         name_type: u8,
-    ) -> Result<Option<protos::Message>, HubError> {
+    ) -> Result<Option<Message>, HubError> {
         if name_type != UserNameType::UsernameTypeEnsL1 as u8 {
             return Err(HubError {
                 code: "bad_request".to_string(),
@@ -410,11 +412,11 @@ impl UsernameProofStore {
         }
 
         let fid = read_fid_key(&fid_result.unwrap());
-        let partial_message = protos::Message {
-            data: Some(protos::MessageData {
+        let partial_message = Message {
+            data: Some(proto::msg::MessageData {
                 fid: fid as u64,
-                body: Some(protos::message_data::Body::UsernameProofBody(
-                    protos::UserNameProof {
+                body: Some(Body::UsernameProofBody(
+                    proto::username_proof::UserNameProof {
                         name: name.clone(),
                         ..Default::default()
                     },
@@ -425,76 +427,26 @@ impl UsernameProofStore {
         };
 
         store.get_add(&partial_message)
-    }
-
-    pub fn js_get_username_proof(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let channel = cx.channel();
-
-        let store = get_store(&mut cx)?;
-
-        let name = cx.argument::<JsBuffer>(0)?.as_slice(&cx).to_vec();
-        let name_type = cx.argument::<JsNumber>(1)?.value(&mut cx) as u8;
-
-        let result = match Self::get_username_proof(&store, &name, name_type) {
-            Ok(Some(message)) => message.encode_to_vec(),
-            Ok(None) => cx.throw_error(format!(
-                "{}/{} for {}",
-                "not_found",
-                "NotFound: usernameproof not found for {}",
-                String::from_utf8_lossy(&name)
-            ))?,
-            Err(e) => return hub_error_to_js_throw(&mut cx, e),
-        };
-
-        let (deferred, promise) = cx.promise();
-        deferred.settle_with(&channel, move |mut cx| {
-            let mut js_buffer = cx.buffer(result.len())?;
-            js_buffer.as_mut_slice(&mut cx).copy_from_slice(&result);
-            Ok(js_buffer)
-        });
-
-        Ok(promise)
     }
 
     pub fn get_username_proofs_by_fid(
-        store: &Store,
+        store: &Store<UsernameProofStoreDef>,
         fid: u32,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
-        store.get_adds_by_fid::<fn(&protos::Message) -> bool>(fid, page_options, None)
-    }
-
-    pub fn js_get_username_proofs_by_fid(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let channel = cx.channel();
-
-        let store = get_store(&mut cx)?;
-
-        let fid = cx.argument::<JsNumber>(0)?.value(&mut cx) as u32;
-        let page_options = get_page_options(&mut cx, 1)?;
-
-        let messages = match Self::get_username_proofs_by_fid(&store, fid, &page_options) {
-            Ok(page) => page,
-            Err(e) => return hub_error_to_js_throw(&mut cx, e),
-        };
-
-        let (deferred, promise) = cx.promise();
-        deferred.settle_with(&channel, move |mut cx| {
-            encode_messages_to_js_object(&mut cx, messages)
-        });
-
-        Ok(promise)
+        store.get_adds_by_fid::<fn(&Message) -> bool>(fid, page_options, None)
     }
 
     pub fn get_username_proof_by_fid_and_name(
-        store: &Store,
+        store: &Store<UsernameProofStoreDef>,
         name: &Vec<u8>,
         fid: u32,
-    ) -> Result<Option<protos::Message>, HubError> {
-        let partial_message = protos::Message {
-            data: Some(protos::MessageData {
+    ) -> Result<Option<Message>, HubError> {
+        let partial_message = Message {
+            data: Some(proto::msg::MessageData {
                 fid: fid as u64,
-                body: Some(protos::message_data::Body::UsernameProofBody(
-                    protos::UserNameProof {
+                body: Some(Body::UsernameProofBody(
+                    proto::username_proof::UserNameProof {
                         name: name.clone(),
                         ..Default::default()
                     },
@@ -505,52 +457,5 @@ impl UsernameProofStore {
         };
 
         store.get_add(&partial_message)
-    }
-
-    pub fn js_get_username_proof_by_fid_and_name(mut cx: FunctionContext) -> JsResult<JsPromise> {
-        let channel = cx.channel();
-
-        let store = get_store(&mut cx)?;
-
-        let fid = cx.argument::<JsNumber>(0)?.value(&mut cx) as u32;
-        let name = cx.argument::<JsBuffer>(1)?.as_slice(&cx).to_vec();
-
-        let result = match Self::get_username_proof_by_fid_and_name(&store, &name, fid) {
-            Ok(Some(message)) => message.encode_to_vec(),
-            Ok(None) => cx.throw_error(format!(
-                "{}/{} for {}",
-                "not_found",
-                "NotFound: username proof not found for {}",
-                String::from_utf8_lossy(&name)
-            ))?,
-            Err(e) => return hub_error_to_js_throw(&mut cx, e),
-        };
-
-        let (deferred, promise) = cx.promise();
-        deferred.settle_with(&channel, move |mut cx| {
-            let mut js_buffer = cx.buffer(result.len())?;
-            js_buffer.as_mut_slice(&mut cx).copy_from_slice(&result);
-            Ok(js_buffer)
-        });
-
-        Ok(promise)
-    }
-
-    pub fn create_username_proof_store(mut cx: FunctionContext) -> JsResult<JsBox<Arc<Store>>> {
-        let db_js_box = cx.argument::<JsBox<Arc<RocksDB>>>(0)?;
-        let db = (**db_js_box.borrow()).clone();
-
-        let store_event_handler_js_box = cx.argument::<JsBox<Arc<StoreEventHandler>>>(1)?;
-        let store_event_handler = (**store_event_handler_js_box.borrow()).clone();
-
-        let prune_size_limit = cx
-            .argument::<JsNumber>(2)
-            .map(|n| n.value(&mut cx) as u32)?;
-
-        Ok(cx.boxed(Arc::new(Self::new(
-            db,
-            store_event_handler,
-            prune_size_limit,
-        ))))
     }
 }

@@ -19,6 +19,7 @@ mod tests {
     use tracing_subscriber::EnvFilter;
 
     const FID_FOR_TEST: u32 = 1234;
+    const FID2_FOR_TEST: u32 = 1235;
 
     fn new_engine() -> (ShardEngine, tempfile::TempDir) {
         let statsd_client = StatsdClientWrapper::new(
@@ -539,6 +540,47 @@ mod tests {
 
         let verification_result = engine.get_verifications_by_fid(FID_FOR_TEST);
         assert_eq!(0, verification_result.unwrap().messages_bytes.len());
+    }
+
+    #[tokio::test]
+    async fn test_commit_username_proof_messages() {
+        let timestamp = messages_factory::farcaster_time();
+        let (mut engine, _tmpdir) = new_engine();
+        let name = "username".to_string();
+        let owner = "owner".to_string();
+        let signature = "signature".to_string();
+
+        register_user(FID_FOR_TEST, &mut engine).await;
+
+        let username_proof_add = messages_factory::username_proof::create_username_proof(
+            FID_FOR_TEST as u64,
+            crate::proto::username_proof::UserNameType::UsernameTypeFname,
+            name.clone(),
+            owner.clone(),
+            signature.clone(),
+            timestamp as u64,
+            None,
+        );
+
+        commit_message(&mut engine, &username_proof_add).await;
+
+        {
+            let username_proof_result = engine.get_username_proofs_by_fid(FID2_FOR_TEST);
+            assert!(username_proof_result.is_ok());
+
+            let messages_bytes_len = username_proof_result.unwrap().messages_bytes.len();
+            assert_eq!(0, messages_bytes_len);
+        }
+        {
+            let username_proof_result = engine.get_username_proofs_by_fid(FID_FOR_TEST);
+            assert!(username_proof_result.is_ok());
+
+            let messages_bytes_len = username_proof_result.unwrap().messages_bytes.len();
+            assert_eq!(1, messages_bytes_len);
+        }
+
+        // TODO: test get_username_proof (by name)
+        // TODO: do we need a test for ENS name registration?
     }
 
     #[tokio::test]

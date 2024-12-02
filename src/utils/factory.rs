@@ -426,4 +426,36 @@ pub mod messages_factory {
             )
         }
     }
+
+    pub mod username_proof {
+        use super::*;
+        use crate::proto::username_proof::UserNameProof;
+
+        pub fn create_username_proof(
+            fid: u64,
+            username_type: crate::proto::username_proof::UserNameType,
+            name: String,
+            owner: String,
+            signature: String,
+            timestamp: u64,
+            private_key: Option<&SigningKey>,
+        ) -> message::Message {
+            let proof = UserNameProof {
+                timestamp,
+                name: name.encode_to_vec(),
+                owner: owner.encode_to_vec(),
+                signature: signature.encode_to_vec(),
+                fid,
+                r#type: username_type as i32,
+            };
+
+            create_message_with_data(
+                fid as u32,
+                MessageType::UsernameProof,
+                message::message_data::Body::UsernameProofBody(proof),
+                Some(timestamp as u32),
+                private_key,
+            )
+        }
+    }
 }
