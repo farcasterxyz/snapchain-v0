@@ -38,9 +38,6 @@ enum EngineError {
     #[error("unsupported event")]
     UnsupportedEvent,
 
-    #[error("message body absent")]
-    MessageBodyAbsent,
-
     #[error("merkle trie root hash mismatch")]
     HashMismatch,
 
@@ -599,8 +596,6 @@ impl ShardEngine {
                         txn_batch,
                         vec![TrieKey::for_message(&msg)],
                     )?;
-                } else {
-                    return Err(EngineError::MessageBodyAbsent);
                 }
             }
             _ => {
