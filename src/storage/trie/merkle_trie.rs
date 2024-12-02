@@ -264,6 +264,10 @@ impl MerkleTrie {
         }
     }
 
+    pub(crate) fn print(&mut self) {
+        self.root.as_ref().unwrap().print(0, 0).unwrap();
+    }
+
     pub fn get_trie_node_metadata(
         &self,
         db: &RocksDB,

@@ -619,32 +619,31 @@ impl TrieNode {
         })
     }
 
-    // Keeping this around since it is useful for debugging
-    // pub fn print(&self, prefix: u8, depth: usize) -> Result<(), TrieError> {
-    //     let indent = "  ".repeat(depth);
-    //     let key = self
-    //         .key
-    //         .as_ref()
-    //         .map(|k| format!("{:?}", k))
-    //         .unwrap_or("".to_string());
+    pub fn print(&self, prefix: u8, depth: usize) -> Result<(), TrieError> {
+        let indent = "  ".repeat(depth);
+        let key = self
+            .key
+            .as_ref()
+            .map(|k| format!("{:?}", k))
+            .unwrap_or("".to_string());
 
-    //     println!(
-    //         "{}{}{:?}: {}",
-    //         indent,
-    //         prefix,
-    //         key,
-    //         hex::encode(self.hash.as_slice())
-    //     );
+        println!(
+            "{}{}{:?}: {}",
+            indent,
+            prefix,
+            key,
+            hex::encode(self.hash.as_slice())
+        );
 
-    //     for (char, child) in self.children.iter() {
-    //         match child {
-    //             TrieNodeType::Node(child_node) => child_node.print(*char, depth + 1)?,
-    //             TrieNodeType::Serialized(_) => {
-    //                 println!("{}  {} (serialized):", indent, *char as char);
-    //             }
-    //         }
-    //     }
+        for (char, child) in self.children.iter() {
+            match child {
+                TrieNodeType::Node(child_node) => child_node.print(*char, depth + 1)?,
+                TrieNodeType::Serialized(_) => {
+                    println!("{}  {} (serialized):", indent, *char as char);
+                }
+            }
+        }
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 }

@@ -20,6 +20,29 @@ mod tests {
     }
 
     #[test]
+    fn test_merkle_trie_depth() -> Result<(), TrieError> {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("a.db");
+        let mut t = MerkleTrie::new();
+        let db = &RocksDB::new(db_path.to_str().unwrap());
+        db.open().unwrap();
+
+        t.initialize(db)?;
+
+        let mut txn_batch = RocksDbTransactionBatch::new();
+        t.insert(
+            db,
+            &mut txn_batch,
+            vec![
+                vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            ],
+        )?;
+
+        t.print();
+        Ok(())
+    }
+
+    #[test]
     fn test_merkle_trie_basic_operations() -> Result<(), TrieError> {
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("a.db");
@@ -38,6 +61,8 @@ mod tests {
                 vec![2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             ],
         )?;
+
+        t.print();
 
         db.commit(txn_batch).unwrap();
         t.reload(db).unwrap();
