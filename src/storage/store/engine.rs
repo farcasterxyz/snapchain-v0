@@ -666,6 +666,10 @@ impl ShardEngine {
         Ok(())
     }
 
+    pub fn trie_num_items(&mut self) -> usize {
+        self.stores.trie.items().unwrap()
+    }
+
     pub fn commit_shard_chunk(&mut self, shard_chunk: &ShardChunk) {
         let mut txn = RocksDbTransactionBatch::new();
 
