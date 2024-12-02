@@ -107,11 +107,11 @@ pub mod events_factory {
 
     pub fn create_signer_event(
         fid: u32,
-        signer: Vec<u8>,
+        signer: SigningKey,
         event_type: onchain_event::SignerEventType,
     ) -> OnChainEvent {
         let signer_event_body = onchain_event::SignerEventBody {
-            key: signer,
+            key: signer.verifying_key().as_bytes().to_vec(),
             event_type: event_type as i32,
             metadata: vec![],
             key_type: 1,
@@ -130,6 +130,33 @@ pub mod events_factory {
             version: 1,
             body: Some(onchain_event::on_chain_event::Body::SignerEventBody(
                 signer_event_body,
+            )),
+        }
+    }
+
+    pub fn create_id_register_event(
+        fid: u32,
+        event_type: onchain_event::IdRegisterEventType,
+    ) -> OnChainEvent {
+        let id_register_event_body = onchain_event::IdRegisterEventBody {
+            to: vec![],
+            event_type: event_type as i32,
+            from: vec![],
+            recovery_address: vec![],
+        };
+        OnChainEvent {
+            r#type: OnChainEventType::EventTypeSigner as i32,
+            chain_id: 10,
+            block_number: rand::random::<u32>(),
+            block_hash: vec![],
+            block_timestamp: time::current_timestamp_with_offset(-10) as u64,
+            transaction_hash: rand::random::<[u8; 32]>().to_vec(),
+            log_index: 0,
+            fid: fid as u64,
+            tx_index: 0,
+            version: 1,
+            body: Some(onchain_event::on_chain_event::Body::IdRegisterEventBody(
+                id_register_event_body,
             )),
         }
     }

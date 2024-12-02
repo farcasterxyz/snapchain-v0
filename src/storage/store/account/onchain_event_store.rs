@@ -132,6 +132,7 @@ pub fn build_secondary_indices(
                 txn.put(id_register_by_fid_key, primary_key);
             }
             on_chain_event::Body::SignerEventBody(signer_event_body) => {
+                println!("Build secondary indices for signer");
                 let signer_key = make_signer_onchain_event_by_signer_key(
                     onchain_event.fid as u32,
                     signer_event_body.key.clone(),
@@ -148,47 +149,50 @@ pub fn build_secondary_indices(
                         {
                             return Ok(());
                         }
-                        if signer_event_body.event_type() == SignerEventType::AdminReset {
-                            // TODO(aditi): Handle multiple pages
-                            let events = get_onchain_events(
-                                db,
-                                &PageOptions {
-                                    page_size: None,
-                                    page_token: None,
-                                    reverse: false,
-                                },
-                                OnChainEventType::EventTypeSigner,
-                                onchain_event.fid as u32,
-                            )?
-                            .onchain_events;
-                            let onchain_event =
-                                events
-                                    .into_iter()
-                                    .find(|event| match signer_body(event.clone()) {
-                                        None => false,
-                                        Some(body) => {
-                                            if body.event_type() == SignerEventType::Add
-                                                && body.key == signer_event_body.key
-                                            {
-                                                true
-                                            } else {
-                                                false
-                                            }
-                                        }
-                                    });
-                            if let Some(onchain_event) = onchain_event {
-                                txn.put(
-                                    signer_key.clone(),
-                                    make_onchain_event_primary_key(&onchain_event),
-                                );
-                            }
-                            return Ok(());
-                        }
-
-                        txn.put(signer_key, make_onchain_event_primary_key(onchain_event));
                     }
                     None => {}
                 };
+
+                if signer_event_body.event_type() == SignerEventType::AdminReset {
+                    // TODO(aditi): Handle multiple pages
+                    let events = get_onchain_events(
+                        db,
+                        &PageOptions {
+                            page_size: None,
+                            page_token: None,
+                            reverse: false,
+                        },
+                        OnChainEventType::EventTypeSigner,
+                        onchain_event.fid as u32,
+                    )?
+                    .onchain_events;
+                    let onchain_event =
+                        events
+                            .into_iter()
+                            .find(|event| match signer_body(event.clone()) {
+                                None => false,
+                                Some(body) => {
+                                    // TODO(aditi): Not sure if == works for vec
+                                    if body.event_type() == SignerEventType::Add
+                                        && body.key == signer_event_body.key
+                                    {
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+                            });
+                    if let Some(onchain_event) = onchain_event {
+                        txn.put(
+                            signer_key.clone(),
+                            make_onchain_event_primary_key(&onchain_event),
+                        );
+                    }
+                    return Ok(());
+                }
+
+                println!("Put signer key {:#?}", hex::encode(signer_key.clone()));
+                txn.put(signer_key, make_onchain_event_primary_key(onchain_event));
             }
             on_chain_event::Body::SignerMigratedEventBody(_)
             | on_chain_event::Body::StorageRentEventBody(_) => {}
@@ -397,10 +401,9 @@ impl OnchainEventStore {
         fid: u32,
         signer: Vec<u8>,
     ) -> Result<Option<OnChainEvent>, OnchainEventStorageError> {
-        get_event_by_secondary_key(
-            &self.db,
-            make_signer_onchain_event_by_signer_key(fid, signer),
-        )
+        let signer_key = make_signer_onchain_event_by_signer_key(fid, signer);
+        println!("Get signer {:#?}", hex::encode(signer_key.clone()));
+        get_event_by_secondary_key(&self.db, signer_key)
     }
 
     pub fn get_storage_slot_for_fid(

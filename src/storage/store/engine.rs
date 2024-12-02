@@ -382,24 +382,29 @@ impl ShardEngine {
 
         for msg in &snapchain_txn.user_messages {
             // Errors are validated based on the shard root
-            if let Ok(()) = self.validate_user_message(msg) {
-                let result = self.merge_message(msg, txn_batch);
-                match result {
-                    Ok(event) => {
-                        merged_messages_count += 1;
-                        self.update_trie(&event, txn_batch)?;
-                        events.push(event.clone());
-                        user_messages_count += 1;
-                        message_types.insert(msg.msg_type());
+            match self.validate_user_message(msg) {
+                Ok(()) => {
+                    let result = self.merge_message(msg, txn_batch);
+                    match result {
+                        Ok(event) => {
+                            merged_messages_count += 1;
+                            self.update_trie(&event, txn_batch)?;
+                            events.push(event.clone());
+                            user_messages_count += 1;
+                            message_types.insert(msg.msg_type());
+                        }
+                        Err(err) => {
+                            warn!(
+                                fid = msg.fid(),
+                                hash = msg.hex_hash(),
+                                "Error merging message: {:?}",
+                                err
+                            );
+                        }
                     }
-                    Err(err) => {
-                        warn!(
-                            fid = msg.fid(),
-                            hash = msg.hex_hash(),
-                            "Error merging message: {:?}",
-                            err
-                        );
-                    }
+                }
+                Err(err) => {
+                    println!("Error validating user message {:#?}", err)
                 }
             }
         }
