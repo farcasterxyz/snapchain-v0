@@ -550,6 +550,8 @@ mod tests {
         let owner = "owner".to_string();
         let signature = "signature".to_string();
 
+        register_user(FID_FOR_TEST, &mut engine).await;
+
         let username_proof_add = messages_factory::username_proof::create_username_proof(
             FID_FOR_TEST as u64,
             crate::proto::username_proof::UserNameType::UsernameTypeFname,
@@ -578,6 +580,7 @@ mod tests {
         }
 
         // TODO: test get_username_proof (by name)
+        // TODO: do we need a test for ENS name registration?
     }
 
     #[tokio::test]
