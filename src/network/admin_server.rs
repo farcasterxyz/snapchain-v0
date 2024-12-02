@@ -1,5 +1,4 @@
 use crate::proto::admin_rpc::admin_service_server::AdminService;
-use crate::proto::onchain_event;
 use crate::proto::snapchain::ValidatorMessage;
 use crate::proto::{admin_rpc, onchain_event::OnChainEvent};
 use crate::storage::store::engine::{MempoolMessage, Senders};

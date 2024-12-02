@@ -7,8 +7,6 @@ use prost::Message;
 use std::sync::Arc;
 use thiserror::Error;
 
-static PAGE_SIZE: usize = 100;
-
 // TODO(aditi): This code definitely needs unit tests
 #[derive(Error, Debug)]
 pub enum BlockStorageError {
