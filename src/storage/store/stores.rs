@@ -8,7 +8,7 @@ use crate::proto::msg::MessageType;
 use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
 use crate::storage::store::account::{
     CastStore, CastStoreDef, IntoU8, LinkStore, OnchainEventStorageError, OnchainEventStore, Store,
-    StoreEventHandler,
+    StoreEventHandler, UsernameProofStore, UsernameProofStoreDef,
 };
 use crate::storage::store::shard::ShardStore;
 use crate::storage::trie::merkle_trie;
@@ -40,6 +40,7 @@ pub struct Stores {
     pub user_data_store: Store<UserDataStoreDef>,
     pub verification_store: Store<VerificationStoreDef>,
     pub onchain_event_store: OnchainEventStore,
+    pub username_proof_store: Store<UsernameProofStoreDef>,
     db: Arc<RocksDB>,
     pub(crate) trie: merkle_trie::MerkleTrie,
     pub store_limits: StoreLimits,
@@ -156,6 +157,7 @@ impl Stores {
         let user_data_store = UserDataStore::new(db.clone(), event_handler.clone(), 100);
         let verification_store = VerificationStore::new(db.clone(), event_handler.clone(), 100);
         let onchain_event_store = OnchainEventStore::new(db.clone(), event_handler.clone());
+        let username_proof_store = UsernameProofStore::new(db.clone(), event_handler.clone(), 100);
         Stores {
             trie,
             shard_store,
@@ -165,6 +167,7 @@ impl Stores {
             user_data_store,
             verification_store,
             onchain_event_store,
+            username_proof_store,
             db: db.clone(),
             store_limits,
         }

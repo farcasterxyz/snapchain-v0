@@ -38,6 +38,9 @@ enum EngineError {
     #[error("unsupported event")]
     UnsupportedEvent,
 
+    #[error("message body absent")]
+    MessageBodyAbsent,
+
     #[error("merkle trie root hash mismatch")]
     HashMismatch,
 
@@ -476,6 +479,11 @@ impl ShardEngine {
                 .verification_store
                 .merge(msg, txn_batch)
                 .map_err(EngineError::new_store_error(msg.hash.clone())),
+            MessageType::UsernameProof => {
+                let store = &self.stores.username_proof_store;
+                let result = store.merge(msg, txn_batch);
+                result.map_err(EngineError::new_store_error(msg.hash.clone()))
+            }
             unhandled_type => {
                 return Err(EngineError::UnsupportedMessageType(unhandled_type));
             }
@@ -582,6 +590,17 @@ impl ShardEngine {
                         txn_batch,
                         vec![TrieKey::for_message(&msg)],
                     )?;
+                }
+            }
+            Some(hub_event::hub_event::Body::MergeUsernameProofBody(merge)) => {
+                if let Some(msg) = &merge.username_proof_message {
+                    self.stores.trie.insert(
+                        &self.db,
+                        txn_batch,
+                        vec![TrieKey::for_message(&msg)],
+                    )?;
+                } else {
+                    return Err(EngineError::MessageBodyAbsent);
                 }
             }
             _ => {
@@ -745,6 +764,12 @@ impl ShardEngine {
     pub fn get_verifications_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
         self.stores
             .verification_store
+            .get_adds_by_fid::<fn(&Message) -> bool>(fid, &PageOptions::default(), None)
+    }
+
+    pub fn get_username_proofs_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
+        self.stores
+            .username_proof_store
             .get_adds_by_fid::<fn(&Message) -> bool>(fid, &PageOptions::default(), None)
     }
 
