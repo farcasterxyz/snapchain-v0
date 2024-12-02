@@ -25,8 +25,6 @@ use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::storage::db::RocksDB;
 use snapchain::utils::statsd_wrapper::StatsdClientWrapper;
 
-const CAUSES_WARNING: u64 = 1;
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();
