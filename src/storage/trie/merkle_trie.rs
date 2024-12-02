@@ -120,6 +120,7 @@ impl MerkleTrie {
         db: &RocksDB,
         txn_batch: &mut RocksDbTransactionBatch,
         keys: Vec<Vec<u8>>,
+        load_count: &mut u64,
     ) -> Result<Vec<bool>, TrieError> {
         if keys.is_empty() {
             return Ok(Vec::new());
@@ -133,7 +134,7 @@ impl MerkleTrie {
 
         if let Some(root) = self.root.as_mut() {
             let mut txn = RocksDbTransactionBatch::new();
-            let results = root.insert(db, &mut txn, keys, 0)?;
+            let results = root.insert(db, &mut txn, keys, 0, load_count)?;
 
             txn_batch.merge(txn);
             Ok(results)
@@ -147,6 +148,7 @@ impl MerkleTrie {
         db: &RocksDB,
         txn_batch: &mut RocksDbTransactionBatch,
         keys: Vec<Vec<u8>>,
+        load_count: &mut u64,
     ) -> Result<Vec<bool>, TrieError> {
         if keys.is_empty() {
             return Ok(Vec::new());
@@ -160,7 +162,7 @@ impl MerkleTrie {
 
         if let Some(root) = self.root.as_mut() {
             let mut txn = RocksDbTransactionBatch::new();
-            let results = root.delete(db, &mut txn, keys, 0)?;
+            let results = root.delete(db, &mut txn, keys, 0, load_count)?;
 
             txn_batch.merge(txn);
             Ok(results)
@@ -169,9 +171,14 @@ impl MerkleTrie {
         }
     }
 
-    pub fn exists(&mut self, db: &RocksDB, key: &Vec<u8>) -> Result<bool, TrieError> {
+    pub fn exists(
+        &mut self,
+        db: &RocksDB,
+        key: &Vec<u8>,
+        load_count: &mut u64,
+    ) -> Result<bool, TrieError> {
         if let Some(root) = self.root.as_mut() {
-            root.exists(db, key, 0)
+            root.exists(db, key, 0, load_count)
         } else {
             Err(TrieError::TrieNotInitialized)
         }
@@ -244,10 +251,11 @@ impl MerkleTrie {
         &mut self,
         db: &RocksDB,
         prefix: &[u8],
+        load_count: &mut u64,
     ) -> Result<Vec<Vec<u8>>, TrieError> {
         if let Some(root) = self.root.as_mut() {
-            if let Some(node) = root.get_node_from_trie(db, prefix, 0) {
-                node.get_all_values(db, prefix)
+            if let Some(node) = root.get_node_from_trie(db, prefix, 0, load_count) {
+                node.get_all_values(db, prefix, load_count)
             } else {
                 Ok(Vec::new())
             }
@@ -256,9 +264,14 @@ impl MerkleTrie {
         }
     }
 
-    pub fn get_snapshot(&mut self, db: &RocksDB, prefix: &[u8]) -> Result<TrieSnapshot, TrieError> {
+    pub fn get_snapshot(
+        &mut self,
+        db: &RocksDB,
+        prefix: &[u8],
+        load_count: &mut u64,
+    ) -> Result<TrieSnapshot, TrieError> {
         if let Some(root) = self.root.as_mut() {
-            root.get_snapshot(db, prefix, 0)
+            root.get_snapshot(db, prefix, 0, load_count)
         } else {
             Err(TrieError::TrieNotInitialized)
         }
