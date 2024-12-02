@@ -50,6 +50,12 @@ enum EngineError {
     #[error("invalid message type")]
     InvalidMessageType,
 
+    #[error("missing fid")]
+    MissingFid,
+
+    #[error("missing signer")]
+    MissingSigner,
+
     #[error("message receive error")]
     MessageReceiveError(#[from] mpsc::error::TryRecvError),
 
@@ -376,22 +382,24 @@ impl ShardEngine {
 
         for msg in &snapchain_txn.user_messages {
             // Errors are validated based on the shard root
-            let result = self.merge_message(msg, txn_batch);
-            match result {
-                Ok(event) => {
-                    merged_messages_count += 1;
-                    self.update_trie(&event, txn_batch)?;
-                    events.push(event.clone());
-                    user_messages_count += 1;
-                    message_types.insert(msg.msg_type());
-                }
-                Err(err) => {
-                    warn!(
-                        fid = msg.fid(),
-                        hash = msg.hex_hash(),
-                        "Error merging message: {:?}",
-                        err
-                    );
+            if let Ok(()) = self.validate_user_message(msg) {
+                let result = self.merge_message(msg, txn_batch);
+                match result {
+                    Ok(event) => {
+                        merged_messages_count += 1;
+                        self.update_trie(&event, txn_batch)?;
+                        events.push(event.clone());
+                        user_messages_count += 1;
+                        message_types.insert(msg.msg_type());
+                    }
+                    Err(err) => {
+                        warn!(
+                            fid = msg.fid(),
+                            hash = msg.hex_hash(),
+                            "Error merging message: {:?}",
+                            err
+                        );
+                    }
                 }
             }
         }
@@ -603,6 +611,27 @@ impl ShardEngine {
                 return Err(EngineError::UnsupportedEvent);
             }
         }
+        Ok(())
+    }
+
+    fn validate_user_message(&self, message: &message::Message) -> Result<(), EngineError> {
+        // Ensure message data is present
+        let message_data = message.data.as_ref().ok_or(EngineError::NoMessageData)?;
+
+        // TODO(aditi): Check network
+
+        // Check that the user has a custody address
+        self.stores
+            .onchain_event_store
+            .get_id_register_event_by_fid(message_data.fid as u32)?
+            .ok_or(EngineError::MissingFid)?;
+
+        // Check that signer is valid
+        self.stores
+            .onchain_event_store
+            .get_active_signer(message_data.fid as u32, message.signer.clone())?
+            .ok_or(EngineError::MissingSigner)?;
+
         Ok(())
     }
 
