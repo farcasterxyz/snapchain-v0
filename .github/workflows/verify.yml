@@ -46,7 +46,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: ./snapchain
+
       - working-directory: ./snapchain
+        env:
+          RUSTFLAGS: "-Dwarnings"
         run: cargo test
+
       - working-directory: ./snapchain
+        env:
+          RUSTFLAGS: "-Dwarnings"
+        run: cargo build --bins
+
+      - working-directory: ./snapchain
+        env:
+          RUSTFLAGS: "-Dwarnings"
         run: cargo fmt --all --check

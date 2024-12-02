@@ -18,6 +18,8 @@ mod tests {
     use tempfile;
     use tracing_subscriber::EnvFilter;
 
+    const CAUSES_WARNING: u64 = 1;
+
     const FID_FOR_TEST: u32 = 1234;
 
     fn new_engine() -> (ShardEngine, tempfile::TempDir) {
