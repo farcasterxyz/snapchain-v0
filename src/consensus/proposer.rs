@@ -6,7 +6,6 @@ use crate::proto::rpc::{BlocksRequest, ShardChunksRequest};
 use crate::proto::snapchain::{Block, BlockHeader, FullProposal, ShardChunk, ShardHeader};
 use crate::storage::store::engine::{BlockEngine, ShardEngine, ShardStateChange};
 use crate::storage::store::BlockStorageError;
-use futures::StreamExt;
 use malachite_common::{Round, Validity};
 use prost::Message;
 use std::collections::BTreeMap;
