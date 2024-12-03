@@ -206,7 +206,7 @@ mod tests {
         engine: &mut ShardEngine,
         state_change: &ShardStateChange,
     ) -> ShardChunk {
-        let valid = engine.validate_state_change(trie_ctx(), state_change);
+        let valid = engine.validate_state_change(state_change);
         assert!(valid);
 
         let height = engine.get_confirmed_height();
@@ -227,7 +227,7 @@ mod tests {
             .send(MempoolMessage::UserMessage(msg.clone()))
             .await
             .unwrap();
-        let state_change = engine.propose_state_change(trie_ctx(), 1);
+        let state_change = engine.propose_state_change(1);
 
         if state_change.transactions.is_empty() {
             panic!("Failed to propose message");
@@ -256,7 +256,7 @@ mod tests {
             ))
             .await
             .unwrap();
-        let state_change = engine.propose_state_change(trie_ctx(), 1);
+        let state_change = engine.propose_state_change(1);
 
         validate_and_commit_state_change(engine, &state_change)
     }
@@ -270,7 +270,7 @@ mod tests {
         assert_eq!("", to_hex(&engine.trie_root_hash()));
 
         // Propose empty transaction
-        let state_change = engine.propose_state_change(trie_ctx(), 1);
+        let state_change = engine.propose_state_change(1);
         assert_eq!(1, state_change.shard_id);
         assert_eq!(state_change.transactions.len(), 0);
         // No messages so, new state root should be same as before
@@ -289,7 +289,7 @@ mod tests {
             .await
             .unwrap();
 
-        let state_change = engine.propose_state_change(trie_ctx(), 1);
+        let state_change = engine.propose_state_change(1);
 
         assert_eq!(1, state_change.shard_id);
         assert_eq!(state_change.transactions.len(), 1);
@@ -302,17 +302,17 @@ mod tests {
     #[should_panic(expected = "State change commit failed: merkle trie root hash mismatch")]
     fn test_engine_commit_with_mismatched_hash() {
         let (mut engine, _tmpdir) = new_engine();
-        let mut state_change = engine.propose_state_change(trie_ctx(), 1);
+        let mut state_change = engine.propose_state_change(1);
         let invalid_hash = from_hex("ffffffffffffffffffffffffffffffffffffffff");
 
         {
-            let valid = engine.validate_state_change(trie_ctx(), &state_change);
+            let valid = engine.validate_state_change(&state_change);
             assert!(valid);
         }
 
         {
             state_change.new_state_root = invalid_hash.clone();
-            let valid = engine.validate_state_change(trie_ctx(), &state_change);
+            let valid = engine.validate_state_change(&state_change);
             assert!(!valid);
         }
 
@@ -326,14 +326,14 @@ mod tests {
     #[test]
     fn test_engine_commit_no_messages_happy_path() {
         let (mut engine, _tmpdir) = new_engine();
-        let state_change = engine.propose_state_change(trie_ctx(), 1);
+        let state_change = engine.propose_state_change(1);
         let expected_roots = vec![""];
 
         validate_and_commit_state_change(&mut engine, &state_change);
 
         assert_eq!(expected_roots[0], to_hex(&engine.trie_root_hash()));
 
-        let valid = engine.validate_state_change(trie_ctx(), &state_change);
+        let valid = engine.validate_state_change(&state_change);
         assert!(valid);
     }
 
@@ -357,7 +357,7 @@ mod tests {
             .send(MempoolMessage::UserMessage(msg1.clone()))
             .await
             .unwrap();
-        let state_change = engine.propose_state_change(trie_ctx(), 1);
+        let state_change = engine.propose_state_change(1);
 
         assert_eq!(1, state_change.transactions.len());
         assert_eq!(1, state_change.transactions[0].user_messages.len());
@@ -376,7 +376,7 @@ mod tests {
             false
         );
 
-        let valid = engine.validate_state_change(trie_ctx(), &state_change);
+        let valid = engine.validate_state_change(&state_change);
         assert!(valid);
 
         // validate does not write to the store
@@ -701,7 +701,7 @@ mod tests {
                 .send(MempoolMessage::UserMessage(msg1.clone()))
                 .await
                 .unwrap();
-            let state_change = engine.propose_state_change(trie_ctx(), 1);
+            let state_change = engine.propose_state_change(1);
 
             assert_eq!(1, state_change.shard_id);
             assert_eq!(state_change.transactions.len(), 1);
@@ -727,7 +727,7 @@ mod tests {
                 .send(MempoolMessage::UserMessage(msg2.clone()))
                 .await
                 .unwrap();
-            let state_change = engine.propose_state_change(trie_ctx(), 1);
+            let state_change = engine.propose_state_change(1);
 
             assert_eq!(1, state_change.shard_id);
             assert_eq!(state_change.transactions.len(), 1);
@@ -767,7 +767,7 @@ mod tests {
                 .send(MempoolMessage::UserMessage(msg2.clone()))
                 .await
                 .unwrap();
-            let state_change = engine.propose_state_change(trie_ctx(), 1);
+            let state_change = engine.propose_state_change(1);
 
             assert_eq!(1, state_change.shard_id);
             assert_eq!(state_change.transactions.len(), 1);
@@ -809,7 +809,7 @@ mod tests {
             ))
             .await
             .unwrap();
-        let state_change = engine.propose_state_change(trie_ctx(), 1);
+        let state_change = engine.propose_state_change(1);
         assert_eq!(1, state_change.shard_id);
         assert_eq!(state_change.transactions.len(), 1);
         assert_eq!(1, state_change.transactions[0].system_messages.len());
@@ -858,7 +858,7 @@ mod tests {
             .send(MempoolMessage::UserMessage(cast_add.clone()))
             .await
             .unwrap();
-        let state_change = engine.propose_state_change(trie_ctx(), 1);
+        let state_change = engine.propose_state_change(1);
 
         assert_eq!(0, state_change.transactions.len());
         assert_eq!("", to_hex(&state_change.new_state_root));
@@ -1000,7 +1000,7 @@ mod tests {
             .send(MempoolMessage::UserMessage(cast3.clone()))
             .await
             .unwrap();
-        let state_change = engine.propose_state_change(trie_ctx(), 1);
+        let state_change = engine.propose_state_change(1);
         validate_and_commit_state_change(&mut engine, &state_change);
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast1);
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast2);
@@ -1020,7 +1020,7 @@ mod tests {
             .await
             .unwrap();
 
-        let state_change = engine.propose_state_change(trie_ctx(), 1);
+        let state_change = engine.propose_state_change(1);
         let chunk = validate_and_commit_state_change(&mut engine, &state_change);
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast4);
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast5);

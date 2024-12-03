@@ -261,13 +261,11 @@ impl ShardEngine {
         Ok(transactions)
     }
 
-    pub fn propose_state_change(
-        &mut self,
-        trie_ctx: &merkle_trie::Context,
-        shard: u32,
-    ) -> ShardStateChange {
+    pub fn propose_state_change(&mut self, shard: u32) -> ShardStateChange {
         let mut txn = RocksDbTransactionBatch::new();
-        let result = self.prepare_proposal(trie_ctx, &mut txn, shard).unwrap(); //TODO: don't unwrap()
+        let result = self
+            .prepare_proposal(&merkle_trie::Context::new(), &mut txn, shard)
+            .unwrap(); //TODO: don't unwrap()
 
         // TODO: this should probably operate automatically via drop trait
         self.stores.trie.reload(&self.db).unwrap();
@@ -661,11 +659,7 @@ impl ShardEngine {
         Ok(())
     }
 
-    pub fn validate_state_change(
-        &mut self,
-        trie_ctx: &merkle_trie::Context,
-        shard_state_change: &ShardStateChange,
-    ) -> bool {
+    pub fn validate_state_change(&mut self, shard_state_change: &ShardStateChange) -> bool {
         let mut txn = RocksDbTransactionBatch::new();
 
         let transactions = &shard_state_change.transactions;
@@ -673,7 +667,12 @@ impl ShardEngine {
 
         let mut result = true;
 
-        if let Err(err) = self.replay_proposal(trie_ctx, &mut txn, transactions, shard_root) {
+        if let Err(err) = self.replay_proposal(
+            &merkle_trie::Context::new(),
+            &mut txn,
+            transactions,
+            shard_root,
+        ) {
             error!("State change validation failed: {}", err);
             result = false;
         }
