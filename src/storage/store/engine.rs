@@ -127,6 +127,7 @@ pub struct ShardEngine {
 impl ShardEngine {
     pub fn new(
         db: Arc<RocksDB>,
+        trie: merkle_trie::MerkleTrie,
         shard_id: u32,
         store_limits: StoreLimits,
         statsd_client: StatsdClientWrapper,
@@ -135,7 +136,7 @@ impl ShardEngine {
         let (messages_tx, messages_rx) = mpsc::channel::<MempoolMessage>(10_000);
         ShardEngine {
             shard_id,
-            stores: Stores::new(db.clone(), store_limits),
+            stores: Stores::new(db.clone(), trie, store_limits),
             senders: Senders::new(messages_tx),
             messages_rx,
             db,
@@ -855,6 +856,10 @@ impl ShardEngine {
             user_messages: user_count as u64,
             system_messages: system_count as u64,
         }
+    }
+
+    pub fn trie_num_items(&mut self) -> usize {
+        self.stores.trie.items().unwrap()
     }
 }
 

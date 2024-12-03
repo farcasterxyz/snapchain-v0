@@ -12,6 +12,7 @@ mod tests {
     use crate::storage::store::engine::Senders;
     use crate::storage::store::stores::{StoreLimits, Stores};
     use crate::storage::store::BlockStore;
+    use crate::storage::trie::merkle_trie;
     use crate::utils::statsd_wrapper::StatsdClientWrapper;
     use futures::StreamExt;
     use tempfile;
@@ -100,10 +101,18 @@ mod tests {
 
         let (msgs_tx, _msgs_rx) = mpsc::channel(100);
 
-        let shard1_stores = Stores::new(db1, StoreLimits::default());
+        let shard1_stores = Stores::new(
+            db1,
+            merkle_trie::MerkleTrie::new(16).unwrap(),
+            StoreLimits::default(),
+        );
         let shard1_senders = Senders::new(msgs_tx.clone());
 
-        let shard2_stores = Stores::new(db2, StoreLimits::default());
+        let shard2_stores = Stores::new(
+            db2,
+            merkle_trie::MerkleTrie::new(16).unwrap(),
+            StoreLimits::default(),
+        );
         let shard2_senders = Senders::new(msgs_tx.clone());
         let stores = HashMap::from([(1, shard1_stores), (2, shard2_stores)]);
         let senders = HashMap::from([(1, shard1_senders), (2, shard2_senders)]);

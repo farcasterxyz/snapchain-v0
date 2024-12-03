@@ -44,7 +44,13 @@ mod tests {
         };
 
         (
-            ShardEngine::new(Arc::new(db), 1, test_limits, statsd_client),
+            ShardEngine::new(
+                Arc::new(db),
+                merkle_trie::MerkleTrie::new(16).unwrap(),
+                1,
+                test_limits,
+                statsd_client,
+            ),
             dir,
         )
     }

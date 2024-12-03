@@ -36,6 +36,9 @@ pub enum TrieError {
 
     #[error("Key length is too short")]
     KeyLengthTooShort,
+
+    #[error("Unknown branching factor")]
+    UnknownBranchingFactor,
 }
 
 impl TrieError {

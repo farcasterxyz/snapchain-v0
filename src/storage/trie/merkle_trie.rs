@@ -4,7 +4,7 @@ use super::trie_node::{TrieNode, TIMESTAMP_LENGTH};
 use crate::proto::msg as message;
 use crate::proto::onchain_event;
 use crate::storage::store::account::IntoU8;
-use crate::storage::trie::trie_node;
+use crate::storage::trie::{trie_node, util};
 use std::collections::HashMap;
 use tracing::info;
 pub use trie_node::Context;
@@ -58,12 +58,19 @@ pub struct TrieSnapshot {
 
 #[derive(Clone)]
 pub struct MerkleTrie {
+    branch_xform: util::BranchingFactorTransform,
     root: Option<TrieNode>,
 }
 
 impl MerkleTrie {
-    pub fn new() -> Self {
-        MerkleTrie { root: None }
+    pub fn new(branching_factor: u32) -> Result<Self, TrieError> {
+        let branch_xform = util::get_transform_functions(branching_factor)
+            .ok_or(TrieError::UnknownBranchingFactor)?;
+
+        Ok(MerkleTrie {
+            root: None,
+            branch_xform,
+        })
     }
 
     fn create_empty_root(&mut self, txn_batch: &mut RocksDbTransactionBatch) {
@@ -124,6 +131,8 @@ impl MerkleTrie {
         txn_batch: &mut RocksDbTransactionBatch,
         keys: Vec<Vec<u8>>,
     ) -> Result<Vec<bool>, TrieError> {
+        let keys: Vec<Vec<u8>> = keys.into_iter().map(self.branch_xform.expand).collect();
+
         if keys.is_empty() {
             return Ok(Vec::new());
         }
@@ -152,6 +161,8 @@ impl MerkleTrie {
         txn_batch: &mut RocksDbTransactionBatch,
         keys: Vec<Vec<u8>>,
     ) -> Result<Vec<bool>, TrieError> {
+        let keys: Vec<Vec<u8>> = keys.into_iter().map(self.branch_xform.expand).collect();
+
         if keys.is_empty() {
             return Ok(Vec::new());
         }
@@ -179,8 +190,10 @@ impl MerkleTrie {
         db: &RocksDB,
         key: &Vec<u8>,
     ) -> Result<bool, TrieError> {
+        let key: Vec<u8> = (self.branch_xform.expand)(key.clone());
+
         if let Some(root) = self.root.as_mut() {
-            root.exists(ctx, db, key, 0)
+            root.exists(ctx, db, &key, 0)
         } else {
             Err(TrieError::TrieNotInitialized)
         }
@@ -200,7 +213,8 @@ impl MerkleTrie {
         txn_batch: &mut RocksDbTransactionBatch,
         prefix: &[u8],
     ) -> Option<TrieNode> {
-        let node_key = TrieNode::make_primary_key(prefix, None);
+        let prefix = (self.branch_xform.expand)(prefix.to_vec());
+        let node_key = TrieNode::make_primary_key(&prefix, None);
 
         // First, attempt to get it from the DB cache
         if let Some(Some(node_bytes)) = txn_batch.batch.get(&node_key) {
@@ -255,9 +269,14 @@ impl MerkleTrie {
         db: &RocksDB,
         prefix: &[u8],
     ) -> Result<Vec<Vec<u8>>, TrieError> {
+        let prefix = (self.branch_xform.expand)(prefix.to_vec());
+
         if let Some(root) = self.root.as_mut() {
-            if let Some(node) = root.get_node_from_trie(ctx, db, prefix, 0) {
-                node.get_all_values(ctx, db, prefix)
+            if let Some(node) = root.get_node_from_trie(ctx, db, &prefix, 0) {
+                match node.get_all_values(ctx, db, &prefix) {
+                    Ok(values) => Ok(values.into_iter().map(self.branch_xform.combine).collect()),
+                    Err(e) => Err(e),
+                }
             } else {
                 Ok(Vec::new())
             }
@@ -344,7 +363,8 @@ mod tests {
         let db = &RocksDB::new(&tmp_path);
         db.open().unwrap();
 
-        let mut trie = MerkleTrie::new();
+        // TODO: this test needs to be able to work with different branching factors
+        let mut trie = MerkleTrie::new(256).unwrap();
         trie.initialize(db).unwrap();
         let mut txn_batch = RocksDbTransactionBatch::new();
 
