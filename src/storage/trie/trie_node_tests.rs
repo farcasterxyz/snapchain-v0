@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::storage::trie::errors::TrieError;
-    use crate::storage::trie::trie_node::Context;
+    use crate::storage::trie::merkle_trie::Context;
     use crate::storage::{
         db::{RocksDB, RocksDbTransactionBatch},
         trie::trie_node::{TrieNode, TrieNodeType, TIMESTAMP_LENGTH},

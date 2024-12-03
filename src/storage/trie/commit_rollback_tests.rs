@@ -2,8 +2,7 @@
 mod tests {
     use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
     use crate::storage::trie::errors::TrieError;
-    use crate::storage::trie::merkle_trie::MerkleTrie;
-    use crate::storage::trie::trie_node::Context;
+    use crate::storage::trie::merkle_trie::{Context, MerkleTrie};
     use hex;
     use tempfile::TempDir;
 

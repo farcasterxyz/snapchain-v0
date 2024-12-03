@@ -2,8 +2,7 @@
 mod tests {
     use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
     use crate::storage::store::account::IntoU8;
-    use crate::storage::trie::merkle_trie::{MerkleTrie, TrieKey};
-    use crate::storage::trie::trie_node::Context;
+    use crate::storage::trie::merkle_trie::{Context, MerkleTrie, TrieKey};
     use crate::utils::factory::{events_factory, messages_factory};
 
     fn random_hash() -> Vec<u8> {
