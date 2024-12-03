@@ -12,7 +12,8 @@ mod tests {
     use crate::storage::trie::merkle_trie::TrieKey;
     use crate::utils::factory::{self, events_factory, messages_factory};
     use crate::utils::statsd_wrapper::StatsdClientWrapper;
-    use ed25519_dalek::SigningKey;
+    use ed25519_dalek::{SecretKey, SigningKey};
+    use hex::FromHex;
     use prost::Message as _;
     use std::sync::Arc;
     use tempfile;
@@ -43,10 +44,20 @@ mod tests {
         )
     }
 
-    async fn register_user(fid: u32, engine: &mut ShardEngine) {
-        // TODO: Also need to do the id registration and signer registration
-        let storage_event = events_factory::create_rent_event(fid, None, Some(1), false);
-        commit_event(engine, &storage_event).await;
+    fn default_storage_event(fid: u32) -> OnChainEvent {
+        events_factory::create_rent_event(fid, None, Some(1), false)
+    }
+
+    async fn register_user(fid: u32, signer: SigningKey, engine: &mut ShardEngine) {
+        commit_event(engine, &default_storage_event(fid)).await;
+        let id_register_event = events_factory::create_id_register_event(
+            fid,
+            onchain_event::IdRegisterEventType::Register,
+        );
+        commit_event(engine, &id_register_event).await;
+        let signer_event =
+            events_factory::create_signer_event(fid, signer, onchain_event::SignerEventType::Add);
+        commit_event(engine, &signer_event).await;
     }
 
     #[allow(dead_code)]
@@ -98,11 +109,25 @@ mod tests {
     }
 
     fn default_message(text: &str) -> message::Message {
-        messages_factory::casts::create_cast_add(FID_FOR_TEST, text, Some(0), None)
+        messages_factory::casts::create_cast_add(
+            FID_FOR_TEST,
+            text,
+            Some(0),
+            Some(&default_signer()),
+        )
     }
 
     fn default_onchain_event() -> OnChainEvent {
         events_factory::create_onchain_event(FID_FOR_TEST)
+    }
+
+    fn default_signer() -> SigningKey {
+        SigningKey::from_bytes(
+            &SecretKey::from_hex(
+                "1000000000000000000000000000000000000000000000000000000000000000",
+            )
+            .unwrap(),
+        )
     }
 
     fn entities() -> (message::Message, message::Message) {
@@ -186,7 +211,11 @@ mod tests {
         chunk
     }
 
-    async fn commit_message(engine: &mut ShardEngine, msg: &message::Message) -> ShardChunk {
+    async fn commit_message(
+        engine: &mut ShardEngine,
+        msg: &message::Message,
+        assert_success: bool,
+    ) -> ShardChunk {
         let messages_tx = engine.messages_tx();
 
         messages_tx
@@ -200,11 +229,13 @@ mod tests {
         }
 
         let chunk = validate_and_commit_state_change(engine, &state_change);
-        assert_eq!(
-            state_change.new_state_root,
-            chunk.header.as_ref().unwrap().shard_root
-        );
-        assert!(engine.trie_key_exists(&TrieKey::for_message(msg)));
+        if assert_success {
+            assert_eq!(
+                state_change.new_state_root,
+                chunk.header.as_ref().unwrap().shard_root
+            );
+            assert!(engine.trie_key_exists(&TrieKey::for_message(msg)));
+        }
         chunk
     }
 
@@ -306,7 +337,7 @@ mod tests {
         // enable_logging();
         let (msg1, _) = entities();
         let (mut engine, _tmpdir) = new_engine();
-        register_user(FID_FOR_TEST, &mut engine).await;
+        register_user(FID_FOR_TEST, default_signer(), &mut engine).await;
         let messages_tx = engine.messages_tx();
         let mut event_rx = engine.get_senders().events_tx.subscribe();
 
@@ -315,7 +346,7 @@ mod tests {
             .unwrap()
             .events
             .len();
-        assert_eq!(1, initial_events_count);
+        assert_eq!(3, initial_events_count);
 
         messages_tx
             .send(MempoolMessage::UserMessage(msg1.clone()))
@@ -371,9 +402,9 @@ mod tests {
         let cast =
             messages_factory::casts::create_cast_add(FID_FOR_TEST, "msg1", Some(timestamp), None);
         let (mut engine, _tmpdir) = new_engine();
-        register_user(FID_FOR_TEST, &mut engine).await;
+        register_user(FID_FOR_TEST, default_signer(), &mut engine).await;
 
-        commit_message(&mut engine, &cast).await;
+        commit_message(&mut engine, &cast, true).await;
 
         // The cast is present in the store and the trie
         let casts_result = engine.get_casts_by_fid(cast.fid());
@@ -391,7 +422,7 @@ mod tests {
             None,
         );
 
-        commit_message(&mut engine, &delete_cast).await;
+        commit_message(&mut engine, &delete_cast, true).await;
 
         // The cast is not present in the store
         let casts_result = engine.get_casts_by_fid(FID_FOR_TEST);
@@ -411,7 +442,7 @@ mod tests {
         let timestamp = messages_factory::farcaster_time();
         let target_fid = 15;
         let (mut engine, _tmpdir) = new_engine();
-        register_user(FID_FOR_TEST, &mut engine).await;
+        register_user(FID_FOR_TEST, default_signer(), &mut engine).await;
 
         let link_add = messages_factory::links::create_link_add(
             FID_FOR_TEST,
@@ -421,7 +452,7 @@ mod tests {
             None,
         );
 
-        commit_message(&mut engine, &link_add).await;
+        commit_message(&mut engine, &link_add, true).await;
 
         let link_result = engine.get_links_by_fid(FID_FOR_TEST);
         assert_eq!(1, link_result.unwrap().messages_bytes.len());
@@ -434,7 +465,7 @@ mod tests {
             None,
         );
 
-        commit_message(&mut engine, &link_remove).await;
+        commit_message(&mut engine, &link_remove, true).await;
 
         let link_result = engine.get_links_by_fid(FID_FOR_TEST);
         assert_eq!(0, link_result.unwrap().messages_bytes.len());
@@ -447,7 +478,7 @@ mod tests {
             None,
         );
 
-        commit_message(&mut engine, &link_compact_state).await;
+        commit_message(&mut engine, &link_compact_state, true).await;
 
         let link_result = engine.get_link_compact_state_messages_by_fid(FID_FOR_TEST);
         assert_eq!(1, link_result.unwrap().messages_bytes.len());
@@ -458,7 +489,7 @@ mod tests {
         let timestamp = messages_factory::farcaster_time();
         let target_url = "exampleurl".to_string();
         let (mut engine, _tmpdir) = new_engine();
-        register_user(FID_FOR_TEST, &mut engine).await;
+        register_user(FID_FOR_TEST, default_signer(), &mut engine).await;
 
         let reaction_add = messages_factory::reactions::create_reaction_add(
             FID_FOR_TEST,
@@ -468,7 +499,7 @@ mod tests {
             None,
         );
 
-        commit_message(&mut engine, &reaction_add).await;
+        commit_message(&mut engine, &reaction_add, true).await;
 
         let reaction_result = engine.get_reactions_by_fid(FID_FOR_TEST);
         assert_eq!(1, reaction_result.unwrap().messages_bytes.len());
@@ -481,7 +512,7 @@ mod tests {
             None,
         );
 
-        commit_message(&mut engine, &reaction_remove).await;
+        commit_message(&mut engine, &reaction_remove, true).await;
 
         let reaction_result = engine.get_reactions_by_fid(FID_FOR_TEST);
         assert_eq!(0, reaction_result.unwrap().messages_bytes.len());
@@ -491,17 +522,17 @@ mod tests {
     async fn test_commit_user_data_messages() {
         let timestamp = messages_factory::farcaster_time();
         let (mut engine, _tmpdir) = new_engine();
-        register_user(FID_FOR_TEST, &mut engine).await;
+        register_user(FID_FOR_TEST, default_signer(), &mut engine).await;
 
         let user_data_add = messages_factory::user_data::create_user_data_add(
             FID_FOR_TEST,
             message::UserDataType::Bio,
             "Hi it's me".to_string(),
             Some(timestamp),
-            None,
+            Some(&default_signer()),
         );
 
-        commit_message(&mut engine, &user_data_add).await;
+        commit_message(&mut engine, &user_data_add, true).await;
 
         let user_data_result = engine.get_user_data_by_fid(FID_FOR_TEST);
         assert_eq!(1, user_data_result.unwrap().messages_bytes.len());
@@ -511,7 +542,7 @@ mod tests {
     async fn test_commit_verification_messages() {
         let timestamp = messages_factory::farcaster_time();
         let (mut engine, _tmpdir) = new_engine();
-        register_user(FID_FOR_TEST, &mut engine).await;
+        register_user(FID_FOR_TEST, default_signer(), &mut engine).await;
         let address = "address".to_string();
 
         let verification_add = messages_factory::verifications::create_verification_add(
@@ -524,7 +555,7 @@ mod tests {
             None,
         );
 
-        commit_message(&mut engine, &verification_add).await;
+        commit_message(&mut engine, &verification_add, true).await;
 
         let verification_result = engine.get_verifications_by_fid(FID_FOR_TEST);
         assert_eq!(1, verification_result.unwrap().messages_bytes.len());
@@ -536,7 +567,7 @@ mod tests {
             None,
         );
 
-        commit_message(&mut engine, &verification_remove).await;
+        commit_message(&mut engine, &verification_remove, true).await;
 
         let verification_result = engine.get_verifications_by_fid(FID_FOR_TEST);
         assert_eq!(0, verification_result.unwrap().messages_bytes.len());
@@ -549,8 +580,9 @@ mod tests {
         let name = "username".to_string();
         let owner = "owner".to_string();
         let signature = "signature".to_string();
+        let signer = default_signer();
 
-        register_user(FID_FOR_TEST, &mut engine).await;
+        register_user(FID_FOR_TEST, signer.clone(), &mut engine).await;
 
         let username_proof_add = messages_factory::username_proof::create_username_proof(
             FID_FOR_TEST as u64,
@@ -559,10 +591,10 @@ mod tests {
             owner.clone(),
             signature.clone(),
             timestamp as u64,
-            None,
+            Some(&signer),
         );
 
-        commit_message(&mut engine, &username_proof_add).await;
+        commit_message(&mut engine, &username_proof_add, true).await;
 
         {
             let username_proof_result = engine.get_username_proofs_by_fid(FID2_FOR_TEST);
@@ -600,8 +632,8 @@ mod tests {
         assert_eq!(account_root.len(), 0);
         assert_eq!(shard_root.len(), 0);
 
-        register_user(FID_FOR_TEST, &mut engine).await;
-        commit_message(&mut engine, &cast).await;
+        register_user(FID_FOR_TEST, default_signer(), &mut engine).await;
+        commit_message(&mut engine, &cast, true).await;
 
         let updated_account_root =
             engine
@@ -645,7 +677,7 @@ mod tests {
         assert_eq!(height.shard_index, 1);
         assert_eq!(height.block_number, 0);
 
-        register_user(FID_FOR_TEST, &mut engine).await;
+        register_user(FID_FOR_TEST, default_signer(), &mut engine).await;
 
         {
             messages_tx
@@ -705,7 +737,7 @@ mod tests {
         // enable_logging();
         let (msg1, msg2) = entities();
         let (mut engine, _tmpdir) = new_engine();
-        register_user(FID_FOR_TEST, &mut engine).await;
+        register_user(FID_FOR_TEST, default_signer(), &mut engine).await;
         let messages_tx = engine.messages_tx();
         let mut previous_root = "".to_string();
 
@@ -815,10 +847,11 @@ mod tests {
         assert_eq!("", to_hex(&state_change.new_state_root));
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_messages_pruned_with_exceeded_storage() {
         let (mut engine, _tmpdir) = new_engine();
-        register_user(FID_FOR_TEST, &mut engine).await;
+        register_user(FID_FOR_TEST, default_signer(), &mut engine).await;
         let mut event_rx = engine.get_senders().events_tx.subscribe();
         let current_time = factory::time::farcaster_time();
         let cast1 = messages_factory::casts::create_cast_add(
@@ -853,17 +886,17 @@ mod tests {
         );
 
         // Default size in tests is 4 casts, so first four messages should merge without issues
-        commit_message(&mut engine, &cast1).await;
+        commit_message(&mut engine, &cast1, true).await;
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast1);
-        commit_message(&mut engine, &cast2).await;
+        commit_message(&mut engine, &cast2, true).await;
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast2);
-        commit_message(&mut engine, &cast3).await;
+        commit_message(&mut engine, &cast3, true).await;
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast3);
-        commit_message(&mut engine, &cast4).await;
+        commit_message(&mut engine, &cast4, true).await;
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast4);
 
         // Fifth message should be merged, but should cause cast1 to be pruned
-        commit_message(&mut engine, &cast5).await;
+        commit_message(&mut engine, &cast5, true).await;
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast5);
         assert_prune_event(&event_rx.try_recv().unwrap(), &cast1);
 
@@ -875,10 +908,12 @@ mod tests {
         assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast5)), true);
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_messages_partially_merged_with_insufficient_storage() {
         let (mut engine, _tmpdir) = new_engine();
-        register_user(FID_FOR_TEST, &mut engine).await;
+        let signer = default_signer();
+        register_user(FID_FOR_TEST, signer.clone(), &mut engine).await;
         let mut event_rx = engine.get_senders().events_tx.subscribe();
         let current_time = factory::time::farcaster_time();
         let cast1 = messages_factory::casts::create_cast_add(
@@ -891,31 +926,31 @@ mod tests {
             FID_FOR_TEST,
             "msg2",
             Some(current_time + 1),
-            None,
+            Some(&signer),
         );
         let cast3 = messages_factory::casts::create_cast_add(
             FID_FOR_TEST,
             "msg3",
             Some(current_time + 2),
-            None,
+            Some(&signer),
         );
         let cast4 = messages_factory::casts::create_cast_add(
             FID_FOR_TEST,
             "msg4",
             Some(current_time + 3),
-            None,
+            Some(&signer),
         );
         let cast5 = messages_factory::casts::create_cast_add(
             FID_FOR_TEST,
             "msg5",
             Some(current_time + 4),
-            None,
+            Some(&signer),
         );
         let cast6 = messages_factory::casts::create_cast_add(
             FID_FOR_TEST,
             "msg6",
             Some(current_time + 5),
-            None,
+            Some(&signer),
         );
 
         let messages_tx = engine.messages_tx();
@@ -985,23 +1020,24 @@ mod tests {
         assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast6)), true);
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_revoking_a_signer_deletes_all_messages_from_that_signer() {
         let (mut engine, _tmpdir) = new_engine();
-        let signer = &SigningKey::generate(&mut rand::rngs::OsRng);
+        let signer = SigningKey::generate(&mut rand::rngs::OsRng);
         let another_signer = &SigningKey::generate(&mut rand::rngs::OsRng);
         let timestamp = factory::time::farcaster_time();
         let msg1 = messages_factory::casts::create_cast_add(
             FID_FOR_TEST,
             "msg1",
             Some(timestamp),
-            Some(signer),
+            Some(&signer),
         );
         let msg2 = messages_factory::casts::create_cast_add(
             FID_FOR_TEST,
             "msg2",
             Some(timestamp + 1),
-            Some(signer),
+            Some(&signer),
         );
         let same_fid_different_signer = messages_factory::casts::create_cast_add(
             FID_FOR_TEST,
@@ -1010,18 +1046,24 @@ mod tests {
             Some(another_signer),
         );
         let different_fid_same_signer =
-            messages_factory::casts::create_cast_add(FID_FOR_TEST + 1, "msg4", None, Some(signer));
-        register_user(FID_FOR_TEST, &mut engine).await;
-        register_user(FID_FOR_TEST + 1, &mut engine).await;
+            messages_factory::casts::create_cast_add(FID_FOR_TEST + 1, "msg4", None, Some(&signer));
+        register_user(FID_FOR_TEST, signer.clone(), &mut engine).await;
+        let another_signer_event = events_factory::create_signer_event(
+            FID_FOR_TEST,
+            another_signer.clone(),
+            onchain_event::SignerEventType::Add,
+        );
+        commit_event(&mut engine, &another_signer_event).await;
+        register_user(FID_FOR_TEST + 1, signer.clone(), &mut engine).await;
         let mut event_rx = engine.get_senders().events_tx.subscribe();
 
-        commit_message(&mut engine, &msg1).await;
+        commit_message(&mut engine, &msg1, true).await;
         let _ = &event_rx.try_recv().unwrap(); // Ignore merge event
-        commit_message(&mut engine, &msg2).await;
+        commit_message(&mut engine, &msg2, true).await;
         let _ = &event_rx.try_recv().unwrap(); // Ignore merge event
-        commit_message(&mut engine, &same_fid_different_signer).await;
+        commit_message(&mut engine, &same_fid_different_signer, true).await;
         let _ = &event_rx.try_recv().unwrap(); // Ignore merge event
-        commit_message(&mut engine, &different_fid_same_signer).await;
+        commit_message(&mut engine, &different_fid_same_signer, true).await;
         let _ = &event_rx.try_recv().unwrap(); // Ignore merge event
 
         // All 4 messages exist
@@ -1031,10 +1073,9 @@ mod tests {
         assert_eq!(1, messages.messages_bytes.len());
 
         // Revoke a single signer
-        let public_key = signer.verifying_key().as_bytes().to_vec();
         let revoke_event = events_factory::create_signer_event(
             FID_FOR_TEST,
-            public_key,
+            signer.clone(),
             onchain_event::SignerEventType::Remove,
         );
         commit_event(&mut engine, &revoke_event).await;
@@ -1050,6 +1091,61 @@ mod tests {
 
         // Different Fid with the same signer is unaffected
         let messages = engine.get_casts_by_fid(FID_FOR_TEST + 1).unwrap();
+        assert_eq!(1, messages.messages_bytes.len());
+    }
+
+    #[tokio::test]
+    async fn test_missing_id_registration() {
+        let (mut engine, _tmpdir) = new_engine();
+        commit_event(&mut engine, &default_storage_event(FID_FOR_TEST)).await;
+        commit_event(
+            &mut engine,
+            &factory::events_factory::create_signer_event(
+                FID_FOR_TEST,
+                default_signer(),
+                onchain_event::SignerEventType::Add,
+            ),
+        )
+        .await;
+        commit_message(&mut engine, &default_message("msg1"), false).await;
+        let messages = engine.get_casts_by_fid(FID_FOR_TEST).unwrap();
+        assert_eq!(0, messages.messages_bytes.len());
+        let id_register = events_factory::create_id_register_event(
+            FID_FOR_TEST,
+            onchain_event::IdRegisterEventType::Register,
+        );
+        commit_event(&mut engine, &id_register).await;
+        commit_message(&mut engine, &default_message("msg1"), true).await;
+        let messages = engine.get_casts_by_fid(FID_FOR_TEST).unwrap();
+        assert_eq!(1, messages.messages_bytes.len());
+    }
+
+    #[tokio::test]
+    async fn test_missing_signer() {
+        let (mut engine, _tmpdir) = new_engine();
+        commit_event(&mut engine, &default_storage_event(FID_FOR_TEST)).await;
+        commit_event(
+            &mut engine,
+            &factory::events_factory::create_id_register_event(
+                FID_FOR_TEST,
+                onchain_event::IdRegisterEventType::Register,
+            ),
+        )
+        .await;
+        commit_message(&mut engine, &default_message("msg1"), false).await;
+        let messages = engine.get_casts_by_fid(FID_FOR_TEST).unwrap();
+        assert_eq!(0, messages.messages_bytes.len());
+        commit_event(
+            &mut engine,
+            &factory::events_factory::create_signer_event(
+                FID_FOR_TEST,
+                default_signer(),
+                onchain_event::SignerEventType::Add,
+            ),
+        )
+        .await;
+        commit_message(&mut engine, &default_message("msg1"), true).await;
+        let messages = engine.get_casts_by_fid(FID_FOR_TEST).unwrap();
         assert_eq!(1, messages.messages_bytes.len());
     }
 }

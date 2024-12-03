@@ -1,12 +1,15 @@
 use std::sync::Arc;
 
-use prost::Message;
+use prost::{DecodeError, Message};
 
 use super::{make_fid_key, StoreEventHandler};
 use crate::core::error::HubError;
 use crate::proto::hub_event::hub_event::Body;
 use crate::proto::hub_event::{HubEvent, HubEventType, MergeOnChainEventBody};
-use crate::proto::onchain_event::{on_chain_event, OnChainEvent, OnChainEventType};
+use crate::proto::onchain_event::{
+    on_chain_event, IdRegisterEventBody, IdRegisterEventType, OnChainEvent, OnChainEventType,
+    SignerEventBody, SignerEventType,
+};
 use crate::storage::constants::{OnChainEventPostfix, RootPrefix, PAGE_SIZE_MAX};
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch, RocksdbError};
 use crate::storage::util::increment_vec_u8;
@@ -27,6 +30,12 @@ pub enum OnchainEventStorageError {
 
     #[error("Invalid event type calculating storage slots ")]
     InvalidStorageRentEventType,
+
+    #[error(transparent)]
+    DecodeError(#[from] DecodeError),
+
+    #[error("Unexpected event type")]
+    UnexpectedEventType,
 }
 
 /** A page of messages returned from various APIs */
@@ -62,12 +71,180 @@ fn make_onchain_event_primary_key(onchain_event: &OnChainEvent) -> Vec<u8> {
 
 pub fn merge_onchain_event(
     db: &RocksDB,
+    txn: &mut RocksDbTransactionBatch,
     onchain_event: OnChainEvent,
 ) -> Result<(), OnchainEventStorageError> {
     let primary_key = make_onchain_event_primary_key(&onchain_event);
-    // TODO(aditi): Incorporate secondary indices
-    db.put(&primary_key, &onchain_event.encode_to_vec())?;
+    txn.put(primary_key, onchain_event.encode_to_vec());
+    build_secondary_indices(db, txn, &onchain_event)?;
     Ok(())
+}
+
+pub fn signer_body(onchain_event: OnChainEvent) -> Option<SignerEventBody> {
+    if let on_chain_event::Body::SignerEventBody(body) = onchain_event.body? {
+        Some(body)
+    } else {
+        None
+    }
+}
+
+fn make_id_register_by_fid_key(fid: u32) -> Vec<u8> {
+    let mut id_register_by_fid_key = vec![
+        RootPrefix::OnChainEvent as u8,
+        OnChainEventPostfix::IdRegisterByFid as u8,
+    ];
+    id_register_by_fid_key.extend(make_fid_key(fid));
+    id_register_by_fid_key
+}
+
+fn make_signer_onchain_event_by_signer_key(fid: u32, key: Vec<u8>) -> Vec<u8> {
+    let mut signer_key = vec![
+        RootPrefix::OnChainEvent as u8,
+        OnChainEventPostfix::SignerByFid as u8,
+    ];
+    signer_key.extend(make_fid_key(fid));
+    signer_key.extend(key);
+    signer_key
+}
+
+fn build_secondary_indices_for_id_register(
+    db: &RocksDB,
+    txn: &mut RocksDbTransactionBatch,
+    onchain_event: &OnChainEvent,
+    id_register_event_body: &IdRegisterEventBody,
+) -> Result<(), OnchainEventStorageError> {
+    if id_register_event_body.event_type() == IdRegisterEventType::ChangeRecovery {
+        // change recovery events are not indexed (id and custody address are the same)
+        return Ok(());
+    }
+    let id_register_by_fid_key = make_id_register_by_fid_key(onchain_event.fid as u32);
+    match get_event_by_secondary_key(db, id_register_by_fid_key.clone())? {
+        Some(existing_event) => {
+            if existing_event.block_number > onchain_event.block_number {
+                return Ok(());
+            }
+        }
+        None => {}
+    };
+    let primary_key = make_onchain_event_primary_key(&onchain_event);
+    txn.put(id_register_by_fid_key, primary_key);
+    Ok(())
+}
+
+fn build_secondary_indices_for_signer(
+    db: &RocksDB,
+    txn: &mut RocksDbTransactionBatch,
+    onchain_event: &OnChainEvent,
+    signer_event_body: &SignerEventBody,
+) -> Result<(), OnchainEventStorageError> {
+    let signer_key = make_signer_onchain_event_by_signer_key(
+        onchain_event.fid as u32,
+        signer_event_body.key.clone(),
+    );
+    match get_event_by_secondary_key(db, signer_key.clone())? {
+        Some(existing_event) => {
+            if existing_event.block_number > onchain_event.block_number {
+                return Ok(());
+            }
+            let existing_event_body = signer_body(onchain_event.clone())
+                .ok_or(OnchainEventStorageError::UnexpectedEventType)?;
+            if existing_event_body.event_type() == SignerEventType::Remove
+                && signer_event_body.event_type() == SignerEventType::Add
+            {
+                return Ok(());
+            }
+        }
+        None => {}
+    };
+
+    if signer_event_body.event_type() == SignerEventType::AdminReset {
+        let mut next_page_token = None;
+        loop {
+            let events_page = get_onchain_events(
+                db,
+                &PageOptions {
+                    page_size: None,
+                    page_token: next_page_token,
+                    reverse: false,
+                },
+                OnChainEventType::EventTypeSigner,
+                onchain_event.fid as u32,
+            )?;
+
+            let onchain_event = events_page.onchain_events.into_iter().find(|event| {
+                match signer_body(event.clone()) {
+                    None => false,
+                    Some(body) => {
+                        if body.event_type() == SignerEventType::Add
+                            && body.key == signer_event_body.key
+                        {
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                }
+            });
+            if let Some(onchain_event) = onchain_event {
+                txn.put(
+                    signer_key.clone(),
+                    make_onchain_event_primary_key(&onchain_event),
+                );
+                break;
+            }
+
+            next_page_token = events_page.next_page_token;
+            if next_page_token.is_none() {
+                break;
+            }
+        }
+        return Ok(());
+    }
+
+    txn.put(signer_key, make_onchain_event_primary_key(onchain_event));
+    Ok(())
+}
+
+fn build_secondary_indices(
+    db: &RocksDB,
+    txn: &mut RocksDbTransactionBatch,
+    onchain_event: &OnChainEvent,
+) -> Result<(), OnchainEventStorageError> {
+    if let Some(body) = &onchain_event.body {
+        match body {
+            on_chain_event::Body::IdRegisterEventBody(id_register_event_body) => {
+                build_secondary_indices_for_id_register(
+                    db,
+                    txn,
+                    onchain_event,
+                    id_register_event_body,
+                )?
+            }
+            on_chain_event::Body::SignerEventBody(signer_event_body) => {
+                build_secondary_indices_for_signer(db, txn, onchain_event, signer_event_body)?
+            }
+            on_chain_event::Body::SignerMigratedEventBody(_)
+            | on_chain_event::Body::StorageRentEventBody(_) => {}
+        }
+    };
+
+    Ok(())
+}
+
+fn get_event_by_secondary_key(
+    db: &RocksDB,
+    secondary_key: Vec<u8>,
+) -> Result<Option<OnChainEvent>, OnchainEventStorageError> {
+    match db.get(&secondary_key)? {
+        Some(event_primary_key) => match db.get(&event_primary_key)? {
+            Some(onchain_event) => {
+                let onchain_event = OnChainEvent::decode(onchain_event.as_slice())?;
+                Ok(Some(onchain_event))
+            }
+            None => Ok(None),
+        },
+        None => Ok(None),
+    }
 }
 
 pub fn get_onchain_events(
@@ -197,7 +374,7 @@ impl OnchainEventStore {
         onchain_event: OnChainEvent,
         txn: &mut RocksDbTransactionBatch,
     ) -> Result<HubEvent, OnchainEventStorageError> {
-        merge_onchain_event(&self.db, onchain_event.clone())?;
+        merge_onchain_event(&self.db, txn, onchain_event.clone())?;
         let hub_event = &mut HubEvent {
             r#type: HubEventType::MergeOnChainEvent as i32,
             body: Some(Body::MergeOnChainEventBody(MergeOnChainEventBody {
@@ -239,6 +416,22 @@ impl OnchainEventStore {
         }
 
         Ok(onchain_events)
+    }
+
+    pub fn get_id_register_event_by_fid(
+        &self,
+        fid: u32,
+    ) -> Result<Option<OnChainEvent>, OnchainEventStorageError> {
+        get_event_by_secondary_key(&self.db, make_id_register_by_fid_key(fid))
+    }
+
+    pub fn get_active_signer(
+        &self,
+        fid: u32,
+        signer: Vec<u8>,
+    ) -> Result<Option<OnChainEvent>, OnchainEventStorageError> {
+        let signer_key = make_signer_onchain_event_by_signer_key(fid, signer);
+        get_event_by_secondary_key(&self.db, signer_key)
     }
 
     pub fn get_storage_slot_for_fid(
