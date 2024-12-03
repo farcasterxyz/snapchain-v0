@@ -10,6 +10,10 @@ mod tests {
         (0..32).map(|_| rand::random::<u8>()).collect()
     }
 
+    fn nc() -> &'static mut u64 {
+        Box::leak(Box::new(0))
+    }
+
     #[test]
     fn test_merkle_trie_get_node() {
         let tmp_path = tempfile::tempdir()
@@ -26,7 +30,12 @@ mod tests {
         trie.initialize(db).unwrap();
         let mut txn_batch = RocksDbTransactionBatch::new();
 
-        let result = trie.insert(db, &mut txn_batch, vec![vec![1, 2, 3, 4, 5, 6, 7, 8, 9]]);
+        let result = trie.insert(
+            db,
+            &mut txn_batch,
+            vec![vec![1, 2, 3, 4, 5, 6, 7, 8, 9]],
+            nc(),
+        );
         assert!(result.is_err());
         if let Err(TrieError::KeyLengthTooShort) = result {
             //ok
@@ -36,14 +45,16 @@ mod tests {
 
         let key1: Vec<_> = "0000482712".bytes().collect();
         println!("{:?}", key1);
-        trie.insert(db, &mut txn_batch, vec![key1.clone()]).unwrap();
+        trie.insert(db, &mut txn_batch, vec![key1.clone()], nc())
+            .unwrap();
 
         let node = trie.get_node(db, &mut txn_batch, &key1).unwrap();
         assert_eq!(node.value().unwrap(), key1);
 
         // Add another key
         let key2: Vec<_> = "0000482713".bytes().collect();
-        trie.insert(db, &mut txn_batch, vec![key2.clone()]).unwrap();
+        trie.insert(db, &mut txn_batch, vec![key2.clone()], nc())
+            .unwrap();
 
         // The get node should still work for both keys
         let node = trie.get_node(db, &mut txn_batch, &key1).unwrap();
@@ -114,17 +125,19 @@ mod tests {
         let mut txn_batch = RocksDbTransactionBatch::new();
         let hash = random_hash();
 
-        let res = trie.insert(db, &mut txn_batch, vec![hash.clone()]).unwrap();
+        let res = trie
+            .insert(db, &mut txn_batch, vec![hash.clone()], nc())
+            .unwrap();
         assert_eq!(res, vec![true]);
 
-        let res = trie.exists(db, &hash).unwrap();
+        let res = trie.exists(db, &hash, nc()).unwrap();
         assert_eq!(res, true);
 
         let res = trie.reload(db);
         assert!(res.is_ok());
 
         // Does not exist after reload
-        let res = trie.exists(db, &hash).unwrap();
+        let res = trie.exists(db, &hash, nc()).unwrap();
         assert_eq!(res, false);
     }
 
@@ -147,24 +160,24 @@ mod tests {
         let first_hash = random_hash();
         let second_hash = random_hash();
 
-        trie.insert(db, &mut first_txn, vec![first_hash.clone()])
+        trie.insert(db, &mut first_txn, vec![first_hash.clone()], nc())
             .unwrap();
         db.commit(first_txn).unwrap();
         trie.reload(db).unwrap();
 
-        let res = trie.exists(db, &first_hash).unwrap();
+        let res = trie.exists(db, &first_hash, nc()).unwrap();
         assert_eq!(res, true);
 
         let mut second_txn = RocksDbTransactionBatch::new();
-        trie.insert(db, &mut second_txn, vec![second_hash.clone()])
+        trie.insert(db, &mut second_txn, vec![second_hash.clone()], nc())
             .unwrap();
 
         trie.reload(db).unwrap();
 
         // First hash still exists, but not the second
-        let res = trie.exists(db, &first_hash).unwrap();
+        let res = trie.exists(db, &first_hash, nc()).unwrap();
         assert_eq!(res, true);
-        let res = trie.exists(db, &second_hash).unwrap();
+        let res = trie.exists(db, &second_hash, nc()).unwrap();
         assert_eq!(res, false);
     }
 
