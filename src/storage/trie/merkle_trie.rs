@@ -4,8 +4,10 @@ use super::trie_node::{TrieNode, TIMESTAMP_LENGTH};
 use crate::proto::msg as message;
 use crate::proto::onchain_event;
 use crate::storage::store::account::IntoU8;
+use crate::storage::trie::trie_node;
 use std::collections::HashMap;
 use tracing::info;
+pub use trie_node::Context;
 
 pub const TRIE_DBPATH_PREFIX: &str = "trieDb";
 
@@ -117,6 +119,7 @@ impl MerkleTrie {
 
     pub fn insert(
         &mut self,
+        ctx: &Context,
         db: &RocksDB,
         txn_batch: &mut RocksDbTransactionBatch,
         keys: Vec<Vec<u8>>,
@@ -133,7 +136,7 @@ impl MerkleTrie {
 
         if let Some(root) = self.root.as_mut() {
             let mut txn = RocksDbTransactionBatch::new();
-            let results = root.insert(db, &mut txn, keys, 0)?;
+            let results = root.insert(ctx, db, &mut txn, keys, 0)?;
 
             txn_batch.merge(txn);
             Ok(results)
@@ -144,6 +147,7 @@ impl MerkleTrie {
 
     pub fn delete(
         &mut self,
+        ctx: &Context,
         db: &RocksDB,
         txn_batch: &mut RocksDbTransactionBatch,
         keys: Vec<Vec<u8>>,
@@ -160,7 +164,7 @@ impl MerkleTrie {
 
         if let Some(root) = self.root.as_mut() {
             let mut txn = RocksDbTransactionBatch::new();
-            let results = root.delete(db, &mut txn, keys, 0)?;
+            let results = root.delete(ctx, db, &mut txn, keys, 0)?;
 
             txn_batch.merge(txn);
             Ok(results)
@@ -169,9 +173,14 @@ impl MerkleTrie {
         }
     }
 
-    pub fn exists(&mut self, db: &RocksDB, key: &Vec<u8>) -> Result<bool, TrieError> {
+    pub fn exists(
+        &mut self,
+        ctx: &Context,
+        db: &RocksDB,
+        key: &Vec<u8>,
+    ) -> Result<bool, TrieError> {
         if let Some(root) = self.root.as_mut() {
-            root.exists(db, key, 0)
+            root.exists(ctx, db, key, 0)
         } else {
             Err(TrieError::TrieNotInitialized)
         }
@@ -242,12 +251,13 @@ impl MerkleTrie {
 
     pub fn get_all_values(
         &mut self,
+        ctx: &Context,
         db: &RocksDB,
         prefix: &[u8],
     ) -> Result<Vec<Vec<u8>>, TrieError> {
         if let Some(root) = self.root.as_mut() {
-            if let Some(node) = root.get_node_from_trie(db, prefix, 0) {
-                node.get_all_values(db, prefix)
+            if let Some(node) = root.get_node_from_trie(ctx, db, prefix, 0) {
+                node.get_all_values(ctx, db, prefix)
             } else {
                 Ok(Vec::new())
             }
@@ -256,9 +266,14 @@ impl MerkleTrie {
         }
     }
 
-    pub fn get_snapshot(&mut self, db: &RocksDB, prefix: &[u8]) -> Result<TrieSnapshot, TrieError> {
+    pub fn get_snapshot(
+        &mut self,
+        ctx: &Context,
+        db: &RocksDB,
+        prefix: &[u8],
+    ) -> Result<TrieSnapshot, TrieError> {
         if let Some(root) = self.root.as_mut() {
-            root.get_snapshot(db, prefix, 0)
+            root.get_snapshot(ctx, db, prefix, 0)
         } else {
             Err(TrieError::TrieNotInitialized)
         }
@@ -314,9 +329,12 @@ mod tests {
     use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
     use crate::storage::trie::errors::TrieError;
     use crate::storage::trie::merkle_trie::MerkleTrie;
+    use crate::storage::trie::trie_node::Context;
 
     #[test]
     fn test_merkle_trie_get_node() {
+        let ctx = &Context::new();
+
         let tmp_path = tempfile::tempdir()
             .unwrap()
             .path()
@@ -331,7 +349,12 @@ mod tests {
         trie.initialize(db).unwrap();
         let mut txn_batch = RocksDbTransactionBatch::new();
 
-        let result = trie.insert(db, &mut txn_batch, vec![vec![1, 2, 3, 4, 5, 6, 7, 8, 9]]);
+        let result = trie.insert(
+            ctx,
+            db,
+            &mut txn_batch,
+            vec![vec![1, 2, 3, 4, 5, 6, 7, 8, 9]],
+        );
         assert!(result.is_err());
         if let Err(TrieError::KeyLengthTooShort) = result {
             //ok
@@ -341,14 +364,16 @@ mod tests {
 
         let key1: Vec<_> = "0000482712".bytes().collect();
         println!("{:?}", key1);
-        trie.insert(db, &mut txn_batch, vec![key1.clone()]).unwrap();
+        trie.insert(ctx, db, &mut txn_batch, vec![key1.clone()])
+            .unwrap();
 
         let node = trie.get_node(db, &mut txn_batch, &key1).unwrap();
         assert_eq!(node.value().unwrap(), key1);
 
         // Add another key
         let key2: Vec<_> = "0000482713".bytes().collect();
-        trie.insert(db, &mut txn_batch, vec![key2.clone()]).unwrap();
+        trie.insert(ctx, db, &mut txn_batch, vec![key2.clone()])
+            .unwrap();
 
         // The get node should still work for both keys
         let node = trie.get_node(db, &mut txn_batch, &key1).unwrap();

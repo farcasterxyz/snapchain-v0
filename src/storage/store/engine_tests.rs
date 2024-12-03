@@ -9,6 +9,7 @@ mod tests {
     use crate::storage::db::RocksDbTransactionBatch;
     use crate::storage::store::engine::{MempoolMessage, ShardEngine, ShardStateChange};
     use crate::storage::store::stores::{Limits, StoreLimits};
+    use crate::storage::trie::merkle_trie;
     use crate::storage::trie::merkle_trie::TrieKey;
     use crate::utils::factory::{self, events_factory, messages_factory};
     use crate::utils::statsd_wrapper::StatsdClientWrapper;
@@ -21,6 +22,10 @@ mod tests {
 
     const FID_FOR_TEST: u32 = 1234;
     const FID2_FOR_TEST: u32 = 1235;
+
+    fn trie_ctx() -> &'static mut merkle_trie::Context {
+        Box::leak(Box::new(merkle_trie::Context::new()))
+    }
 
     fn new_engine() -> (ShardEngine, tempfile::TempDir) {
         let statsd_client = StatsdClientWrapper::new(
@@ -201,7 +206,7 @@ mod tests {
         engine: &mut ShardEngine,
         state_change: &ShardStateChange,
     ) -> ShardChunk {
-        let valid = engine.validate_state_change(state_change);
+        let valid = engine.validate_state_change(trie_ctx(), state_change);
         assert!(valid);
 
         let height = engine.get_confirmed_height();
@@ -222,7 +227,7 @@ mod tests {
             .send(MempoolMessage::UserMessage(msg.clone()))
             .await
             .unwrap();
-        let state_change = engine.propose_state_change(1);
+        let state_change = engine.propose_state_change(trie_ctx(), 1);
 
         if state_change.transactions.is_empty() {
             panic!("Failed to propose message");
@@ -234,7 +239,7 @@ mod tests {
                 state_change.new_state_root,
                 chunk.header.as_ref().unwrap().shard_root
             );
-            assert!(engine.trie_key_exists(&TrieKey::for_message(msg)));
+            assert!(engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(msg)));
         }
         chunk
     }
@@ -251,7 +256,7 @@ mod tests {
             ))
             .await
             .unwrap();
-        let state_change = engine.propose_state_change(1);
+        let state_change = engine.propose_state_change(trie_ctx(), 1);
 
         validate_and_commit_state_change(engine, &state_change)
     }
@@ -265,7 +270,7 @@ mod tests {
         assert_eq!("", to_hex(&engine.trie_root_hash()));
 
         // Propose empty transaction
-        let state_change = engine.propose_state_change(1);
+        let state_change = engine.propose_state_change(trie_ctx(), 1);
         assert_eq!(1, state_change.shard_id);
         assert_eq!(state_change.transactions.len(), 0);
         // No messages so, new state root should be same as before
@@ -284,7 +289,7 @@ mod tests {
             .await
             .unwrap();
 
-        let state_change = engine.propose_state_change(1);
+        let state_change = engine.propose_state_change(trie_ctx(), 1);
 
         assert_eq!(1, state_change.shard_id);
         assert_eq!(state_change.transactions.len(), 1);
@@ -297,17 +302,17 @@ mod tests {
     #[should_panic(expected = "State change commit failed: merkle trie root hash mismatch")]
     fn test_engine_commit_with_mismatched_hash() {
         let (mut engine, _tmpdir) = new_engine();
-        let mut state_change = engine.propose_state_change(1);
+        let mut state_change = engine.propose_state_change(trie_ctx(), 1);
         let invalid_hash = from_hex("ffffffffffffffffffffffffffffffffffffffff");
 
         {
-            let valid = engine.validate_state_change(&state_change);
+            let valid = engine.validate_state_change(trie_ctx(), &state_change);
             assert!(valid);
         }
 
         {
             state_change.new_state_root = invalid_hash.clone();
-            let valid = engine.validate_state_change(&state_change);
+            let valid = engine.validate_state_change(trie_ctx(), &state_change);
             assert!(!valid);
         }
 
@@ -321,14 +326,14 @@ mod tests {
     #[test]
     fn test_engine_commit_no_messages_happy_path() {
         let (mut engine, _tmpdir) = new_engine();
-        let state_change = engine.propose_state_change(1);
+        let state_change = engine.propose_state_change(trie_ctx(), 1);
         let expected_roots = vec![""];
 
         validate_and_commit_state_change(&mut engine, &state_change);
 
         assert_eq!(expected_roots[0], to_hex(&engine.trie_root_hash()));
 
-        let valid = engine.validate_state_change(&state_change);
+        let valid = engine.validate_state_change(trie_ctx(), &state_change);
         assert!(valid);
     }
 
@@ -352,7 +357,7 @@ mod tests {
             .send(MempoolMessage::UserMessage(msg1.clone()))
             .await
             .unwrap();
-        let state_change = engine.propose_state_change(1);
+        let state_change = engine.propose_state_change(trie_ctx(), 1);
 
         assert_eq!(1, state_change.transactions.len());
         assert_eq!(1, state_change.transactions[0].user_messages.len());
@@ -366,9 +371,12 @@ mod tests {
         assert_eq!(initial_events_count, events.events.len());
 
         // And it's not inserted into the trie
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&msg1)), false);
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&msg1)),
+            false
+        );
 
-        let valid = engine.validate_state_change(&state_change);
+        let valid = engine.validate_state_change(trie_ctx(), &state_change);
         assert!(valid);
 
         // validate does not write to the store
@@ -393,7 +401,10 @@ mod tests {
         assert_merge_event(&generated_event, &msg1);
 
         // The message exists in the trie
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&msg1)), true);
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&msg1)),
+            true
+        );
     }
 
     #[tokio::test]
@@ -412,7 +423,10 @@ mod tests {
         assert_eq!(1, messages.len());
         let decoded = message::Message::decode(&*messages[0]).unwrap();
         assert_eq!(to_hex(&cast.hash), to_hex(&decoded.hash));
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast)), true);
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast)),
+            true
+        );
 
         // Delete the cast
         let delete_cast = messages_factory::casts::create_cast_remove(
@@ -430,9 +444,12 @@ mod tests {
         assert_eq!(0, messages.len());
 
         // The cast is not present in the trie, but the remove message is
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast)), false);
         assert_eq!(
-            engine.trie_key_exists(&TrieKey::for_message(&delete_cast)),
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast)),
+            false
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&delete_cast)),
             true
         );
     }
@@ -684,7 +701,7 @@ mod tests {
                 .send(MempoolMessage::UserMessage(msg1.clone()))
                 .await
                 .unwrap();
-            let state_change = engine.propose_state_change(1);
+            let state_change = engine.propose_state_change(trie_ctx(), 1);
 
             assert_eq!(1, state_change.shard_id);
             assert_eq!(state_change.transactions.len(), 1);
@@ -710,7 +727,7 @@ mod tests {
                 .send(MempoolMessage::UserMessage(msg2.clone()))
                 .await
                 .unwrap();
-            let state_change = engine.propose_state_change(1);
+            let state_change = engine.propose_state_change(trie_ctx(), 1);
 
             assert_eq!(1, state_change.shard_id);
             assert_eq!(state_change.transactions.len(), 1);
@@ -750,7 +767,7 @@ mod tests {
                 .send(MempoolMessage::UserMessage(msg2.clone()))
                 .await
                 .unwrap();
-            let state_change = engine.propose_state_change(1);
+            let state_change = engine.propose_state_change(trie_ctx(), 1);
 
             assert_eq!(1, state_change.shard_id);
             assert_eq!(state_change.transactions.len(), 1);
@@ -792,7 +809,7 @@ mod tests {
             ))
             .await
             .unwrap();
-        let state_change = engine.propose_state_change(1);
+        let state_change = engine.propose_state_change(trie_ctx(), 1);
         assert_eq!(1, state_change.shard_id);
         assert_eq!(state_change.transactions.len(), 1);
         assert_eq!(1, state_change.transactions[0].system_messages.len());
@@ -841,7 +858,7 @@ mod tests {
             .send(MempoolMessage::UserMessage(cast_add.clone()))
             .await
             .unwrap();
-        let state_change = engine.propose_state_change(1);
+        let state_change = engine.propose_state_change(trie_ctx(), 1);
 
         assert_eq!(0, state_change.transactions.len());
         assert_eq!("", to_hex(&state_change.new_state_root));
@@ -901,11 +918,26 @@ mod tests {
         assert_prune_event(&event_rx.try_recv().unwrap(), &cast1);
 
         // Prunes are reflected in the trie
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast1)), false);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast2)), true);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast3)), true);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast4)), true);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast5)), true);
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast1)),
+            false
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast2)),
+            true
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast3)),
+            true
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast4)),
+            true
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast5)),
+            true
+        );
     }
 
     #[ignore]
@@ -968,7 +1000,7 @@ mod tests {
             .send(MempoolMessage::UserMessage(cast3.clone()))
             .await
             .unwrap();
-        let state_change = engine.propose_state_change(1);
+        let state_change = engine.propose_state_change(trie_ctx(), 1);
         validate_and_commit_state_change(&mut engine, &state_change);
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast1);
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast2);
@@ -988,7 +1020,7 @@ mod tests {
             .await
             .unwrap();
 
-        let state_change = engine.propose_state_change(1);
+        let state_change = engine.propose_state_change(trie_ctx(), 1);
         let chunk = validate_and_commit_state_change(&mut engine, &state_change);
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast4);
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast5);
@@ -1012,12 +1044,30 @@ mod tests {
         );
 
         // Prunes are reflected in the trie
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast1)), false);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast2)), false);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast3)), true);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast4)), true);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast5)), true);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast6)), true);
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast1)),
+            false
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast2)),
+            false
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast3)),
+            true
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast4)),
+            true
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast5)),
+            true
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast6)),
+            true
+        );
     }
 
     #[ignore]

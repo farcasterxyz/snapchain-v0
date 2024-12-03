@@ -3,6 +3,7 @@ mod tests {
     use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
     use crate::storage::store::account::IntoU8;
     use crate::storage::trie::merkle_trie::{MerkleTrie, TrieKey};
+    use crate::storage::trie::trie_node::Context;
     use crate::utils::factory::{events_factory, messages_factory};
 
     fn random_hash() -> Vec<u8> {
@@ -11,6 +12,8 @@ mod tests {
 
     #[test]
     fn test_reload_with_empty_root() {
+        let ctx = &Context::new();
+
         let tmp_path = tempfile::tempdir()
             .unwrap()
             .path()
@@ -27,22 +30,26 @@ mod tests {
         let mut txn_batch = RocksDbTransactionBatch::new();
         let hash = random_hash();
 
-        let res = trie.insert(db, &mut txn_batch, vec![hash.clone()]).unwrap();
+        let res = trie
+            .insert(ctx, db, &mut txn_batch, vec![hash.clone()])
+            .unwrap();
         assert_eq!(res, vec![true]);
 
-        let res = trie.exists(db, &hash).unwrap();
+        let res = trie.exists(ctx, db, &hash).unwrap();
         assert_eq!(res, true);
 
         let res = trie.reload(db);
         assert!(res.is_ok());
 
         // Does not exist after reload
-        let res = trie.exists(db, &hash).unwrap();
+        let res = trie.exists(ctx, db, &hash).unwrap();
         assert_eq!(res, false);
     }
 
     #[test]
     fn test_reload_with_existing_data() {
+        let ctx = &Context::new();
+
         let tmp_path = tempfile::tempdir()
             .unwrap()
             .path()
@@ -60,24 +67,24 @@ mod tests {
         let first_hash = random_hash();
         let second_hash = random_hash();
 
-        trie.insert(db, &mut first_txn, vec![first_hash.clone()])
+        trie.insert(ctx, db, &mut first_txn, vec![first_hash.clone()])
             .unwrap();
         db.commit(first_txn).unwrap();
         trie.reload(db).unwrap();
 
-        let res = trie.exists(db, &first_hash).unwrap();
+        let res = trie.exists(ctx, db, &first_hash).unwrap();
         assert_eq!(res, true);
 
         let mut second_txn = RocksDbTransactionBatch::new();
-        trie.insert(db, &mut second_txn, vec![second_hash.clone()])
+        trie.insert(ctx, db, &mut second_txn, vec![second_hash.clone()])
             .unwrap();
 
         trie.reload(db).unwrap();
 
         // First hash still exists, but not the second
-        let res = trie.exists(db, &first_hash).unwrap();
+        let res = trie.exists(ctx, db, &first_hash).unwrap();
         assert_eq!(res, true);
-        let res = trie.exists(db, &second_hash).unwrap();
+        let res = trie.exists(ctx, db, &second_hash).unwrap();
         assert_eq!(res, false);
     }
 

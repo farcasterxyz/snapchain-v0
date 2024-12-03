@@ -6,6 +6,7 @@ use crate::proto::rpc::{BlocksRequest, ShardChunksRequest};
 use crate::proto::snapchain::{Block, BlockHeader, FullProposal, ShardChunk, ShardHeader};
 use crate::storage::store::engine::{BlockEngine, ShardEngine, ShardStateChange};
 use crate::storage::store::BlockStorageError;
+use crate::storage::trie::merkle_trie;
 use malachite_common::{Round, Validity};
 use prost::Message;
 use std::collections::BTreeMap;
@@ -99,7 +100,9 @@ impl Proposer for ShardProposer {
             None => vec![0, 32],
         };
 
-        let state_change = self.engine.propose_state_change(self.shard_id.shard_id());
+        let state_change = self
+            .engine
+            .propose_state_change(&merkle_trie::Context::new(), self.shard_id.shard_id());
         let shard_header = ShardHeader {
             parent_hash,
             timestamp: current_time(),
@@ -142,7 +145,11 @@ impl Proposer for ShardProposer {
                 new_state_root: chunk.header.clone().unwrap().shard_root.clone(),
                 transactions: chunk.transactions.clone(),
             };
-            return if self.engine.validate_state_change(&state) {
+
+            return if self
+                .engine
+                .validate_state_change(&merkle_trie::Context::new(), &state)
+            {
                 Validity::Valid
             } else {
                 error!("Invalid state change for shard: {:?}", state.shard_id);
