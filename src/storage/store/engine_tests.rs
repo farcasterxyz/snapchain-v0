@@ -580,8 +580,9 @@ mod tests {
         let name = "username".to_string();
         let owner = "owner".to_string();
         let signature = "signature".to_string();
+        let signer = default_signer();
 
-        register_user(FID_FOR_TEST, &mut engine).await;
+        register_user(FID_FOR_TEST, signer.clone(), &mut engine).await;
 
         let username_proof_add = messages_factory::username_proof::create_username_proof(
             FID_FOR_TEST as u64,
@@ -590,10 +591,10 @@ mod tests {
             owner.clone(),
             signature.clone(),
             timestamp as u64,
-            None,
+            Some(&signer),
         );
 
-        commit_message(&mut engine, &username_proof_add).await;
+        commit_message(&mut engine, &username_proof_add, true).await;
 
         {
             let username_proof_result = engine.get_username_proofs_by_fid(FID2_FOR_TEST);
