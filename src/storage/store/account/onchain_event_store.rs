@@ -7,8 +7,8 @@ use crate::core::error::HubError;
 use crate::proto::hub_event::hub_event::Body;
 use crate::proto::hub_event::{HubEvent, HubEventType, MergeOnChainEventBody};
 use crate::proto::onchain_event::{
-    on_chain_event, IdRegisterEventType, OnChainEvent, OnChainEventType, SignerEventBody,
-    SignerEventType,
+    on_chain_event, IdRegisterEventBody, IdRegisterEventType, OnChainEvent, OnChainEventType,
+    SignerEventBody, SignerEventType,
 };
 use crate::storage::constants::{OnChainEventPostfix, RootPrefix, PAGE_SIZE_MAX};
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch, RocksdbError};
@@ -107,7 +107,97 @@ fn make_signer_onchain_event_by_signer_key(fid: u32, key: Vec<u8>) -> Vec<u8> {
     signer_key
 }
 
-pub fn build_secondary_indices(
+fn build_secondary_indices_for_id_register(
+    db: &RocksDB,
+    txn: &mut RocksDbTransactionBatch,
+    onchain_event: &OnChainEvent,
+    id_register_event_body: &IdRegisterEventBody,
+) -> Result<(), OnchainEventStorageError> {
+    if id_register_event_body.event_type() == IdRegisterEventType::ChangeRecovery {
+        // change recovery events are not indexed (id and custody address are the same)
+        return Ok(());
+    }
+    let id_register_by_fid_key = make_id_register_by_fid_key(onchain_event.fid as u32);
+    match get_event_by_secondary_key(db, id_register_by_fid_key.clone())? {
+        Some(existing_event) => {
+            if existing_event.block_number > onchain_event.block_number {
+                return Ok(());
+            }
+        }
+        None => {}
+    };
+    let primary_key = make_onchain_event_primary_key(&onchain_event);
+    txn.put(id_register_by_fid_key, primary_key);
+    Ok(())
+}
+
+fn build_secondary_indices_for_signer(
+    db: &RocksDB,
+    txn: &mut RocksDbTransactionBatch,
+    onchain_event: &OnChainEvent,
+    signer_event_body: &SignerEventBody,
+) -> Result<(), OnchainEventStorageError> {
+    let signer_key = make_signer_onchain_event_by_signer_key(
+        onchain_event.fid as u32,
+        signer_event_body.key.clone(),
+    );
+    match get_event_by_secondary_key(db, signer_key.clone())? {
+        Some(existing_event) => {
+            if existing_event.block_number > onchain_event.block_number {
+                return Ok(());
+            }
+            let existing_event_body = signer_body(onchain_event.clone())
+                .ok_or(OnchainEventStorageError::UnexpectedEventType)?;
+            if existing_event_body.event_type() == SignerEventType::Remove
+                && signer_event_body.event_type() == SignerEventType::Add
+            {
+                return Ok(());
+            }
+        }
+        None => {}
+    };
+
+    if signer_event_body.event_type() == SignerEventType::AdminReset {
+        // TODO(aditi): Handle multiple pages
+        let events = get_onchain_events(
+            db,
+            &PageOptions {
+                page_size: None,
+                page_token: None,
+                reverse: false,
+            },
+            OnChainEventType::EventTypeSigner,
+            onchain_event.fid as u32,
+        )?
+        .onchain_events;
+        let onchain_event = events
+            .into_iter()
+            .find(|event| match signer_body(event.clone()) {
+                None => false,
+                Some(body) => {
+                    if body.event_type() == SignerEventType::Add
+                        && body.key == signer_event_body.key
+                    {
+                        true
+                    } else {
+                        false
+                    }
+                }
+            });
+        if let Some(onchain_event) = onchain_event {
+            txn.put(
+                signer_key.clone(),
+                make_onchain_event_primary_key(&onchain_event),
+            );
+        }
+        return Ok(());
+    }
+
+    txn.put(signer_key, make_onchain_event_primary_key(onchain_event));
+    Ok(())
+}
+
+fn build_secondary_indices(
     db: &RocksDB,
     txn: &mut RocksDbTransactionBatch,
     onchain_event: &OnChainEvent,
@@ -115,82 +205,15 @@ pub fn build_secondary_indices(
     if let Some(body) = &onchain_event.body {
         match body {
             on_chain_event::Body::IdRegisterEventBody(id_register_event_body) => {
-                if id_register_event_body.event_type() == IdRegisterEventType::ChangeRecovery {
-                    // change recovery events are not indexed (id and custody address are the same)
-                    return Ok(());
-                }
-                let id_register_by_fid_key = make_id_register_by_fid_key(onchain_event.fid as u32);
-                match get_event_by_secondary_key(db, id_register_by_fid_key.clone())? {
-                    Some(existing_event) => {
-                        if existing_event.block_number > onchain_event.block_number {
-                            return Ok(());
-                        }
-                    }
-                    None => {}
-                };
-                let primary_key = make_onchain_event_primary_key(&onchain_event);
-                txn.put(id_register_by_fid_key, primary_key);
+                build_secondary_indices_for_id_register(
+                    db,
+                    txn,
+                    onchain_event,
+                    id_register_event_body,
+                )?
             }
             on_chain_event::Body::SignerEventBody(signer_event_body) => {
-                let signer_key = make_signer_onchain_event_by_signer_key(
-                    onchain_event.fid as u32,
-                    signer_event_body.key.clone(),
-                );
-                match get_event_by_secondary_key(db, signer_key.clone())? {
-                    Some(existing_event) => {
-                        if existing_event.block_number > onchain_event.block_number {
-                            return Ok(());
-                        }
-                        let existing_event_body = signer_body(onchain_event.clone())
-                            .ok_or(OnchainEventStorageError::UnexpectedEventType)?;
-                        if existing_event_body.event_type() == SignerEventType::Remove
-                            && signer_event_body.event_type() == SignerEventType::Add
-                        {
-                            return Ok(());
-                        }
-                    }
-                    None => {}
-                };
-
-                if signer_event_body.event_type() == SignerEventType::AdminReset {
-                    // TODO(aditi): Handle multiple pages
-                    let events = get_onchain_events(
-                        db,
-                        &PageOptions {
-                            page_size: None,
-                            page_token: None,
-                            reverse: false,
-                        },
-                        OnChainEventType::EventTypeSigner,
-                        onchain_event.fid as u32,
-                    )?
-                    .onchain_events;
-                    let onchain_event =
-                        events
-                            .into_iter()
-                            .find(|event| match signer_body(event.clone()) {
-                                None => false,
-                                Some(body) => {
-                                    // TODO(aditi): Not sure if == works for vec
-                                    if body.event_type() == SignerEventType::Add
-                                        && body.key == signer_event_body.key
-                                    {
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                }
-                            });
-                    if let Some(onchain_event) = onchain_event {
-                        txn.put(
-                            signer_key.clone(),
-                            make_onchain_event_primary_key(&onchain_event),
-                        );
-                    }
-                    return Ok(());
-                }
-
-                txn.put(signer_key, make_onchain_event_primary_key(onchain_event));
+                build_secondary_indices_for_signer(db, txn, onchain_event, signer_event_body)?
             }
             on_chain_event::Body::SignerMigratedEventBody(_)
             | on_chain_event::Body::StorageRentEventBody(_) => {}
