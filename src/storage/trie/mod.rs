@@ -1,6 +1,6 @@
 pub mod errors;
 pub mod merkle_trie;
-pub mod trie_node;
+pub(crate) mod trie_node;
 
 #[cfg(test)]
 mod trie_node_tests;

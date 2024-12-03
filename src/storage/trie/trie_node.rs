@@ -539,6 +539,7 @@ impl TrieNode {
         txn.delete(key);
     }
 
+    #[allow(dead_code)] // TODO
     pub fn unload_children(&mut self) {
         let mut serialized_children = HashMap::new();
         for (char, child) in self.children.iter_mut() {
