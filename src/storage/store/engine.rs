@@ -259,7 +259,8 @@ impl ShardEngine {
         let result = self.prepare_proposal(&mut txn, shard, load_count).unwrap(); //TODO: don't unwrap()
 
         // TODO: this should probably operate automatically via drop trait
-        self.stores.trie.reload(&self.db).unwrap();
+        // self.stores.trie.reload(&self.db).unwrap();
+        self.stores.trie = self.stores.prev_trie.clone();
 
         self.count("propose.invoked", 1);
         result
@@ -620,7 +621,8 @@ impl ShardEngine {
             result = false;
         }
 
-        self.stores.trie.reload(&self.db).unwrap();
+        // self.stores.trie.reload(&self.db).unwrap();
+        self.stores.trie = self.stores.prev_trie.clone();
 
         if result {
             self.count("validate.true", 1);
@@ -640,12 +642,13 @@ impl ShardEngine {
         txn: RocksDbTransactionBatch,
     ) {
         self.db.commit(txn).unwrap();
+        self.stores.trie.reload(&self.db).unwrap();
+        self.stores.prev_trie = self.stores.trie.clone();
+
         for event in events {
             // An error here just means there are no active receivers, which is fine and will happen if there are no active subscribe rpcs
             let _ = self.senders.events_tx.send(event);
         }
-        self.stores.trie.reload(&self.db).unwrap();
-
         _ = self.emit_commit_metrics(&shard_chunk);
 
         match self.stores.shard_store.put_shard_chunk(shard_chunk) {

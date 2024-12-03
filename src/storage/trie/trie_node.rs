@@ -9,7 +9,7 @@ use crate::proto::sync_trie::DbTrieNode;
 use prost::Message as _;
 use std::collections::HashMap;
 
-pub const TIMESTAMP_LENGTH: usize = 10;
+pub const TIMESTAMP_LENGTH: usize = 1;
 
 // This value is mirrored in [rpc/server.ts], make sure to change it in both places
 const MAX_VALUES_RETURNED_PER_CALL: usize = 1024;

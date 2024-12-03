@@ -42,6 +42,7 @@ pub struct Stores {
     pub onchain_event_store: OnchainEventStore,
     db: Arc<RocksDB>,
     pub(crate) trie: merkle_trie::MerkleTrie,
+    pub(crate) prev_trie: merkle_trie::MerkleTrie,
     pub store_limits: StoreLimits,
 }
 
@@ -147,6 +148,7 @@ impl Stores {
     pub fn new(db: Arc<RocksDB>, store_limits: StoreLimits) -> Stores {
         let mut trie = merkle_trie::MerkleTrie::new();
         trie.initialize(&db).unwrap();
+        let prev_trie = trie.clone();
 
         let event_handler = StoreEventHandler::new(None, None, None);
         let shard_store = ShardStore::new(db.clone());
@@ -158,6 +160,7 @@ impl Stores {
         let onchain_event_store = OnchainEventStore::new(db.clone(), event_handler.clone());
         Stores {
             trie,
+            prev_trie,
             shard_store,
             cast_store,
             link_store,
