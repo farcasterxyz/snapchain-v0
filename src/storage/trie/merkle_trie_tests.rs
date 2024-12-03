@@ -30,12 +30,7 @@ mod tests {
         trie.initialize(db).unwrap();
         let mut txn_batch = RocksDbTransactionBatch::new();
 
-        let result = trie.insert(
-            db,
-            &mut txn_batch,
-            vec![vec![1, 2, 3, 4, 5, 6, 7, 8, 9]],
-            nc(),
-        );
+        let result = trie.insert(db, &mut txn_batch, vec![vec![1, 2, 3, 4]], nc());
         assert!(result.is_err());
         if let Err(TrieError::KeyLengthTooShort) = result {
             //ok

@@ -40,6 +40,28 @@ impl TrieKey {
     }
 }
 
+fn expand_nibbles(input: Vec<u8>) -> Vec<u8> {
+    let mut result = Vec::with_capacity(input.len() * 2);
+    for byte in input {
+        let high_nibble = (byte >> 4) & 0x0F;
+        let low_nibble = byte & 0x0F;
+        result.push(high_nibble);
+        result.push(low_nibble);
+    }
+    result
+}
+
+fn combine_nibbles(input: Vec<u8>) -> Vec<u8> {
+    assert!(input.len() % 2 == 0, "Input length must be even");
+    let mut result = Vec::with_capacity(input.len() / 2);
+    for chunk in input.chunks(2) {
+        let high_nibble = chunk[0] << 4;
+        let low_nibble = chunk[1] & 0x0F;
+        result.push(high_nibble | low_nibble);
+    }
+    result
+}
+
 #[derive(Debug)]
 pub struct NodeMetadata {
     pub prefix: Vec<u8>,
@@ -119,9 +141,11 @@ impl MerkleTrie {
         &mut self,
         db: &RocksDB,
         txn_batch: &mut RocksDbTransactionBatch,
-        keys: Vec<Vec<u8>>,
+        keys_: Vec<Vec<u8>>,
         load_count: &mut u64,
     ) -> Result<Vec<bool>, TrieError> {
+        let keys: Vec<Vec<u8>> = keys_.into_iter().map(expand_nibbles).collect();
+
         if keys.is_empty() {
             return Ok(Vec::new());
         }
@@ -147,9 +171,11 @@ impl MerkleTrie {
         &mut self,
         db: &RocksDB,
         txn_batch: &mut RocksDbTransactionBatch,
-        keys: Vec<Vec<u8>>,
+        keys_: Vec<Vec<u8>>,
         load_count: &mut u64,
     ) -> Result<Vec<bool>, TrieError> {
+        let keys: Vec<Vec<u8>> = keys_.into_iter().map(expand_nibbles).collect();
+
         if keys.is_empty() {
             return Ok(Vec::new());
         }
@@ -174,11 +200,13 @@ impl MerkleTrie {
     pub fn exists(
         &mut self,
         db: &RocksDB,
-        key: &Vec<u8>,
+        key_: &Vec<u8>,
         load_count: &mut u64,
     ) -> Result<bool, TrieError> {
+        let key: Vec<u8> = expand_nibbles(key_.clone());
+
         if let Some(root) = self.root.as_mut() {
-            root.exists(db, key, 0, load_count)
+            root.exists(db, &key, 0, load_count)
         } else {
             Err(TrieError::TrieNotInitialized)
         }
@@ -223,9 +251,12 @@ impl MerkleTrie {
         txn_batch: &mut RocksDbTransactionBatch,
         prefix: &[u8],
     ) -> Vec<u8> {
-        self.get_node(db, txn_batch, prefix)
+        let expanded_prefix = expand_nibbles(prefix.to_vec());
+        let hash_result = self
+            .get_node(db, txn_batch, &expanded_prefix)
             .map(|node| node.hash())
-            .unwrap_or(vec![])
+            .unwrap_or(vec![]);
+        combine_nibbles(hash_result)
     }
 
     pub fn get_count(
@@ -255,7 +286,10 @@ impl MerkleTrie {
     ) -> Result<Vec<Vec<u8>>, TrieError> {
         if let Some(root) = self.root.as_mut() {
             if let Some(node) = root.get_node_from_trie(db, prefix, 0, load_count) {
-                node.get_all_values(db, prefix, load_count)
+                match node.get_all_values(db, prefix, load_count) {
+                    Ok(values) => Ok(values.into_iter().map(expand_nibbles).collect()),
+                    Err(e) => Err(e),
+                }
             } else {
                 Ok(Vec::new())
             }
