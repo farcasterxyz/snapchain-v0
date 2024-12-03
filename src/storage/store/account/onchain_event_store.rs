@@ -158,37 +158,45 @@ fn build_secondary_indices_for_signer(
     };
 
     if signer_event_body.event_type() == SignerEventType::AdminReset {
-        // TODO(aditi): Handle multiple pages
-        let events = get_onchain_events(
-            db,
-            &PageOptions {
-                page_size: None,
-                page_token: None,
-                reverse: false,
-            },
-            OnChainEventType::EventTypeSigner,
-            onchain_event.fid as u32,
-        )?
-        .onchain_events;
-        let onchain_event = events
-            .into_iter()
-            .find(|event| match signer_body(event.clone()) {
-                None => false,
-                Some(body) => {
-                    if body.event_type() == SignerEventType::Add
-                        && body.key == signer_event_body.key
-                    {
-                        true
-                    } else {
-                        false
+        let mut next_page_token = None;
+        loop {
+            let events_page = get_onchain_events(
+                db,
+                &PageOptions {
+                    page_size: None,
+                    page_token: next_page_token,
+                    reverse: false,
+                },
+                OnChainEventType::EventTypeSigner,
+                onchain_event.fid as u32,
+            )?;
+
+            let onchain_event = events_page.onchain_events.into_iter().find(|event| {
+                match signer_body(event.clone()) {
+                    None => false,
+                    Some(body) => {
+                        if body.event_type() == SignerEventType::Add
+                            && body.key == signer_event_body.key
+                        {
+                            true
+                        } else {
+                            false
+                        }
                     }
                 }
             });
-        if let Some(onchain_event) = onchain_event {
-            txn.put(
-                signer_key.clone(),
-                make_onchain_event_primary_key(&onchain_event),
-            );
+            if let Some(onchain_event) = onchain_event {
+                txn.put(
+                    signer_key.clone(),
+                    make_onchain_event_primary_key(&onchain_event),
+                );
+                break;
+            }
+
+            next_page_token = events_page.next_page_token;
+            if next_page_token.is_none() {
+                break;
+            }
         }
         return Ok(());
     }
