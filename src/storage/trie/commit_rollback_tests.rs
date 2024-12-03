@@ -2,7 +2,7 @@
 mod tests {
     use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
     use crate::storage::trie::errors::TrieError;
-    use crate::storage::trie::merkle_trie::MerkleTrie;
+    use crate::storage::trie::merkle_trie::{Context, MerkleTrie};
     use hex;
     use tempfile::TempDir;
 
@@ -21,6 +21,8 @@ mod tests {
 
     #[test]
     fn test_merkle_trie_basic_operations() -> Result<(), TrieError> {
+        let ctx = &Context::new();
+
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("a.db");
         let mut t = MerkleTrie::new();
@@ -31,6 +33,7 @@ mod tests {
 
         let mut txn_batch = RocksDbTransactionBatch::new();
         t.insert(
+            ctx,
             db,
             &mut txn_batch,
             vec![
@@ -47,21 +50,26 @@ mod tests {
         println!(
             "After commit: root_hash = {}, values = {:?}",
             hex::encode(t.root_hash()?),
-            t.get_all_values(db, &[])?
+            t.get_all_values(ctx, db, &[])?
         );
 
-        t.insert(db, &mut txn_batch, vec![vec![3, 0, 0, 0, 0, 0, 0, 0, 0, 0]])?;
+        t.insert(
+            ctx,
+            db,
+            &mut txn_batch,
+            vec![vec![3, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
+        )?;
         println!(
             "After insert: root_hash = {}, values = {:?}",
             hex::encode(t.root_hash()?),
-            t.get_all_values(db, &[])?
+            t.get_all_values(ctx, db, &[])?
         );
 
         t.reload(db)?;
         println!(
             "After reload: root_hash = {}, values = {:?}",
             hex::encode(t.root_hash()?),
-            t.get_all_values(db, &[])?
+            t.get_all_values(ctx, db, &[])?
         );
 
         Ok(())
@@ -69,6 +77,8 @@ mod tests {
 
     #[test]
     fn test_merkle_trie_with_large_data() -> Result<(), TrieError> {
+        let ctx = &Context::new();
+
         let dir = TempDir::new().unwrap();
         let hashes1 = generate_hashes(vec![1], 10_000);
 
@@ -81,7 +91,7 @@ mod tests {
             t1.initialize(db)?;
 
             let mut txn_batch = RocksDbTransactionBatch::new();
-            t1.insert(db, &mut txn_batch, hashes1.clone())?;
+            t1.insert(ctx, db, &mut txn_batch, hashes1.clone())?;
             let items = t1.items()?;
             println!(
                 "t1: items = {:?}, root_hash = {}",
@@ -99,7 +109,7 @@ mod tests {
             t2.initialize(db)?;
 
             let mut txn_batch = RocksDbTransactionBatch::new();
-            t2.insert(db, &mut txn_batch, hashes1)?;
+            t2.insert(ctx, db, &mut txn_batch, hashes1)?;
             let items = t2.items()?;
             println!(
                 "t2: items = {:?}, root_hash = {}",

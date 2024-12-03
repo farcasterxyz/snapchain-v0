@@ -8,11 +8,24 @@ use super::merkle_trie::TrieSnapshot;
 use crate::proto::sync_trie::DbTrieNode;
 use prost::Message as _;
 use std::collections::HashMap;
+use std::sync::atomic;
 
 pub const TIMESTAMP_LENGTH: usize = 10;
 
 // This value is mirrored in [rpc/server.ts], make sure to change it in both places
 const MAX_VALUES_RETURNED_PER_CALL: usize = 1024;
+
+pub struct Context {
+    db_read_count: atomic::AtomicU64,
+}
+
+impl Context {
+    pub fn new() -> Self {
+        Self {
+            db_read_count: atomic::AtomicU64::new(0),
+        }
+    }
+}
 
 /// Represents a node in a MerkleTrie. Automatically updates the hashes when items are added,
 /// and keeps track of the number of items in the subtree.
@@ -124,6 +137,7 @@ impl TrieNode {
 
     pub fn get_node_from_trie(
         &mut self,
+        ctx: &Context,
         db: &RocksDB,
         prefix: &[u8],
         current_index: usize,
@@ -137,8 +151,8 @@ impl TrieNode {
             return None;
         }
 
-        if let Ok(child) = self.get_or_load_child(db, &prefix[..current_index], char) {
-            child.get_node_from_trie(db, prefix, current_index + 1)
+        if let Ok(child) = self.get_or_load_child(ctx, db, &prefix[..current_index], char) {
+            child.get_node_from_trie(ctx, db, prefix, current_index + 1)
         } else {
             None
         }
@@ -155,6 +169,7 @@ impl TrieNode {
      */
     pub fn insert(
         &mut self,
+        ctx: &Context,
         db: &RocksDB,
         txn: &mut RocksDbTransactionBatch,
         mut keys: Vec<Vec<u8>>,
@@ -181,7 +196,7 @@ impl TrieNode {
                 self.key = Some(key);
                 self.items += 1;
 
-                self.update_hash(db, &prefix)?;
+                self.update_hash(ctx, db, &prefix)?;
                 self.put_to_txn(txn, &prefix);
 
                 inserted = true;
@@ -214,7 +229,7 @@ impl TrieNode {
             }
 
             //  If the key is different, and a value exists, then split the node
-            self.split_leaf_node(db, txn, current_index)?;
+            self.split_leaf_node(ctx, db, txn, current_index)?;
         } else {
             // If not a leaf, then we need to add all the keys
             remaining_keys = keys.into_iter().enumerate().collect::<Vec<_>>()
@@ -247,8 +262,8 @@ impl TrieNode {
             }
 
             // Recurse into a non-leaf node and instruct it to insert the value.
-            let child = self.get_or_load_child(db, &prefix, char)?;
-            let child_results = child.insert(db, txn, keys, current_index + 1)?;
+            let child = self.get_or_load_child(ctx, db, &prefix, char)?;
+            let child_results = child.insert(ctx, db, txn, keys, current_index + 1)?;
 
             for (i, result) in is.into_iter().zip(child_results) {
                 results[i] = result;
@@ -261,7 +276,7 @@ impl TrieNode {
         if successes > 0 {
             self.items += successes;
 
-            self.update_hash(db, &prefix)?;
+            self.update_hash(ctx, db, &prefix)?;
             self.put_to_txn(txn, &prefix);
         }
 
@@ -270,6 +285,7 @@ impl TrieNode {
 
     pub fn delete(
         &mut self,
+        ctx: &Context,
         db: &RocksDB,
         txn: &mut RocksDbTransactionBatch,
         keys: Vec<Vec<u8>>,
@@ -286,7 +302,7 @@ impl TrieNode {
                     self.items -= 1;
 
                     self.delete_to_txn(txn, &prefix);
-                    self.update_hash(db, &prefix)?;
+                    self.update_hash(ctx, db, &prefix)?;
 
                     results[i] = true;
                     break;
@@ -322,7 +338,7 @@ impl TrieNode {
                 continue;
             }
 
-            let child = self.get_or_load_child(db, &prefix, char)?;
+            let child = self.get_or_load_child(ctx, db, &prefix, char)?;
 
             // Split the child_keys into the "i"s and the keys
             let mut is = vec![];
@@ -332,7 +348,7 @@ impl TrieNode {
                 keys.push(key);
             }
 
-            let child_results = child.delete(db, txn, keys, current_index + 1)?;
+            let child_results = child.delete(ctx, db, txn, keys, current_index + 1)?;
             let child_items = child.items;
 
             // Delete the child if it's empty. This is required to make sure the hash will be the same
@@ -355,14 +371,14 @@ impl TrieNode {
             if self.items == 0 {
                 // Delete this node
                 self.delete_to_txn(txn, &prefix);
-                self.update_hash(db, &prefix)?;
+                self.update_hash(ctx, db, &prefix)?;
                 return Ok(results);
             }
 
             if self.items == 1 && self.children.len() == 1 && current_index >= TIMESTAMP_LENGTH {
                 // Compact the trie by removing the child and moving the key up
                 let char = *self.children.keys().next().unwrap();
-                let child = self.get_or_load_child(db, &prefix, char)?;
+                let child = self.get_or_load_child(ctx, db, &prefix, char)?;
 
                 if child.key.is_some() {
                     self.key = child.key.take();
@@ -374,7 +390,7 @@ impl TrieNode {
                 }
             }
 
-            self.update_hash(db, &prefix)?;
+            self.update_hash(ctx, db, &prefix)?;
             self.put_to_txn(txn, &prefix);
         }
 
@@ -383,6 +399,7 @@ impl TrieNode {
 
     pub fn exists(
         &mut self,
+        ctx: &Context,
         db: &RocksDB,
         key: &[u8],
         current_index: usize,
@@ -400,8 +417,8 @@ impl TrieNode {
             return Ok(false);
         }
 
-        let child = self.get_or_load_child(db, &key[..current_index], char)?;
-        child.exists(db, key, current_index + 1)
+        let child = self.get_or_load_child(ctx, db, &key[..current_index], char)?;
+        child.exists(ctx, db, key, current_index + 1)
     }
 
     /**
@@ -410,6 +427,7 @@ impl TrieNode {
      */
     pub fn split_leaf_node(
         &mut self,
+        ctx: &Context,
         db: &RocksDB,
         txn: &mut RocksDbTransactionBatch,
         current_index: usize,
@@ -423,10 +441,10 @@ impl TrieNode {
             .insert(new_child_char, TrieNodeType::Node(TrieNode::default()));
 
         if let Some(TrieNodeType::Node(new_child)) = self.children.get_mut(&new_child_char) {
-            new_child.insert(db, txn, vec![key], current_index + 1)?;
+            new_child.insert(ctx, db, txn, vec![key], current_index + 1)?;
         }
 
-        self.update_hash(db, &prefix)?;
+        self.update_hash(ctx, db, &prefix)?;
         self.put_to_txn(txn, &prefix);
 
         Ok(())
@@ -434,6 +452,7 @@ impl TrieNode {
 
     fn get_or_load_child(
         &mut self,
+        ctx: &Context,
         db: &RocksDB,
         prefix: &[u8],
         char: u8,
@@ -451,6 +470,8 @@ impl TrieNode {
                         .unwrap_or_default();
 
                     *entry.get_mut() = TrieNodeType::Node(child_node);
+
+                    ctx.db_read_count.fetch_add(1, atomic::Ordering::Relaxed);
                 }
                 match entry.into_mut() {
                     TrieNodeType::Node(node) => Ok(node),
@@ -464,7 +485,7 @@ impl TrieNode {
         }
     }
 
-    fn update_hash(&mut self, db: &RocksDB, prefix: &[u8]) -> Result<(), TrieError> {
+    fn update_hash(&mut self, ctx: &Context, db: &RocksDB, prefix: &[u8]) -> Result<(), TrieError> {
         if self.is_leaf() {
             self.hash = blake3_20(&self.key.as_ref().unwrap_or(&vec![]));
         } else {
@@ -492,7 +513,7 @@ impl TrieNode {
             let mut concat_hashes = vec![];
             for (char, hash) in child_hashes.iter() {
                 if hash.is_empty() {
-                    let child = self.get_or_load_child(db, prefix, *char)?;
+                    let child = self.get_or_load_child(ctx, db, prefix, *char)?;
                     concat_hashes.extend_from_slice(child.hash.as_slice());
                 } else {
                     concat_hashes.extend_from_slice(hash.as_slice());
@@ -505,6 +526,7 @@ impl TrieNode {
     }
     fn excluded_hash(
         &mut self,
+        ctx: &Context,
         db: &RocksDB,
         prefix: &[u8],
         prefix_char: u8,
@@ -517,7 +539,7 @@ impl TrieNode {
 
         for char in sorted_children {
             if char != prefix_char {
-                let child_node = self.get_or_load_child(db, prefix, char)?;
+                let child_node = self.get_or_load_child(ctx, db, prefix, char)?;
                 child_hashes.push(child_node.hash.clone());
                 excluded_items += child_node.items;
             }
@@ -555,6 +577,7 @@ impl TrieNode {
 
     pub fn get_all_values(
         &mut self,
+        ctx: &Context,
         db: &RocksDB,
         prefix: &[u8],
     ) -> Result<Vec<Vec<u8>>, TrieError> {
@@ -567,11 +590,11 @@ impl TrieNode {
         sorted_children.sort();
 
         for char in sorted_children {
-            let child_node = self.get_or_load_child(db, prefix, char)?;
+            let child_node = self.get_or_load_child(ctx, db, prefix, char)?;
 
             let mut child_prefix = prefix.to_vec();
             child_prefix.push(char);
-            values.extend(child_node.get_all_values(db, &child_prefix)?);
+            values.extend(child_node.get_all_values(ctx, db, &child_prefix)?);
 
             if values.len() > MAX_VALUES_RETURNED_PER_CALL {
                 break;
@@ -583,6 +606,7 @@ impl TrieNode {
 
     pub fn get_snapshot(
         &mut self,
+        ctx: &Context,
         db: &RocksDB,
         prefix: &[u8],
         current_index: usize,
@@ -595,7 +619,7 @@ impl TrieNode {
             let current_prefix = prefix[0..i].to_vec();
 
             let (excluded_items, excluded_hash) =
-                current_node.excluded_hash(db, &current_prefix, *char)?;
+                current_node.excluded_hash(ctx, db, &current_prefix, *char)?;
 
             excluded_hashes.push(excluded_hash);
             num_messages += excluded_items;
@@ -608,7 +632,7 @@ impl TrieNode {
                 });
             }
 
-            current_node = current_node.get_or_load_child(db, &current_prefix, *char)?;
+            current_node = current_node.get_or_load_child(ctx, db, &current_prefix, *char)?;
         }
 
         excluded_hashes.push(hex::encode(current_node.hash.as_slice()));

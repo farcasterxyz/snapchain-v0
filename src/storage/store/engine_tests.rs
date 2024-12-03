@@ -9,6 +9,7 @@ mod tests {
     use crate::storage::db::RocksDbTransactionBatch;
     use crate::storage::store::engine::{MempoolMessage, ShardEngine, ShardStateChange};
     use crate::storage::store::stores::{Limits, StoreLimits};
+    use crate::storage::trie::merkle_trie;
     use crate::storage::trie::merkle_trie::TrieKey;
     use crate::utils::factory::{self, events_factory, messages_factory};
     use crate::utils::statsd_wrapper::StatsdClientWrapper;
@@ -21,6 +22,10 @@ mod tests {
 
     const FID_FOR_TEST: u32 = 1234;
     const FID2_FOR_TEST: u32 = 1235;
+
+    fn trie_ctx() -> &'static mut merkle_trie::Context {
+        Box::leak(Box::new(merkle_trie::Context::new()))
+    }
 
     fn new_engine() -> (ShardEngine, tempfile::TempDir) {
         let statsd_client = StatsdClientWrapper::new(
@@ -234,7 +239,7 @@ mod tests {
                 state_change.new_state_root,
                 chunk.header.as_ref().unwrap().shard_root
             );
-            assert!(engine.trie_key_exists(&TrieKey::for_message(msg)));
+            assert!(engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(msg)));
         }
         chunk
     }
@@ -366,7 +371,10 @@ mod tests {
         assert_eq!(initial_events_count, events.events.len());
 
         // And it's not inserted into the trie
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&msg1)), false);
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&msg1)),
+            false
+        );
 
         let valid = engine.validate_state_change(&state_change);
         assert!(valid);
@@ -393,7 +401,10 @@ mod tests {
         assert_merge_event(&generated_event, &msg1);
 
         // The message exists in the trie
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&msg1)), true);
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&msg1)),
+            true
+        );
     }
 
     #[tokio::test]
@@ -412,7 +423,10 @@ mod tests {
         assert_eq!(1, messages.len());
         let decoded = message::Message::decode(&*messages[0]).unwrap();
         assert_eq!(to_hex(&cast.hash), to_hex(&decoded.hash));
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast)), true);
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast)),
+            true
+        );
 
         // Delete the cast
         let delete_cast = messages_factory::casts::create_cast_remove(
@@ -430,9 +444,12 @@ mod tests {
         assert_eq!(0, messages.len());
 
         // The cast is not present in the trie, but the remove message is
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast)), false);
         assert_eq!(
-            engine.trie_key_exists(&TrieKey::for_message(&delete_cast)),
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast)),
+            false
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&delete_cast)),
             true
         );
     }
@@ -901,11 +918,26 @@ mod tests {
         assert_prune_event(&event_rx.try_recv().unwrap(), &cast1);
 
         // Prunes are reflected in the trie
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast1)), false);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast2)), true);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast3)), true);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast4)), true);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast5)), true);
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast1)),
+            false
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast2)),
+            true
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast3)),
+            true
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast4)),
+            true
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast5)),
+            true
+        );
     }
 
     #[ignore]
@@ -1012,12 +1044,30 @@ mod tests {
         );
 
         // Prunes are reflected in the trie
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast1)), false);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast2)), false);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast3)), true);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast4)), true);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast5)), true);
-        assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast6)), true);
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast1)),
+            false
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast2)),
+            false
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast3)),
+            true
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast4)),
+            true
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast5)),
+            true
+        );
+        assert_eq!(
+            engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast6)),
+            true
+        );
     }
 
     #[ignore]
