@@ -142,7 +142,6 @@ impl Proposer for ShardProposer {
                 new_state_root: chunk.header.clone().unwrap().shard_root.clone(),
                 transactions: chunk.transactions.clone(),
             };
-
             return if self.engine.validate_state_change(&state) {
                 Validity::Valid
             } else {
