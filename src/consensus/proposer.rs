@@ -99,7 +99,10 @@ impl Proposer for ShardProposer {
             None => vec![0, 32],
         };
 
-        let state_change = self.engine.propose_state_change(self.shard_id.shard_id());
+        let mut count: u64 = 0;
+        let state_change = self
+            .engine
+            .propose_state_change(self.shard_id.shard_id(), &mut count);
         let shard_header = ShardHeader {
             parent_hash,
             timestamp: current_time(),
@@ -142,7 +145,8 @@ impl Proposer for ShardProposer {
                 new_state_root: chunk.header.clone().unwrap().shard_root.clone(),
                 transactions: chunk.transactions.clone(),
             };
-            return if self.engine.validate_state_change(&state) {
+            let mut count: u64 = 0;
+            return if self.engine.validate_state_change(&state, &mut count) {
                 Validity::Valid
             } else {
                 error!("Invalid state change for shard: {:?}", state.shard_id);
@@ -155,10 +159,12 @@ impl Proposer for ShardProposer {
 
     async fn decide(&mut self, _height: Height, _round: Round, value: ShardHash) {
         if let Some(proposal) = self.proposed_chunks.get(&value) {
+            let mut count: u64 = 0;
             self.publish_new_shard_chunk(proposal.shard_chunk().unwrap())
                 .await;
             self.engine
-                .commit_shard_chunk(proposal.shard_chunk().unwrap());
+                .commit_shard_chunk(proposal.shard_chunk().unwrap(), &mut count);
+            println!("commit load_count = {}", count);
             self.proposed_chunks.remove(&value);
         }
     }
@@ -184,8 +190,9 @@ impl Proposer for ShardProposer {
                     stop_block_number: None,
                 });
                 let missing_shard_chunks = rpc_client.get_shard_chunks(request).await?;
+                let mut count: u64 = 0;
                 for shard_chunk in missing_shard_chunks.get_ref().shard_chunks.clone() {
-                    self.engine.commit_shard_chunk(&shard_chunk);
+                    self.engine.commit_shard_chunk(&shard_chunk, &mut count);
                 }
             }
         }

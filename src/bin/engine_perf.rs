@@ -100,11 +100,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             ))
             .await
             .unwrap();
-        let state_change = engine.propose_state_change(1);
+        let mut count: u64 = 0;
+        let state_change = engine.propose_state_change(1, &mut count);
         let chunk = state_change_to_shard_chunk(1, 1, &state_change);
 
-        engine.commit_shard_chunk(&chunk);
+        engine.commit_shard_chunk(&chunk, &mut count);
     }
+
+    let mut commit_count: u64 = 0;
 
     loop {
         for _ in 0..100 {
@@ -118,15 +121,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
             i += 1;
         }
 
-        let state_change = engine.propose_state_change(1);
+        let mut count: u64 = 0;
+        let state_change = engine.propose_state_change(1, &mut count);
 
-        let valid = engine.validate_state_change(&state_change);
+        let valid = engine.validate_state_change(&state_change, &mut count);
         assert!(valid);
 
         // TODO: need block height below
         let chunk = state_change_to_shard_chunk(1, 1, &state_change);
-        engine.commit_shard_chunk(&chunk);
+        commit_count = 0;
+        engine.commit_shard_chunk(&chunk, &mut commit_count);
 
-        println!("{i} {}", engine.trie_num_items())
+        println!("{} {}", engine.trie_num_items(), commit_count);
     }
 }

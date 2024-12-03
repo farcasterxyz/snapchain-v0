@@ -171,6 +171,7 @@ impl ShardEngine {
         &mut self,
         txn_batch: &mut RocksDbTransactionBatch,
         shard_id: u32,
+        load_count: &mut u64,
     ) -> Result<ShardStateChange, EngineError> {
         let mut messages = Vec::new();
 
@@ -186,7 +187,8 @@ impl ShardEngine {
 
         let mut snapchain_txns = self.create_transactions_from_mempool(messages)?;
         for snapchain_txn in &mut snapchain_txns {
-            let (account_root, _events) = self.replay_snapchain_txn(&snapchain_txn, txn_batch)?;
+            let (account_root, _events) =
+                self.replay_snapchain_txn(&snapchain_txn, txn_batch, load_count)?;
             snapchain_txn.account_root = account_root;
         }
 
@@ -252,9 +254,9 @@ impl ShardEngine {
         Ok(transactions)
     }
 
-    pub fn propose_state_change(&mut self, shard: u32) -> ShardStateChange {
+    pub fn propose_state_change(&mut self, shard: u32, load_count: &mut u64) -> ShardStateChange {
         let mut txn = RocksDbTransactionBatch::new();
-        let result = self.prepare_proposal(&mut txn, shard).unwrap(); //TODO: don't unwrap()
+        let result = self.prepare_proposal(&mut txn, shard, load_count).unwrap(); //TODO: don't unwrap()
 
         // TODO: this should probably operate automatically via drop trait
         self.stores.trie.reload(&self.db).unwrap();
@@ -268,10 +270,12 @@ impl ShardEngine {
         txn_batch: &mut RocksDbTransactionBatch,
         transactions: &[Transaction],
         shard_root: &[u8],
+        load_count: &mut u64,
     ) -> Result<Vec<HubEvent>, EngineError> {
         let mut events = vec![];
         for snapchain_txn in transactions {
-            let (account_root, txn_events) = self.replay_snapchain_txn(snapchain_txn, txn_batch)?;
+            let (account_root, txn_events) =
+                self.replay_snapchain_txn(snapchain_txn, txn_batch, load_count)?;
             // Reject early if account roots fail to match (shard roots will definitely fail)
             if &account_root != &snapchain_txn.account_root {
                 warn!(
@@ -304,6 +308,7 @@ impl ShardEngine {
         &mut self,
         snapchain_txn: &Transaction,
         txn_batch: &mut RocksDbTransactionBatch,
+        load_count: &mut u64,
     ) -> Result<(Vec<u8>, Vec<HubEvent>), EngineError> {
         let total_user_messages = snapchain_txn.user_messages.len();
         let total_system_messages = snapchain_txn.system_messages.len();
@@ -328,7 +333,7 @@ impl ShardEngine {
                 match event {
                     Ok(hub_event) => {
                         onchain_events_count += 1;
-                        self.update_trie(&hub_event, txn_batch)?;
+                        self.update_trie(&hub_event, txn_batch, load_count)?;
                         events.push(hub_event.clone());
                         system_messages_count += 1;
                         match &onchain_event.body {
@@ -359,7 +364,7 @@ impl ShardEngine {
                 Ok(revoke_events) => {
                     for event in revoke_events {
                         revoked_messages_count += 1;
-                        self.update_trie(&event, txn_batch)?;
+                        self.update_trie(&event, txn_batch, load_count)?;
                         events.push(event.clone());
                     }
                 }
@@ -380,7 +385,7 @@ impl ShardEngine {
             match result {
                 Ok(event) => {
                     merged_messages_count += 1;
-                    self.update_trie(&event, txn_batch)?;
+                    self.update_trie(&event, txn_batch, load_count)?;
                     events.push(event.clone());
                     user_messages_count += 1;
                     message_types.insert(msg.msg_type());
@@ -403,7 +408,7 @@ impl ShardEngine {
                 Ok(pruned_events) => {
                     for event in pruned_events {
                         pruned_messages_count += 1;
-                        self.update_trie(&event, txn_batch)?;
+                        self.update_trie(&event, txn_batch, load_count)?;
                         events.push(event.clone());
                     }
                 }
@@ -539,6 +544,7 @@ impl ShardEngine {
         &mut self,
         event: &hub_event::HubEvent,
         txn_batch: &mut RocksDbTransactionBatch,
+        load_count: &mut u64,
     ) -> Result<(), EngineError> {
         match &event.body {
             Some(hub_event::hub_event::Body::MergeMessageBody(merge)) => {
@@ -547,6 +553,7 @@ impl ShardEngine {
                         &self.db,
                         txn_batch,
                         vec![TrieKey::for_message(&msg)],
+                        load_count,
                     )?;
                 }
                 for deleted_message in &merge.deleted_messages {
@@ -554,6 +561,7 @@ impl ShardEngine {
                         &self.db,
                         txn_batch,
                         vec![TrieKey::for_message(&deleted_message)],
+                        load_count,
                     )?;
                 }
             }
@@ -563,6 +571,7 @@ impl ShardEngine {
                         &self.db,
                         txn_batch,
                         vec![TrieKey::for_onchain_event(&onchain_event)],
+                        load_count,
                     )?;
                 }
             }
@@ -572,6 +581,7 @@ impl ShardEngine {
                         &self.db,
                         txn_batch,
                         vec![TrieKey::for_message(&msg)],
+                        load_count,
                     )?;
                 }
             }
@@ -581,6 +591,7 @@ impl ShardEngine {
                         &self.db,
                         txn_batch,
                         vec![TrieKey::for_message(&msg)],
+                        load_count,
                     )?;
                 }
             }
@@ -592,7 +603,11 @@ impl ShardEngine {
         Ok(())
     }
 
-    pub fn validate_state_change(&mut self, shard_state_change: &ShardStateChange) -> bool {
+    pub fn validate_state_change(
+        &mut self,
+        shard_state_change: &ShardStateChange,
+        load_count: &mut u64,
+    ) -> bool {
         let mut txn = RocksDbTransactionBatch::new();
 
         let transactions = &shard_state_change.transactions;
@@ -600,7 +615,7 @@ impl ShardEngine {
 
         let mut result = true;
 
-        if let Err(err) = self.replay_proposal(&mut txn, transactions, shard_root) {
+        if let Err(err) = self.replay_proposal(&mut txn, transactions, shard_root, load_count) {
             error!("State change validation failed: {}", err);
             result = false;
         }
@@ -670,13 +685,13 @@ impl ShardEngine {
         self.stores.trie.items().unwrap()
     }
 
-    pub fn commit_shard_chunk(&mut self, shard_chunk: &ShardChunk) {
+    pub fn commit_shard_chunk(&mut self, shard_chunk: &ShardChunk, load_count: &mut u64) {
         let mut txn = RocksDbTransactionBatch::new();
 
         let shard_root = &shard_chunk.header.as_ref().unwrap().shard_root;
         let transactions = &shard_chunk.transactions;
 
-        match self.replay_proposal(&mut txn, transactions, shard_root) {
+        match self.replay_proposal(&mut txn, transactions, shard_root, load_count) {
             Err(err) => {
                 error!("State change commit failed: {}", err);
                 panic!("State change commit failed: {}", err);
@@ -688,10 +703,10 @@ impl ShardEngine {
     }
 
     #[cfg(test)]
-    pub(crate) fn trie_key_exists(&mut self, sync_id: &Vec<u8>) -> bool {
+    pub(crate) fn trie_key_exists(&mut self, sync_id: &Vec<u8>, load_count: &mut u64) -> bool {
         self.stores
             .trie
-            .exists(&self.db, sync_id.as_ref())
+            .exists(&self.db, sync_id.as_ref(), load_count)
             .unwrap_or_else(|err| {
                 error!("Error checking if sync id exists: {:?}", err);
                 false
