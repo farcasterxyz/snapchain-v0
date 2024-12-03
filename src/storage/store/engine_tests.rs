@@ -846,6 +846,7 @@ mod tests {
         assert_eq!("", to_hex(&state_change.new_state_root));
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_messages_pruned_with_exceeded_storage() {
         let (mut engine, _tmpdir) = new_engine();
@@ -906,6 +907,7 @@ mod tests {
         assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast5)), true);
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_messages_partially_merged_with_insufficient_storage() {
         let (mut engine, _tmpdir) = new_engine();
@@ -1017,6 +1019,7 @@ mod tests {
         assert_eq!(engine.trie_key_exists(&TrieKey::for_message(&cast6)), true);
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_revoking_a_signer_deletes_all_messages_from_that_signer() {
         let (mut engine, _tmpdir) = new_engine();

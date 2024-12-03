@@ -512,6 +512,10 @@ impl ShardEngine {
             .stores
             .get_usage(fid, msg_type, txn_batch)
             .map_err(|_| EngineError::UsageCountError)?;
+        println!(
+            "Prune messages counts. Current count: {}, Max count: {}",
+            current_count, max_count
+        );
 
         let events = match msg_type {
             MessageType::CastAdd | MessageType::CastRemove => self
