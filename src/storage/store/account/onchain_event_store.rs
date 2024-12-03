@@ -132,7 +132,6 @@ pub fn build_secondary_indices(
                 txn.put(id_register_by_fid_key, primary_key);
             }
             on_chain_event::Body::SignerEventBody(signer_event_body) => {
-                println!("Build secondary indices for signer");
                 let signer_key = make_signer_onchain_event_by_signer_key(
                     onchain_event.fid as u32,
                     signer_event_body.key.clone(),
@@ -191,7 +190,6 @@ pub fn build_secondary_indices(
                     return Ok(());
                 }
 
-                println!("Put signer key {:#?}", hex::encode(signer_key.clone()));
                 txn.put(signer_key, make_onchain_event_primary_key(onchain_event));
             }
             on_chain_event::Body::SignerMigratedEventBody(_)
@@ -402,7 +400,6 @@ impl OnchainEventStore {
         signer: Vec<u8>,
     ) -> Result<Option<OnChainEvent>, OnchainEventStorageError> {
         let signer_key = make_signer_onchain_event_by_signer_key(fid, signer);
-        println!("Get signer {:#?}", hex::encode(signer_key.clone()));
         get_event_by_secondary_key(&self.db, signer_key)
     }
 
