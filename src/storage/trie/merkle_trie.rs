@@ -40,7 +40,7 @@ impl TrieKey {
     }
 }
 
-fn expand_nibbles(input: Vec<u8>) -> Vec<u8> {
+fn expand_nibbles_(input: Vec<u8>) -> Vec<u8> {
     let mut result = Vec::with_capacity(input.len() * 2);
     for byte in input {
         let high_nibble = (byte >> 4) & 0x0F;
@@ -51,13 +51,41 @@ fn expand_nibbles(input: Vec<u8>) -> Vec<u8> {
     result
 }
 
-fn combine_nibbles(input: Vec<u8>) -> Vec<u8> {
+fn combine_nibbles_(input: Vec<u8>) -> Vec<u8> {
     assert!(input.len() % 2 == 0, "Input length must be even");
     let mut result = Vec::with_capacity(input.len() / 2);
     for chunk in input.chunks(2) {
         let high_nibble = chunk[0] << 4;
         let low_nibble = chunk[1] & 0x0F;
         result.push(high_nibble | low_nibble);
+    }
+    result
+}
+
+fn expand_quibbles(input: Vec<u8>) -> Vec<u8> {
+    let mut result = Vec::with_capacity(input.len() * 4);
+    for byte in input {
+        let q1 = (byte >> 6) & 0x03; // Top 2 bits
+        let q2 = (byte >> 4) & 0x03; // Next 2 bits
+        let q3 = (byte >> 2) & 0x03; // Next 2 bits
+        let q4 = byte & 0x03; // Bottom 2 bits
+        result.push(q1);
+        result.push(q2);
+        result.push(q3);
+        result.push(q4);
+    }
+    result
+}
+
+fn combine_quibbles(input: Vec<u8>) -> Vec<u8> {
+    assert!(input.len() % 4 == 0, "Input length must be a multiple of 4");
+    let mut result = Vec::with_capacity(input.len() / 4);
+    for chunk in input.chunks(4) {
+        let q1 = (chunk[0] & 0x03) << 6; // Top 2 bits
+        let q2 = (chunk[1] & 0x03) << 4; // Next 2 bits
+        let q3 = (chunk[2] & 0x03) << 2; // Next 2 bits
+        let q4 = chunk[3] & 0x03; // Bottom 2 bits
+        result.push(q1 | q2 | q3 | q4);
     }
     result
 }
@@ -144,7 +172,7 @@ impl MerkleTrie {
         keys_: Vec<Vec<u8>>,
         load_count: &mut u64,
     ) -> Result<Vec<bool>, TrieError> {
-        let keys: Vec<Vec<u8>> = keys_.into_iter().map(expand_nibbles).collect();
+        let keys: Vec<Vec<u8>> = keys_.into_iter().map(expand_quibbles).collect();
 
         if keys.is_empty() {
             return Ok(Vec::new());
@@ -174,7 +202,7 @@ impl MerkleTrie {
         keys_: Vec<Vec<u8>>,
         load_count: &mut u64,
     ) -> Result<Vec<bool>, TrieError> {
-        let keys: Vec<Vec<u8>> = keys_.into_iter().map(expand_nibbles).collect();
+        let keys: Vec<Vec<u8>> = keys_.into_iter().map(expand_quibbles).collect();
 
         if keys.is_empty() {
             return Ok(Vec::new());
@@ -203,7 +231,7 @@ impl MerkleTrie {
         key_: &Vec<u8>,
         load_count: &mut u64,
     ) -> Result<bool, TrieError> {
-        let key: Vec<u8> = expand_nibbles(key_.clone());
+        let key: Vec<u8> = expand_quibbles(key_.clone());
 
         if let Some(root) = self.root.as_mut() {
             root.exists(db, &key, 0, load_count)
@@ -251,12 +279,12 @@ impl MerkleTrie {
         txn_batch: &mut RocksDbTransactionBatch,
         prefix: &[u8],
     ) -> Vec<u8> {
-        let expanded_prefix = expand_nibbles(prefix.to_vec());
+        let expanded_prefix = expand_quibbles(prefix.to_vec());
         let hash_result = self
             .get_node(db, txn_batch, &expanded_prefix)
             .map(|node| node.hash())
             .unwrap_or(vec![]);
-        combine_nibbles(hash_result)
+        combine_quibbles(hash_result)
     }
 
     pub fn get_count(
@@ -287,7 +315,7 @@ impl MerkleTrie {
         if let Some(root) = self.root.as_mut() {
             if let Some(node) = root.get_node_from_trie(db, prefix, 0, load_count) {
                 match node.get_all_values(db, prefix, load_count) {
-                    Ok(values) => Ok(values.into_iter().map(expand_nibbles).collect()),
+                    Ok(values) => Ok(values.into_iter().map(expand_quibbles).collect()),
                     Err(e) => Err(e),
                 }
             } else {
