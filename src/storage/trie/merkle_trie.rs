@@ -23,7 +23,9 @@ impl TrieKey {
     pub fn for_message_type(fid: u32, msg_type: u8) -> Vec<u8> {
         let mut key = Vec::new();
         key.extend_from_slice(&Self::for_fid(fid));
-        key.push(msg_type);
+        // Left shift msg_ype by 3 bits so we don't collide with onchain event types.
+        // Supports 8 onchain event types and 32 message types
+        key.push(msg_type << 3);
         key
     }
 
@@ -362,7 +364,6 @@ mod tests {
         }
 
         let key1: Vec<_> = "0000482712".bytes().collect();
-        println!("{:?}", key1);
         trie.insert(ctx, db, &mut txn_batch, vec![key1.clone()])
             .unwrap();
 
