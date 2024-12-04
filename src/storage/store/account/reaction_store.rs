@@ -4,18 +4,18 @@ use super::{
     store::{Store, StoreDef},
     MessagesPage, StoreEventHandler, PAGE_SIZE_MAX, TS_HASH_LENGTH,
 };
-use crate::{core::error::HubError, proto::msg::SignatureScheme};
-use crate::{proto::msg::message_data::Body, storage::db::PageOptions};
+use crate::{core::error::HubError, proto::SignatureScheme};
+use crate::{proto::message_data::Body, storage::db::PageOptions};
 use crate::{
-    proto::msg::MessageData,
+    proto::MessageData,
     storage::constants::{RootPrefix, UserPostfix},
 };
 use crate::{
-    proto::msg::{reaction_body::Target, ReactionBody, ReactionType},
+    proto::{reaction_body::Target, ReactionBody, ReactionType},
     storage::util::increment_vec_u8,
 };
 use crate::{
-    proto::msg::{Message, MessageType},
+    proto::{Message, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
 use std::{borrow::Borrow, convert::TryInto, sync::Arc};

@@ -8,20 +8,19 @@ use super::{
     MessagesPage, StoreEventHandler,
 };
 
-use crate::proto::msg::{self as message};
+use crate::proto::{self};
 use crate::{
     core::error::HubError,
     proto::{
-        hub_event::{self, HubEvent, HubEventType, MergeUserNameProofBody},
-        msg::{SignatureScheme, UserDataBody},
-        username_proof::UserNameProof,
+        UserNameProof, {HubEvent, HubEventType, MergeUserNameProofBody},
+        {SignatureScheme, UserDataBody},
     },
     storage::util::bytes_compare,
 };
-use crate::{proto::msg::message_data::Body, storage::db::PageOptions};
-use crate::{proto::msg::MessageData, storage::constants::UserPostfix};
+use crate::{proto::message_data::Body, storage::db::PageOptions};
+use crate::{proto::MessageData, storage::constants::UserPostfix};
 use crate::{
-    proto::msg::MessageType,
+    proto::MessageType,
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
 use std::sync::Arc;
@@ -44,14 +43,14 @@ impl StoreDef for UserDataStoreDef {
         MessageType::None as u8
     }
 
-    fn is_add_type(&self, message: &message::Message) -> bool {
+    fn is_add_type(&self, message: &proto::Message) -> bool {
         message.signature_scheme == SignatureScheme::Ed25519 as i32
             && message.data.is_some()
             && message.data.as_ref().unwrap().r#type == MessageType::UserDataAdd as i32
             && message.data.as_ref().unwrap().body.is_some()
     }
 
-    fn is_remove_type(&self, _message: &message::Message) -> bool {
+    fn is_remove_type(&self, _message: &proto::Message) -> bool {
         false
     }
 
@@ -59,14 +58,14 @@ impl StoreDef for UserDataStoreDef {
         MessageType::None as u8
     }
 
-    fn is_compact_state_type(&self, _message: &message::Message) -> bool {
+    fn is_compact_state_type(&self, _message: &proto::Message) -> bool {
         false
     }
 
     fn find_merge_add_conflicts(
         &self,
         _db: &RocksDB,
-        _message: &message::Message,
+        _message: &proto::Message,
     ) -> Result<(), HubError> {
         // No conflicts
         Ok(())
@@ -75,7 +74,7 @@ impl StoreDef for UserDataStoreDef {
     fn find_merge_remove_conflicts(
         &self,
         _db: &RocksDB,
-        _message: &message::Message,
+        _message: &proto::Message,
     ) -> Result<(), HubError> {
         Err(HubError {
             code: "bad_request.invalid_param".to_string(),
@@ -83,7 +82,7 @@ impl StoreDef for UserDataStoreDef {
         })
     }
 
-    fn make_add_key(&self, message: &message::Message) -> Result<Vec<u8>, HubError> {
+    fn make_add_key(&self, message: &proto::Message) -> Result<Vec<u8>, HubError> {
         let user_data_body = match message.data.as_ref().unwrap().body.as_ref().unwrap() {
             Body::UserDataBody(body) => body,
             _ => {
@@ -101,14 +100,14 @@ impl StoreDef for UserDataStoreDef {
         Ok(key)
     }
 
-    fn make_remove_key(&self, _message: &message::Message) -> Result<Vec<u8>, HubError> {
+    fn make_remove_key(&self, _message: &proto::Message) -> Result<Vec<u8>, HubError> {
         Err(HubError {
             code: "bad_request.invalid_param".to_string(),
             message: "removes not supported".to_string(),
         })
     }
 
-    fn make_compact_state_add_key(&self, _message: &message::Message) -> Result<Vec<u8>, HubError> {
+    fn make_compact_state_add_key(&self, _message: &proto::Message) -> Result<Vec<u8>, HubError> {
         Err(HubError {
             code: "bad_request.invalid_param".to_string(),
             message: "UserDataStore doesn't support compact state".to_string(),
@@ -167,8 +166,8 @@ impl UserDataStore {
         store: &Store<UserDataStoreDef>,
         fid: u32,
         r#type: i32,
-    ) -> Result<Option<message::Message>, HubError> {
-        let partial_message = message::Message {
+    ) -> Result<Option<proto::Message>, HubError> {
+        let partial_message = proto::Message {
             data: Some(MessageData {
                 fid: fid as u64,
                 r#type: MessageType::UserDataAdd as i32,
@@ -194,7 +193,7 @@ impl UserDataStore {
         store.get_adds_by_fid(
             fid,
             page_options,
-            Some(|message: &message::Message| {
+            Some(|message: &proto::Message| {
                 return is_message_in_time_range(start_time, stop_time, message);
             }),
         )
@@ -256,7 +255,7 @@ impl UserDataStore {
 
         let mut hub_event = HubEvent {
             r#type: HubEventType::MergeUsernameProof as i32,
-            body: Some(hub_event::hub_event::Body::MergeUsernameProofBody(
+            body: Some(proto::hub_event::Body::MergeUsernameProofBody(
                 MergeUserNameProofBody {
                     username_proof: Some(username_proof.clone()),
                     deleted_username_proof: existing_proof,

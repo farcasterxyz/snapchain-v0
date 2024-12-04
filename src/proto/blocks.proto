@@ -1,5 +1,4 @@
 syntax = "proto3";
-package snapchain;
 
 import "message.proto";
 import "username_proof.proto";
@@ -73,7 +72,7 @@ message FullProposal {
 }
 
 message ConsensusMessage {
-  oneof message {
+  oneof consensus_message {
     Vote vote = 1;
     Proposal proposal = 2;
   }
@@ -116,7 +115,7 @@ message ShardChunk {
 
 message Transaction {
   uint64 fid = 1;
-  repeated msg.Message user_messages = 2;
+  repeated Message user_messages = 2;
   repeated ValidatorMessage system_messages = 3;
   bytes account_root = 4; // State root for the account after applying the transaction for the fid
 }
@@ -125,12 +124,12 @@ message Transaction {
 message FnameTransfer {
   uint64 id = 1;
   uint64 from_fid = 2;
-  username_proof.UserNameProof proof = 4;
+  UserNameProof proof = 4;
 }
 
 // Validator initiated prunes/revokes etc
 message ValidatorMessage {
-  onchain_event.OnChainEvent on_chain_event = 1;
+  OnChainEvent on_chain_event = 1;
   FnameTransfer fname_transfer = 2;
 }
 
@@ -142,7 +141,7 @@ message RegisterValidator {
 }
 
 message GossipMessage {
-  oneof message {
+  oneof gossip_message {
     ConsensusMessage consensus = 1;
     RegisterValidator validator = 2;  // Remove before testnet, once in-protocol leader rotation is implemented
     FullProposal full_proposal = 3;

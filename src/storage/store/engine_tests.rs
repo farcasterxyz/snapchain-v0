@@ -51,7 +51,7 @@ mod tests {
         events_factory::create_onchain_event(test_helper::FID_FOR_TEST)
     }
 
-    fn entities() -> (message::Message, message::Message) {
+    fn entities() -> (proto::Message, proto::Message) {
         let msg1 = default_message("msg1");
         let msg2 = default_message("msg2");
 
@@ -68,9 +68,9 @@ mod tests {
         (msg1, msg2)
     }
 
-    fn assert_merge_event(event: &HubEvent, merged_message: &message::Message) {
+    fn assert_merge_event(event: &HubEvent, merged_message: &proto::Message) {
         let generated_event = match &event.body {
-            Some(crate::proto::hub_event::hub_event::Body::MergeMessageBody(msg)) => msg,
+            Some(crate::proto::hub_event::Body::MergeMessageBody(msg)) => msg,
             _ => panic!("Unexpected event type: {:?}", event.body),
         };
         assert_eq!(
@@ -79,9 +79,9 @@ mod tests {
         );
     }
 
-    fn assert_prune_event(event: &HubEvent, pruned_message: &message::Message) {
+    fn assert_prune_event(event: &HubEvent, pruned_message: &proto::Message) {
         let generated_event = match &event.body {
-            Some(crate::proto::hub_event::hub_event::Body::PruneMessageBody(msg)) => msg,
+            Some(crate::proto::hub_event::Body::PruneMessageBody(msg)) => msg,
             _ => panic!("Unexpected event type: {:?}", event.body),
         };
         assert_eq!(
@@ -90,9 +90,9 @@ mod tests {
         );
     }
 
-    fn assert_revoke_event(event: &HubEvent, revoked_message: &message::Message) {
+    fn assert_revoke_event(event: &HubEvent, revoked_message: &proto::Message) {
         let generated_event = match &event.body {
-            Some(crate::proto::hub_event::hub_event::Body::RevokeMessageBody(msg)) => msg,
+            Some(crate::proto::hub_event::Body::RevokeMessageBody(msg)) => msg,
             _ => panic!("Unexpected event type: {:?}", event.body),
         };
         assert_eq!(
@@ -103,9 +103,7 @@ mod tests {
 
     fn assert_onchain_hub_event(event: &HubEvent, onchain_event: &OnChainEvent) {
         let generated_event = match &event.body {
-            Some(crate::proto::hub_event::hub_event::Body::MergeOnChainEventBody(onchain)) => {
-                onchain
-            }
+            Some(crate::proto::hub_event::Body::MergeOnChainEventBody(onchain)) => onchain,
             _ => panic!("Unexpected event type: {:?}", event.body),
         }
         .on_chain_event
@@ -326,7 +324,7 @@ mod tests {
         let casts_result = engine.get_casts_by_fid(msg1.fid());
         let messages = casts_result.unwrap().messages_bytes;
         assert_eq!(1, messages.len());
-        let decoded = message::Message::decode(&*messages[0]).unwrap();
+        let decoded = proto::Message::decode(&*messages[0]).unwrap();
         assert_eq!(to_hex(&msg1.hash), to_hex(&decoded.hash));
 
         // And events are generated
@@ -367,7 +365,7 @@ mod tests {
         let casts_result = engine.get_casts_by_fid(cast.fid());
         let messages = casts_result.unwrap().messages_bytes;
         assert_eq!(1, messages.len());
-        let decoded = message::Message::decode(&*messages[0]).unwrap();
+        let decoded = proto::Message::decode(&*messages[0]).unwrap();
         assert_eq!(to_hex(&cast.hash), to_hex(&decoded.hash));
         assert_eq!(
             engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast)),
@@ -798,7 +796,7 @@ mod tests {
         let mut event_rx = engine.get_senders().events_tx.subscribe();
         messages_tx
             .send(MempoolMessage::ValidatorMessage(
-                crate::proto::snapchain::ValidatorMessage {
+                crate::proto::ValidatorMessage {
                     on_chain_event: Some(onchain_event.clone()),
                     fname_transfer: None,
                 },
@@ -838,7 +836,7 @@ mod tests {
         assert_eq!(event_rx.recv().await.unwrap(), events.events[0]);
 
         let generated_event = match events.events[0].clone().body {
-            Some(crate::proto::hub_event::hub_event::Body::MergeOnChainEventBody(e)) => e,
+            Some(crate::proto::hub_event::Body::MergeOnChainEventBody(e)) => e,
             _ => panic!("Unexpected event type"),
         };
         assert_eq!(
@@ -1126,7 +1124,7 @@ mod tests {
         let another_signer_event = events_factory::create_signer_event(
             test_helper::FID_FOR_TEST,
             another_signer.clone(),
-            onchain_event::SignerEventType::Add,
+            SignerEventType::Add,
         );
         test_helper::commit_event(&mut engine, &another_signer_event).await;
         test_helper::register_user(test_helper::FID_FOR_TEST + 1, signer.clone(), &mut engine)
@@ -1154,7 +1152,7 @@ mod tests {
         let revoke_event = events_factory::create_signer_event(
             test_helper::FID_FOR_TEST,
             signer.clone(),
-            onchain_event::SignerEventType::Remove,
+            SignerEventType::Remove,
         );
         test_helper::commit_event(&mut engine, &revoke_event).await;
         assert_onchain_hub_event(&event_rx.try_recv().unwrap(), &revoke_event);

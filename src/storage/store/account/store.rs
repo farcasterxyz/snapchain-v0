@@ -5,13 +5,13 @@ use super::{
     put_message_transaction, MessagesPage, StoreEventHandler, TS_HASH_LENGTH,
 };
 use crate::core::error::HubError;
-use crate::proto::hub_event::{
+use crate::proto::{
     hub_event, HubEvent, HubEventType, MergeMessageBody, PruneMessageBody, RevokeMessageBody,
 };
 use crate::storage::db::PageOptions;
 use crate::storage::util::increment_vec_u8;
 use crate::{
-    proto::msg::{link_body::Target, message_data::Body, Message, MessageType},
+    proto::{link_body::Target, message_data::Body, Message, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
 use std::clone::Clone;

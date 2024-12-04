@@ -11,10 +11,10 @@ use std::fmt::{Debug, Display};
 use std::sync::Arc;
 use tracing::warn;
 
-pub use crate::proto::snapchain as proto; // TODO: reconsider how this is imported
+pub use crate::proto; // TODO: reconsider how this is imported
 
-use crate::proto::snapchain::full_proposal::ProposedValue;
-use crate::proto::snapchain::{Block, FullProposal, ShardChunk};
+use crate::proto::full_proposal::ProposedValue;
+use crate::proto::{Block, FullProposal, ShardChunk};
 pub use proto::Height;
 pub use proto::ShardHash;
 

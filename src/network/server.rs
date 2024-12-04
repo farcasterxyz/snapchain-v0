@@ -12,6 +12,8 @@ use crate::storage::store::stores::Stores;
 use crate::storage::store::BlockStore;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use hex::ToHex;
+use prost::Message;
+use serde::Deserialize;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
@@ -49,8 +51,8 @@ impl MyHubService {
 impl HubService for MyHubService {
     async fn submit_message(
         &self,
-        request: Request<message::Message>,
-    ) -> Result<Response<message::Message>, Status> {
+        request: Request<proto::Message>,
+    ) -> Result<Response<proto::Message>, Status> {
         let start_time = std::time::Instant::now();
 
         let hash = request.get_ref().hash.encode_hex::<String>();

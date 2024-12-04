@@ -1,5 +1,4 @@
 syntax = "proto3";
-package admin_rpc;
 
 import "onchain_event.proto";
 
@@ -12,5 +11,5 @@ message TerminateResponse {
 
 service AdminService {
   rpc Terminate(TerminateRequest) returns (TerminateResponse);
-  rpc SubmitOnChainEvent(onchain_event.OnChainEvent) returns (onchain_event.OnChainEvent);
+  rpc SubmitOnChainEvent(OnChainEvent) returns (OnChainEvent);
 }

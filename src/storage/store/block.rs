@@ -1,6 +1,6 @@
 use super::super::constants::PAGE_SIZE_MAX;
 use crate::core::error::HubError;
-use crate::proto::snapchain::Block;
+use crate::proto::Block;
 use crate::storage::constants::RootPrefix;
 use crate::storage::db::{PageOptions, RocksDB, RocksdbError};
 use prost::Message;

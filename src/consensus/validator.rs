@@ -3,7 +3,7 @@ use crate::core::types::{
     Address, Height, ShardHash, SnapchainShard, SnapchainValidator, SnapchainValidatorContext,
     SnapchainValidatorSet,
 };
-use crate::proto::snapchain::FullProposal;
+use crate::proto::FullProposal;
 use malachite_common::{Round, ValidatorSet};
 use malachite_consensus::ProposedValue;
 use std::collections::HashSet;

@@ -1,9 +1,8 @@
-use crate::proto::msg as message;
-use crate::proto::msg::MessageType;
-use crate::proto::snapchain;
+use crate::proto;
+use crate::proto::MessageType;
 
-impl message::Message {
-    pub fn is_type(&self, message_type: message::MessageType) -> bool {
+impl proto::Message {
+    pub fn is_type(&self, message_type: proto::MessageType) -> bool {
         self.data.is_some() && self.data.as_ref().unwrap().r#type == message_type as i32
     }
 
@@ -28,7 +27,7 @@ impl message::Message {
     }
 }
 
-impl snapchain::ValidatorMessage {
+impl proto::ValidatorMessage {
     pub fn fid(&self) -> u32 {
         if let Some(fname) = &self.fname_transfer {
             if let Some(proof) = &fname.proof {

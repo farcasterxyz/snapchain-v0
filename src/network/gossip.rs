@@ -179,8 +179,8 @@ impl SnapchainGossip {
                         })) => {
                             match proto::GossipMessage::decode(&message.data[..]) {
                                 Ok(gossip_message) => {
-                                    match gossip_message.message {
-                                        Some(proto::gossip_message::Message::FullProposal(full_proposal)) => {
+                                    match gossip_message.gossip_message{
+                                        Some(proto::gossip_message::GossipMessage::FullProposal(full_proposal)) => {
                                             let height = full_proposal.height();
                                             debug!("Received block with height {} from peer: {}", height, peer_id);
                                             let consensus_message = ConsensusMsg::ReceivedFullProposal(full_proposal);
@@ -189,7 +189,7 @@ impl SnapchainGossip {
                                                 warn!("Failed to send system block message: {:?}", e);
                                             }
                                         },
-                                        Some(proto::gossip_message::Message::Validator(validator)) => {
+                                        Some(proto::gossip_message::GossipMessage::Validator(validator)) => {
                                             debug!("Received validator registration from peer: {}", peer_id);
                                             if let Some(validator) = validator.validator {
                                                 let public_key = libp2p::identity::ed25519::PublicKey::try_from_bytes(&validator.signer);
@@ -207,9 +207,9 @@ impl SnapchainGossip {
                                                 }
                                             }
                                         },
-                                        Some(proto::gossip_message::Message::Consensus(signed_consensus_msg)) => {
-                                            match signed_consensus_msg.message {
-                                                Some(proto::consensus_message::Message::Vote(vote)) => {
+                                        Some(proto::gossip_message::GossipMessage::Consensus(signed_consensus_msg)) => {
+                                            match signed_consensus_msg.consensus_message{
+                                                Some(proto::consensus_message::ConsensusMessage::Vote(vote)) => {
                                                     let vote = Vote::from_proto(vote);
                                                     let signed_vote = SignedVote {
                                                         message: vote,
@@ -221,7 +221,7 @@ impl SnapchainGossip {
                                                         warn!("Failed to send system vote message: {:?}", e);
                                                     }
                                                 },
-                                                Some(proto::consensus_message::Message::Proposal(proposal)) => {
+                                                Some(proto::consensus_message::ConsensusMessage::Proposal(proposal)) => {
                                                     let proposal = Proposal::from_proto(proposal);
                                                     let signed_proposal = SignedProposal {
                                                         message: proposal,
@@ -251,9 +251,9 @@ impl SnapchainGossip {
                         Some(GossipEvent::BroadcastSignedVote(vote)) => {
                             let vote_proto = vote.to_proto();
                             let gossip_message = proto::GossipMessage {
-                                message: Some(proto::gossip_message::Message::Consensus(proto::ConsensusMessage {
+                                gossip_message: Some(proto::gossip_message::GossipMessage::Consensus(proto::ConsensusMessage {
                                     signature: vote.signature.0,
-                                    message: Some(proto::consensus_message::Message::Vote(vote_proto)),
+                                    consensus_message: Some(proto::consensus_message::ConsensusMessage::Vote(vote_proto)),
                                 })),
                             };
                             let encoded_message = gossip_message.encode_to_vec();
@@ -262,9 +262,9 @@ impl SnapchainGossip {
                         Some(GossipEvent::BroadcastSignedProposal(proposal)) => {
                             let proposal_proto = proposal.to_proto();
                             let gossip_message = proto::GossipMessage {
-                                message: Some(proto::gossip_message::Message::Consensus(proto::ConsensusMessage {
+                                gossip_message: Some(proto::gossip_message::GossipMessage::Consensus(proto::ConsensusMessage {
                                     signature: proposal.signature.0,
-                                    message: Some(proto::consensus_message::Message::Proposal(proposal_proto)),
+                                    consensus_message: Some(proto::consensus_message::ConsensusMessage::Proposal(proposal_proto)),
                                 })),
                             };
                             let encoded_message = gossip_message.encode_to_vec();
@@ -272,7 +272,7 @@ impl SnapchainGossip {
                         }
                         Some(GossipEvent::BroadcastFullProposal(full_proposal)) => {
                             let gossip_message = proto::GossipMessage {
-                                message: Some(proto::gossip_message::Message::FullProposal(full_proposal)),
+                                gossip_message: Some(proto::gossip_message::GossipMessage::FullProposal(full_proposal)),
                             };
                             let encoded_message = gossip_message.encode_to_vec();
                             self.publish(encoded_message);
@@ -280,7 +280,7 @@ impl SnapchainGossip {
                         Some(GossipEvent::RegisterValidator(register_validator)) => {
                             debug!("Broadcasting validator registration");
                             let gossip_message = proto::GossipMessage {
-                                message: Some(proto::gossip_message::Message::Validator(register_validator)),
+                                gossip_message: Some(proto::gossip_message::GossipMessage::Validator(register_validator)),
                             };
                             let encoded_message = gossip_message.encode_to_vec();
                             self.publish(encoded_message);

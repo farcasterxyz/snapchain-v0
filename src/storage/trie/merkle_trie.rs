@@ -1,8 +1,7 @@
 use super::super::db::{RocksDB, RocksDbTransactionBatch};
 use super::errors::TrieError;
 use super::trie_node::{TrieNode, TIMESTAMP_LENGTH};
-use crate::proto::msg as message;
-use crate::proto::onchain_event;
+use crate::proto;
 use crate::storage::store::account::IntoU8;
 use crate::storage::trie::{trie_node, util};
 use std::collections::HashMap;
@@ -14,7 +13,7 @@ pub const TRIE_DBPATH_PREFIX: &str = "trieDb";
 pub struct TrieKey {}
 
 impl TrieKey {
-    pub fn for_message(msg: &message::Message) -> Vec<u8> {
+    pub fn for_message(msg: &proto::Message) -> Vec<u8> {
         let mut key = Self::for_message_type(msg.fid(), msg.msg_type().into_u8());
         key.extend_from_slice(&msg.hash);
         key
@@ -29,7 +28,7 @@ impl TrieKey {
         key
     }
 
-    pub fn for_onchain_event(event: &onchain_event::OnChainEvent) -> Vec<u8> {
+    pub fn for_onchain_event(event: &proto::OnChainEvent) -> Vec<u8> {
         let mut key = Vec::new();
         key.extend_from_slice(&Self::for_fid(event.fid as u32));
         key.push(event.r#type as u8);

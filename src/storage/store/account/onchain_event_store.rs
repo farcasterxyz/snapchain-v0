@@ -4,9 +4,9 @@ use prost::{DecodeError, Message};
 
 use super::{make_fid_key, StoreEventHandler};
 use crate::core::error::HubError;
-use crate::proto::hub_event::hub_event::Body;
-use crate::proto::hub_event::{HubEvent, HubEventType, MergeOnChainEventBody};
-use crate::proto::onchain_event::{
+use crate::proto::hub_event::Body;
+use crate::proto::{HubEvent, HubEventType, MergeOnChainEventBody};
+use crate::proto::{
     on_chain_event, IdRegisterEventBody, IdRegisterEventType, OnChainEvent, OnChainEventType,
     SignerEventBody, SignerEventType,
 };

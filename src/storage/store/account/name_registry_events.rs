@@ -2,7 +2,7 @@ use prost::Message;
 
 use crate::{
     core::error::HubError,
-    proto::username_proof::UserNameProof,
+    proto::UserNameProof,
     storage::{
         constants::RootPrefix,
         db::{RocksDB, RocksDbTransactionBatch},

@@ -8,6 +8,7 @@ mod tests {
     use crate::proto::hub_event::{HubEvent, HubEventType};
     use crate::proto::rpc::hub_service_server::HubService;
     use crate::proto::rpc::SubscribeRequest;
+    use crate::proto::{HubEvent, HubEventType};
     use crate::storage::db::{self, RocksDB, RocksDbTransactionBatch};
     use crate::storage::store::engine::Senders;
     use crate::storage::store::stores::{StoreLimits, Stores};

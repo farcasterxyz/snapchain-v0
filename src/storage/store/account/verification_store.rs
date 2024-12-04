@@ -8,16 +8,16 @@ use super::{
 use crate::storage::util::increment_vec_u8;
 use crate::{
     core::error::HubError,
-    proto::msg::{Protocol, SignatureScheme, VerificationAddAddressBody, VerificationRemoveBody},
+    proto::{Protocol, SignatureScheme, VerificationAddAddressBody, VerificationRemoveBody},
     storage::store::account::delete_message_transaction,
 };
-use crate::{proto::msg::message_data::Body, storage::db::PageOptions};
+use crate::{proto::message_data::Body, storage::db::PageOptions};
 use crate::{
-    proto::msg::MessageData,
+    proto::MessageData,
     storage::constants::{RootPrefix, UserPostfix},
 };
 use crate::{
-    proto::msg::{Message, MessageType},
+    proto::{Message, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
 use std::sync::Arc;

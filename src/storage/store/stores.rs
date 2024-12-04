@@ -3,8 +3,8 @@ use super::account::{
     VerificationStoreDef,
 };
 use crate::core::error::HubError;
-use crate::proto::hub_event::HubEvent;
-use crate::proto::msg::MessageType;
+use crate::proto::HubEvent;
+use crate::proto::MessageType;
 use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
 use crate::storage::store::account::{
     CastStore, CastStoreDef, IntoU8, LinkStore, OnchainEventStorageError, OnchainEventStore, Store,

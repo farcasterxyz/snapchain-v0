@@ -44,7 +44,7 @@ pub fn compose_message(
     text: &str,
     timestamp: Option<u32>,
     private_key: Option<&SigningKey>,
-) -> message::Message {
+) -> proto::Message {
     messages_factory::casts::create_cast_add(fid, text, timestamp, private_key)
 }
 
@@ -57,7 +57,7 @@ pub async fn follow_blocks(
     let mut i = 1;
 
     loop {
-        let msg = rpc::BlocksRequest {
+        let msg = proto::BlocksRequest {
             shard_id: 0,
             start_block_number: i,
             stop_block_number: Some(i + FETCH_SIZE),
