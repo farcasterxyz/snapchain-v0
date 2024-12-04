@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::error::Error;
 use std::path::Path;
+use std::sync::{atomic, Arc};
 use std::time::Duration;
 use std::{env, panic, process};
 use tokio::sync::mpsc;
@@ -78,6 +79,8 @@ fn start_submit_messages(
     let mut submit_message_handles = vec![];
     const FID: u32 = 6833;
 
+    let i = Arc::new(atomic::AtomicU64::new(1));
+
     for rpc_addr in config.submit_message.rpc_addrs {
         let messages_tx = messages_tx.clone();
         let private_key = SigningKey::from_bytes(
@@ -86,6 +89,9 @@ fn start_submit_messages(
             )
             .unwrap(),
         );
+
+        let i = i.clone();
+
         let submit_message_handle = tokio::spawn(async move {
             let mut submit_message_timer = time::interval(config.submit_message.interval);
 
@@ -128,16 +134,18 @@ fn start_submit_messages(
                 .await
                 .unwrap();
 
-            let mut i = 1;
             loop {
                 submit_message_timer.tick().await;
-                let text = format!("For benchmarking {}", i);
+
+                let current_i = i.fetch_add(1, atomic::Ordering::SeqCst);
+                let text = format!("For benchmarking {}", current_i);
+
                 let msg = compose_message(FID, text.as_str(), None, Some(&private_key));
                 let message = send_message(&mut client, &msg).await.unwrap();
                 messages_tx.send(message).await.unwrap();
-                i += 1;
             }
         });
+
         submit_message_handles.push(submit_message_handle);
     }
 
