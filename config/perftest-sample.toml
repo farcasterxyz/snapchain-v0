@@ -4,11 +4,11 @@ num_iterations = 120
 [submit_message]
 rpc_addrs = [
     "http://127.0.0.11:3383",
-    "http://127.0.0.12:3384",
-    "http://127.0.0.13:3385"
+    "http://127.0.0.12:3383",
+    "http://127.0.0.13:3383"
 ]
 interval = "100ms"
 
 [follow_blocks]
 rpc_addr = "http://127.0.0.11:3383"
-enable = false
+enable = true
