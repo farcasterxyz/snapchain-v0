@@ -15,9 +15,10 @@ mod tests {
     use prost::Message as _;
     use tracing_subscriber::EnvFilter;
 
-    fn trie_ctx() -> &'static mut merkle_trie::Context {
+    fn trie_ctx() -> &'static mut merkle_trie::Context<'static> {
         Box::leak(Box::new(merkle_trie::Context::new()))
     }
+
 
     #[allow(dead_code)]
     fn enable_logging() {

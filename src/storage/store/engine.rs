@@ -263,8 +263,19 @@ impl ShardEngine {
 
     pub fn propose_state_change(&mut self, shard: u32) -> ShardStateChange {
         let mut txn = RocksDbTransactionBatch::new();
+
+        let count_fn = Self::make_count_fn(self.statsd_client.clone(), self.shard_id);
+        let count_callback = move |read_count: u64| {
+            count_fn("trie.db_get_count.total", read_count);
+            count_fn("trie.db_get_count.for_propose", read_count);
+        };
+
         let result = self
-            .prepare_proposal(&merkle_trie::Context::new(), &mut txn, shard)
+            .prepare_proposal(
+                &merkle_trie::Context::with_callback(count_callback),
+                &mut txn,
+                shard,
+            )
             .unwrap(); //TODO: don't unwrap()
 
         // TODO: this should probably operate automatically via drop trait
@@ -342,7 +353,7 @@ impl ShardEngine {
                 match event {
                     Ok(hub_event) => {
                         onchain_events_count += 1;
-                        self.update_trie(&merkle_trie::Context::new(), &hub_event, txn_batch)?;
+                        self.update_trie(trie_ctx, &hub_event, txn_batch)?;
                         events.push(hub_event.clone());
                         system_messages_count += 1;
                         match &onchain_event.body {
@@ -668,8 +679,14 @@ impl ShardEngine {
 
         let mut result = true;
 
+        let count_fn = Self::make_count_fn(self.statsd_client.clone(), self.shard_id);
+        let count_callback = move |read_count: u64| {
+            count_fn("trie.db_get_count.total", read_count);
+            count_fn("trie.db_get_count.for_validate", read_count);
+        };
+
         if let Err(err) = self.replay_proposal(
-            &merkle_trie::Context::new(),
+            &merkle_trie::Context::with_callback(count_callback),
             &mut txn,
             transactions,
             shard_root,
@@ -739,13 +756,26 @@ impl ShardEngine {
         Ok(())
     }
 
+    pub fn make_count_fn(statsd_client: StatsdClientWrapper, shard_id: u32) -> impl Fn(&str, u64) {
+        move |key: &str, count: u64| {
+            let key = format!("engine.{}", key);
+            statsd_client.count_with_shard(shard_id, &key, count);
+        }
+    }
+
     pub fn commit_shard_chunk(&mut self, shard_chunk: &ShardChunk) {
         let mut txn = RocksDbTransactionBatch::new();
 
         let shard_root = &shard_chunk.header.as_ref().unwrap().shard_root;
         let transactions = &shard_chunk.transactions;
 
-        let trie_ctx = &merkle_trie::Context::new();
+        let count_fn = Self::make_count_fn(self.statsd_client.clone(), self.shard_id);
+        let count_callback = move |read_count: u64| {
+            count_fn("trie.db_get_count.total", read_count);
+            count_fn("trie.db_get_count.for_commit", read_count);
+        };
+        let trie_ctx = &merkle_trie::Context::with_callback(count_callback);
+
         match self.replay_proposal(trie_ctx, &mut txn, transactions, shard_root) {
             Err(err) => {
                 error!("State change commit failed: {}", err);
