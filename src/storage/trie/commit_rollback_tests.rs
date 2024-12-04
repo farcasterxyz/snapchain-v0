@@ -25,7 +25,7 @@ mod tests {
 
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("a.db");
-        let mut t = MerkleTrie::new();
+        let mut t = MerkleTrie::new(16).unwrap();
         let db = &RocksDB::new(db_path.to_str().unwrap());
         db.open().unwrap();
 
@@ -87,7 +87,7 @@ mod tests {
             let db = &RocksDB::new(db_path.to_str().unwrap());
             db.open().unwrap();
 
-            let mut t1 = MerkleTrie::new();
+            let mut t1 = MerkleTrie::new(16).unwrap();
             t1.initialize(db)?;
 
             let mut txn_batch = RocksDbTransactionBatch::new();
@@ -105,7 +105,7 @@ mod tests {
             let db = &RocksDB::new(db_path.to_str().unwrap());
             db.open().unwrap();
 
-            let mut t2 = MerkleTrie::new();
+            let mut t2 = MerkleTrie::new(16).unwrap();
             t2.initialize(db)?;
 
             let mut txn_batch = RocksDbTransactionBatch::new();

@@ -10,6 +10,7 @@ use prost::Message as _;
 use std::collections::HashMap;
 use std::sync::atomic;
 
+// TODO: remove or reduce this and/or rename (make sure it works under all branching factors)
 pub const TIMESTAMP_LENGTH: usize = 10;
 
 // This value is mirrored in [rpc/server.ts], make sure to change it in both places

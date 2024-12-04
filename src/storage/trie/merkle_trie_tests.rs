@@ -23,7 +23,7 @@ mod tests {
         let db = &RocksDB::new(&tmp_path);
         db.open().unwrap();
 
-        let mut trie = MerkleTrie::new();
+        let mut trie = MerkleTrie::new(16).unwrap();
         trie.initialize(db).unwrap();
 
         let mut txn_batch = RocksDbTransactionBatch::new();
@@ -59,7 +59,7 @@ mod tests {
         let db = &RocksDB::new(&tmp_path);
         db.open().unwrap();
 
-        let mut trie = MerkleTrie::new();
+        let mut trie = MerkleTrie::new(16).unwrap();
         trie.initialize(db).unwrap();
 
         let mut first_txn = RocksDbTransactionBatch::new();

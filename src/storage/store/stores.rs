@@ -145,8 +145,11 @@ impl StoreLimits {
 }
 
 impl Stores {
-    pub fn new(db: Arc<RocksDB>, store_limits: StoreLimits) -> Stores {
-        let mut trie = merkle_trie::MerkleTrie::new();
+    pub fn new(
+        db: Arc<RocksDB>,
+        mut trie: merkle_trie::MerkleTrie,
+        store_limits: StoreLimits,
+    ) -> Stores {
         trie.initialize(&db).unwrap();
 
         let event_handler = StoreEventHandler::new(None, None, None);

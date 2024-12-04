@@ -12,6 +12,7 @@ use crate::storage::store::engine::{BlockEngine, Senders, ShardEngine};
 use crate::storage::store::stores::StoreLimits;
 use crate::storage::store::stores::Stores;
 use crate::storage::store::BlockStore;
+use crate::storage::trie::merkle_trie;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use libp2p::identity::ed25519::Keypair;
 use malachite_config::TimeoutConfig;
@@ -82,8 +83,10 @@ impl SnapchainNode {
             let db = RocksDB::new(format!("{}/shard{}", rocksdb_dir, shard_id).as_str());
             db.open().unwrap();
 
+            let trie = merkle_trie::MerkleTrie::new(16).unwrap(); //TODO: don't hardcode; don't unwrap()
             let engine = ShardEngine::new(
                 Arc::new(db),
+                trie,
                 shard_id,
                 StoreLimits::default(),
                 statsd_client.clone(),

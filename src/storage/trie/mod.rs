@@ -1,6 +1,7 @@
 pub mod errors;
 pub mod merkle_trie;
 mod trie_node; // this is private on purpose
+mod util;
 
 #[cfg(test)]
 mod trie_node_tests;
