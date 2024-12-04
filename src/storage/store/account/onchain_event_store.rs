@@ -5,11 +5,11 @@ use prost::{DecodeError, Message};
 use super::{make_fid_key, StoreEventHandler};
 use crate::core::error::HubError;
 use crate::proto::hub_event::Body;
-use crate::proto::{HubEvent, HubEventType, MergeOnChainEventBody};
 use crate::proto::{
     on_chain_event, IdRegisterEventBody, IdRegisterEventType, OnChainEvent, OnChainEventType,
     SignerEventBody, SignerEventType,
 };
+use crate::proto::{HubEvent, HubEventType, MergeOnChainEventBody};
 use crate::storage::constants::{OnChainEventPostfix, RootPrefix, PAGE_SIZE_MAX};
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch, RocksdbError};
 use crate::storage::util::increment_vec_u8;
