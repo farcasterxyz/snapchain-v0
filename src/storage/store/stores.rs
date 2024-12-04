@@ -79,30 +79,6 @@ impl Limits {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn zero() -> Limits {
-        Limits {
-            casts: 0,
-            links: 0,
-            reactions: 0,
-            user_data: 0,
-            user_name_proofs: 0,
-            verifications: 0,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn for_test() -> Limits {
-        Limits {
-            casts: 4,
-            links: 4,
-            reactions: 3,
-            user_data: 4,
-            user_name_proofs: 2,
-            verifications: 2,
-        }
-    }
-
     fn for_message_type(&self, message_type: MessageType) -> u32 {
         match message_type {
             MessageType::CastAdd => self.casts,

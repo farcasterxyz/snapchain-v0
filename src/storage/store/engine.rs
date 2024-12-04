@@ -170,7 +170,6 @@ impl ShardEngine {
         self.senders.clone()
     }
 
-    #[cfg(test)]
     pub(crate) fn trie_root_hash(&self) -> Vec<u8> {
         self.stores.trie.root_hash().unwrap()
     }
