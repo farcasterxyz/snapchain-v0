@@ -19,6 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "src/proto/hub_event.proto",
             "src/proto/username_proof.proto",
             "src/proto/sync_trie.proto",
+            "src/proto/legacy_rpc.proto",
         ],
         &["src/proto"],
     )?;

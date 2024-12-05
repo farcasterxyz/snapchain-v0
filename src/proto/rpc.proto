@@ -36,9 +36,8 @@ message LegacyMessage {
   bytes data = 1;
 }
 
-service HubService {
+service SnapchainService {
   rpc SubmitMessage(msg.Message) returns (msg.Message);
-  rpc SubmitLegacyMessage(LegacyMessage) returns (LegacyMessage);
   rpc GetBlocks(BlocksRequest) returns (stream snapchain.Block);
   rpc GetShardChunks(ShardChunksRequest) returns (ShardChunksResponse);
   rpc Subscribe(SubscribeRequest) returns (stream hub_event.HubEvent);
