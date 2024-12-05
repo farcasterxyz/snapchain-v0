@@ -2,11 +2,11 @@ use std::collections::HashMap;
 
 use crate::core::error::HubError;
 use crate::proto::hub_event::HubEvent;
+use crate::proto::legacy_rpc::hub_service_server::HubService;
+use crate::proto::legacy_rpc::LegacyMessage;
 use crate::proto::msg as message;
-use crate::proto::rpc::hub_service_server::HubService;
-use crate::proto::rpc::{
-    BlocksRequest, LegacyMessage, ShardChunksRequest, ShardChunksResponse, SubscribeRequest,
-};
+use crate::proto::rpc::new_hub_service_server::NewHubService;
+use crate::proto::rpc::{BlocksRequest, ShardChunksRequest, ShardChunksResponse, SubscribeRequest};
 use crate::proto::snapchain::Block;
 use crate::storage::db::PageOptions;
 use crate::storage::store::engine::{MempoolMessage, Senders};
@@ -46,6 +46,31 @@ impl MyHubService {
             statsd_client,
         }
     }
+
+    pub async fn submit_mesage(&self, message: message::Message) -> Result<(), Status> {
+        let start_time = std::time::Instant::now();
+
+        let result = self
+            .message_tx
+            .send(MempoolMessage::UserMessage(message))
+            .await;
+
+        match result {
+            Ok(_) => {
+                self.statsd_client.count("rpc.submit_message.success", 1);
+            }
+            Err(_) => {
+                self.statsd_client.count("rpc.submit_message.failure", 1);
+                return Err(Status::internal("failed to submit message"));
+            }
+        }
+
+        let elapsed = start_time.elapsed().as_millis();
+        self.statsd_client
+            .time("rpc.submit_message.duration", elapsed as u64);
+
+        Ok(())
+    }
 }
 
 #[tonic::async_trait]
@@ -54,8 +79,6 @@ impl HubService for MyHubService {
         &self,
         request: Request<LegacyMessage>,
     ) -> Result<Response<LegacyMessage>, Status> {
-        let start_time = std::time::Instant::now();
-
         info!("Received call to [submit_legacy_message] RPC");
 
         let message = message::Message::decode(request.get_ref().data.as_slice())
@@ -67,64 +90,28 @@ impl HubService for MyHubService {
             ))));
         }
 
-        let result = self
-            .message_tx
-            .send(MempoolMessage::UserMessage(message.clone()))
-            .await;
-
-        // Use the same metrics-- we will use legacy messages for performance tests
-        match result {
-            Ok(_) => {
-                self.statsd_client.count("rpc.submit_message.success", 1);
-            }
-            Err(_) => {
-                self.statsd_client.count("rpc.submit_message.failure", 1);
-                return Err(Status::internal("failed to submit message"));
-            }
-        }
-
-        let elapsed = start_time.elapsed().as_millis();
+        self.submit_mesage(message).await?;
 
         let response = Response::new(request.into_inner());
 
-        self.statsd_client
-            .time("rpc.submit_message.duration", elapsed as u64);
-
         Ok(response)
     }
+}
 
+#[tonic::async_trait]
+impl NewHubService for MyHubService {
     async fn submit_message(
         &self,
         request: Request<message::Message>,
     ) -> Result<Response<message::Message>, Status> {
-        let start_time = std::time::Instant::now();
-
         let hash = request.get_ref().hash.encode_hex::<String>();
         info!(hash, "Received call to [submit_message] RPC");
 
         let message = request.into_inner();
 
-        let result = self
-            .message_tx
-            .send(MempoolMessage::UserMessage(message.clone()))
-            .await;
-
-        match result {
-            Ok(_) => {
-                self.statsd_client.count("rpc.submit_message.success", 1);
-            }
-            Err(_) => {
-                self.statsd_client.count("rpc.submit_message.failure", 1);
-                return Err(Status::internal("failed to submit message"));
-            }
-        }
-
-        let elapsed = start_time.elapsed().as_millis();
+        self.submit_mesage(message.clone()).await?;
 
         let response = Response::new(message);
-
-        self.statsd_client
-            .time("rpc.submit_message.duration", elapsed as u64);
 
         Ok(response)
     }

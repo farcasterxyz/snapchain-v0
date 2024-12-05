@@ -1,5 +1,5 @@
 use crate::proto::onchain_event;
-use crate::proto::rpc::hub_service_client::HubServiceClient;
+use crate::proto::rpc::new_hub_service_client::NewHubServiceClient;
 use crate::proto::snapchain::Block;
 use crate::storage::store::test_helper;
 use crate::utils::cli::{compose_message, follow_blocks, send_message};
@@ -96,7 +96,7 @@ fn start_submit_messages(
             let mut submit_message_timer = time::interval(config.submit_message.interval);
 
             println!("connecting to {}", &rpc_addr);
-            let mut client = match HubServiceClient::connect(rpc_addr.clone()).await {
+            let mut client = match NewHubServiceClient::connect(rpc_addr.clone()).await {
                 Ok(client) => client,
                 Err(e) => {
                     panic!("Error connecting to {}: {}", &rpc_addr, e);

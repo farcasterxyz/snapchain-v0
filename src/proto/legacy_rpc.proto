@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+/** 
+  * This message exists to support uploading messages from existing hubs to new snapchain nodes via HubRpcClient
+  */
+message LegacyMessage {
+  bytes data = 1;
+}
+
+service HubService {
+  rpc SubmitLegacyMessage(LegacyMessage) returns (LegacyMessage);
+};

@@ -1,7 +1,7 @@
 use crate::core::types::{
     proto, Address, Height, ShardHash, ShardId, SnapchainShard, SnapchainValidator,
 };
-use crate::proto::rpc::hub_service_client::HubServiceClient;
+use crate::proto::rpc::new_hub_service_client::NewHubServiceClient;
 use crate::proto::rpc::{BlocksRequest, ShardChunksRequest};
 use crate::proto::snapchain::{Block, BlockHeader, FullProposal, ShardChunk, ShardHeader};
 use crate::storage::store::engine::{BlockEngine, ShardEngine, ShardStateChange};
@@ -177,7 +177,7 @@ impl Proposer for ShardProposer {
             None => return Ok(()),
             Some(rpc_address) => {
                 let destination_addr = format!("http://{}", rpc_address.clone());
-                let mut rpc_client = HubServiceClient::connect(destination_addr).await?;
+                let mut rpc_client = NewHubServiceClient::connect(destination_addr).await?;
                 let request = Request::new(ShardChunksRequest {
                     shard_id: self.shard_id.shard_id(),
                     start_block_number: prev_block_number + 1,
@@ -391,7 +391,7 @@ impl Proposer for BlockProposer {
             Some(rpc_address) => {
                 info!({ rpc_address }, "Starting block sync against a validator");
                 let destination_addr = format!("http://{}", rpc_address.clone());
-                let mut rpc_client = HubServiceClient::connect(destination_addr).await?;
+                let mut rpc_client = NewHubServiceClient::connect(destination_addr).await?;
                 let request = Request::new(BlocksRequest {
                     shard_id: self.shard_id.shard_id(),
                     start_block_number: prev_block_number + 1,

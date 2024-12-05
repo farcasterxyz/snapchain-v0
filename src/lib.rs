@@ -23,6 +23,10 @@ pub mod proto {
         tonic::include_proto!("rpc");
     }
 
+    pub mod legacy_rpc {
+        tonic::include_proto!("_");
+    }
+
     pub mod msg {
         tonic::include_proto!("msg");
     }

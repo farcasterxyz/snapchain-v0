@@ -1,7 +1,7 @@
 use crate::proto::admin_rpc::admin_service_client::AdminServiceClient;
 use crate::proto::msg as message;
 use crate::proto::onchain_event::OnChainEvent;
-use crate::proto::rpc::hub_service_client::HubServiceClient;
+use crate::proto::rpc::new_hub_service_client::NewHubServiceClient;
 use crate::proto::{rpc, snapchain::Block};
 use crate::utils::factory::messages_factory;
 use ed25519_dalek::SigningKey;
@@ -17,7 +17,7 @@ const FETCH_SIZE: u64 = 100;
 // compose_message is a proof-of-concept script, is not guaranteed to be correct,
 // and clearly needs a lot of work. Use at your own risk.
 pub async fn send_message(
-    client: &mut HubServiceClient<Channel>,
+    client: &mut NewHubServiceClient<Channel>,
     msg: &message::Message,
 ) -> Result<message::Message, Box<dyn Error>> {
     let request = tonic::Request::new(msg.clone());
@@ -52,7 +52,7 @@ pub async fn follow_blocks(
     addr: String,
     block_tx: mpsc::Sender<Block>,
 ) -> Result<(), Box<dyn Error>> {
-    let mut client = rpc::hub_service_client::HubServiceClient::connect(addr).await?;
+    let mut client = rpc::new_hub_service_client::NewHubServiceClient::connect(addr).await?;
 
     let mut i = 1;
 
