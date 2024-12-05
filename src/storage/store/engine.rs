@@ -11,6 +11,7 @@ use crate::storage::store::account::{CastStore, MessagesPage};
 use crate::storage::store::stores::{StoreLimits, Stores};
 use crate::storage::store::BlockStore;
 use crate::storage::trie;
+use crate::storage::trie::merkle_trie;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use itertools::Itertools;
 use merkle_trie::TrieKey;
@@ -19,13 +20,14 @@ use snapchain::{Block, ShardChunk, Transaction};
 use std::collections::HashSet;
 use std::str;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc};
+use tokio::time::sleep;
 use tracing::{error, info, warn};
-use trie::merkle_trie;
 
 #[derive(Error, Debug)]
-enum EngineError {
+pub enum EngineError {
     #[error(transparent)]
     TrieError(#[from] trie::errors::TrieError),
 
@@ -179,22 +181,41 @@ impl ShardEngine {
         self.stores.trie.root_hash().unwrap()
     }
 
+    pub(crate) async fn pull_messages(
+        &mut self,
+        max_wait: Duration,
+    ) -> Result<Vec<MempoolMessage>, EngineError> {
+        let mut messages = Vec::new();
+        let start_time = Instant::now();
+
+        loop {
+            if start_time.elapsed() >= max_wait {
+                break;
+            }
+
+            match self.messages_rx.try_recv() {
+                Ok(msg) => messages.push(msg),
+                Err(mpsc::error::TryRecvError::Empty) => (),
+                Err(err) => return Err(EngineError::from(err)),
+            }
+
+            if messages.len() >= self.max_messages_per_block as usize {
+                break;
+            }
+
+            sleep(Duration::from_millis(5)).await;
+        }
+
+        Ok(messages)
+    }
+
     fn prepare_proposal(
         &mut self,
         trie_ctx: &merkle_trie::Context,
         txn_batch: &mut RocksDbTransactionBatch,
         shard_id: u32,
+        messages: Vec<MempoolMessage>,
     ) -> Result<ShardStateChange, EngineError> {
-        let mut messages = Vec::new();
-
-        for _ in 0..self.max_messages_per_block {
-            match self.messages_rx.try_recv() {
-                Ok(msg) => messages.push(msg),
-                Err(mpsc::error::TryRecvError::Empty) => break,
-                Err(err) => return Err(EngineError::from(err)),
-            }
-        }
-
         self.count("prepare_proposal.recv_messages", messages.len() as u64);
 
         let mut snapchain_txns = self.create_transactions_from_mempool(messages)?;
@@ -266,7 +287,11 @@ impl ShardEngine {
         Ok(transactions)
     }
 
-    pub fn propose_state_change(&mut self, shard: u32) -> ShardStateChange {
+    pub fn propose_state_change(
+        &mut self,
+        shard: u32,
+        messages: Vec<MempoolMessage>,
+    ) -> ShardStateChange {
         let mut txn = RocksDbTransactionBatch::new();
 
         let count_fn = Self::make_count_fn(self.statsd_client.clone(), self.shard_id);
@@ -280,6 +305,7 @@ impl ShardEngine {
                 &merkle_trie::Context::with_callback(count_callback),
                 &mut txn,
                 shard,
+                messages,
             )
             .unwrap(); //TODO: don't unwrap()
 

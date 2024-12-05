@@ -5,6 +5,7 @@ use crate::storage::trie::merkle_trie;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use ed25519_dalek::{SecretKey, SigningKey};
 use std::sync::Arc;
+use std::time::Duration;
 use tempfile;
 
 use crate::proto::onchain_event;
@@ -106,7 +107,12 @@ pub async fn commit_event(engine: &mut ShardEngine, event: &OnChainEvent) -> Sha
         ))
         .await
         .unwrap();
-    let state_change = engine.propose_state_change(1);
+
+    let messages = engine
+        .pull_messages(Duration::from_millis(50))
+        .await
+        .unwrap();
+    let state_change = engine.propose_state_change(1, messages);
 
     validate_and_commit_state_change(engine, &state_change)
 }
@@ -183,7 +189,11 @@ pub async fn register_fname(fid: u32, username: &String, engine: &mut ShardEngin
         ))
         .await
         .unwrap();
-    let state_change = engine.propose_state_change(1);
+    let messages = engine
+        .pull_messages(Duration::from_millis(50))
+        .await
+        .unwrap();
+    let state_change = engine.propose_state_change(1, messages);
 
     validate_and_commit_state_change(engine, &state_change);
 }
