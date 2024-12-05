@@ -6,7 +6,7 @@ use hex;
 use libp2p::identity::ed25519::Keypair;
 use snapchain::network::server::MyHubService;
 use snapchain::node::snapchain_node::SnapchainNode;
-use snapchain::proto::rpc::new_hub_service_server::NewHubServiceServer;
+use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::proto::snapchain::Block;
 use snapchain::storage::db::{PageOptions, RocksDB};
 use snapchain::storage::store::BlockStore;
@@ -119,7 +119,7 @@ impl NodeForTest {
 
             let grpc_socket_addr: SocketAddr = addr.parse().unwrap();
             let resp = Server::builder()
-                .add_service(NewHubServiceServer::new(service))
+                .add_service(SnapchainServiceServer::new(service))
                 .serve(grpc_socket_addr)
                 .await;
 

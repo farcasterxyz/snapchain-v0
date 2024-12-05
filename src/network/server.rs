@@ -5,7 +5,7 @@ use crate::proto::hub_event::HubEvent;
 use crate::proto::legacy_rpc::hub_service_server::HubService;
 use crate::proto::legacy_rpc::LegacyMessage;
 use crate::proto::msg as message;
-use crate::proto::rpc::new_hub_service_server::NewHubService;
+use crate::proto::rpc::snapchain_service_server::SnapchainService;
 use crate::proto::rpc::{BlocksRequest, ShardChunksRequest, ShardChunksResponse, SubscribeRequest};
 use crate::proto::snapchain::Block;
 use crate::storage::db::PageOptions;
@@ -99,7 +99,7 @@ impl HubService for MyHubService {
 }
 
 #[tonic::async_trait]
-impl NewHubService for MyHubService {
+impl SnapchainService for MyHubService {
     async fn submit_message(
         &self,
         request: Request<message::Message>,

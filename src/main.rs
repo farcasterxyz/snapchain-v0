@@ -1,6 +1,6 @@
 use malachite_metrics::{Metrics, SharedRegistry};
 use snapchain::proto::legacy_rpc::hub_service_server::HubServiceServer;
-use snapchain::proto::rpc::new_hub_service_server::NewHubServiceServer;
+use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
 use snapchain::storage::store::BlockStore;
 use std::error::Error;
 use std::net;
@@ -162,7 +162,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let rpc_block_store = block_store.clone();
     tokio::spawn(async move {
         let resp = Server::builder()
-            .add_service(NewHubServiceServer::new(MyHubService::new(
+            .add_service(SnapchainServiceServer::new(MyHubService::new(
                 rpc_block_store.clone(),
                 rpc_shard_stores.clone(),
                 rpc_shard_senders.clone(),

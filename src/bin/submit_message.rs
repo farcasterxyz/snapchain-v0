@@ -3,7 +3,7 @@ use ed25519_dalek::{SecretKey, SigningKey};
 use hex::FromHex;
 use snapchain::utils::cli::compose_message;
 use snapchain::{
-    proto::rpc::new_hub_service_client::NewHubServiceClient, utils::cli::send_message,
+    proto::rpc::snapchain_service_client::SnapchainServiceClient, utils::cli::send_message,
 };
 
 #[derive(Parser)]
@@ -22,7 +22,7 @@ async fn main() {
             .unwrap(),
     );
 
-    let mut client = NewHubServiceClient::connect(args.addr).await.unwrap();
+    let mut client = SnapchainServiceClient::connect(args.addr).await.unwrap();
 
     let resp = send_message(
         &mut client,
