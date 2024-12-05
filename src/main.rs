@@ -18,10 +18,10 @@ use snapchain::core::types::proto;
 use snapchain::network::admin_server::{DbManager, MyAdminService};
 use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
-use snapchain::network::server::MySnapchainService;
+use snapchain::network::server::MyHubService;
 use snapchain::node::snapchain_node::SnapchainNode;
 use snapchain::proto::admin_rpc::admin_service_server::AdminServiceServer;
-use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
+use snapchain::proto::rpc::hub_service_server::HubServiceServer;
 use snapchain::storage::db::RocksDB;
 use snapchain::utils::statsd_wrapper::StatsdClientWrapper;
 
@@ -85,11 +85,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     db.open().unwrap();
     let block_store = BlockStore::new(db);
 
-    info!(
-        addr = addr,
-        grpc_addr = grpc_addr,
-        "SnapchainService listening",
-    );
+    info!(addr = addr, grpc_addr = grpc_addr, "HubService listening",);
 
     let keypair = app_config.consensus.keypair().clone();
 
@@ -164,7 +160,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let rpc_block_store = block_store.clone();
     tokio::spawn(async move {
-        let service = MySnapchainService::new(
+        let service = MyHubService::new(
             rpc_block_store,
             rpc_shard_stores,
             rpc_shard_senders,
@@ -172,7 +168,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         );
 
         let resp = Server::builder()
-            .add_service(SnapchainServiceServer::new(service))
+            .add_service(HubServiceServer::new(service))
             .add_service(AdminServiceServer::new(admin_service))
             .serve(grpc_socket_addr)
             .await;

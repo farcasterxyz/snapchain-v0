@@ -4,9 +4,9 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use crate::network::server::MySnapchainService;
+    use crate::network::server::MyHubService;
     use crate::proto::hub_event::{HubEvent, HubEventType};
-    use crate::proto::rpc::snapchain_service_server::SnapchainService;
+    use crate::proto::rpc::hub_service_server::HubService;
     use crate::proto::rpc::SubscribeRequest;
     use crate::storage::db::{self, RocksDB, RocksDbTransactionBatch};
     use crate::storage::store::engine::Senders;
@@ -19,11 +19,7 @@ mod tests {
     use tokio::sync::{broadcast, mpsc};
     use tonic::Request;
 
-    async fn subscribe_and_listen(
-        service: &MySnapchainService,
-        shard_id: u32,
-        num_events_expected: u64,
-    ) {
+    async fn subscribe_and_listen(service: &MyHubService, shard_id: u32, num_events_expected: u64) {
         let mut listener = service
             .subscribe(Request::new(SubscribeRequest {
                 event_types: vec![HubEventType::MergeMessage as i32],
@@ -86,11 +82,7 @@ mod tests {
         db
     }
 
-    fn make_server() -> (
-        HashMap<u32, Stores>,
-        HashMap<u32, Senders>,
-        MySnapchainService,
-    ) {
+    fn make_server() -> (HashMap<u32, Stores>, HashMap<u32, Senders>, MyHubService) {
         let statsd_client = StatsdClientWrapper::new(
             cadence::StatsdClient::builder("", cadence::NopMetricSink {}).build(),
             true,
@@ -120,7 +112,7 @@ mod tests {
         (
             stores.clone(),
             senders.clone(),
-            MySnapchainService::new(
+            MyHubService::new(
                 BlockStore::new(make_db("blocks.db")),
                 stores,
                 senders,

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::core::error::HubError;
 use crate::proto::hub_event::HubEvent;
 use crate::proto::msg as message;
-use crate::proto::rpc::snapchain_service_server::SnapchainService;
+use crate::proto::rpc::hub_service_server::HubService;
 use crate::proto::rpc::{BlocksRequest, ShardChunksRequest, ShardChunksResponse, SubscribeRequest};
 use crate::proto::snapchain::Block;
 use crate::storage::db::PageOptions;
@@ -17,7 +17,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use tracing::info;
 
-pub struct MySnapchainService {
+pub struct MyHubService {
     block_store: BlockStore,
     shard_stores: HashMap<u32, Stores>,
     shard_senders: HashMap<u32, Senders>,
@@ -25,7 +25,7 @@ pub struct MySnapchainService {
     statsd_client: StatsdClientWrapper,
 }
 
-impl MySnapchainService {
+impl MyHubService {
     pub fn new(
         block_store: BlockStore,
         shard_stores: HashMap<u32, Stores>,
@@ -46,7 +46,7 @@ impl MySnapchainService {
 }
 
 #[tonic::async_trait]
-impl SnapchainService for MySnapchainService {
+impl HubService for MyHubService {
     async fn submit_message(
         &self,
         request: Request<message::Message>,

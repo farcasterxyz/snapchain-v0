@@ -29,7 +29,7 @@ message SubscribeRequest {
   optional uint32 shard_index = 5;
 }
 
-service SnapchainService {
+service HubService {
   rpc SubmitMessage(msg.Message) returns (msg.Message);
   rpc GetBlocks(BlocksRequest) returns (stream snapchain.Block);
   rpc GetShardChunks(ShardChunksRequest) returns (ShardChunksResponse);
