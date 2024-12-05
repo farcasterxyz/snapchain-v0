@@ -19,7 +19,6 @@ mod tests {
         Box::leak(Box::new(merkle_trie::Context::new()))
     }
 
-
     #[allow(dead_code)]
     fn enable_logging() {
         let env_filter =
