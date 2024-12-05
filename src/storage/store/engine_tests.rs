@@ -2,17 +2,19 @@
 mod tests {
     use crate::proto::hub_event::HubEvent;
     use crate::proto::msg::{self as message, ReactionType};
-    use crate::proto::onchain_event;
     use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
     use crate::proto::snapchain::ShardChunk;
+    use crate::proto::{hub_event, onchain_event};
     use crate::storage::db::RocksDbTransactionBatch;
     use crate::storage::store::engine::{MempoolMessage, ShardEngine};
     use crate::storage::store::test_helper;
+    use crate::storage::store::test_helper::FID_FOR_TEST;
     use crate::storage::trie::merkle_trie;
     use crate::storage::trie::merkle_trie::TrieKey;
-    use crate::utils::factory::{self, events_factory, messages_factory};
+    use crate::utils::factory::{self, events_factory, messages_factory, username_factory};
     use ed25519_dalek::SigningKey;
     use prost::Message as _;
+    use tracing::warn;
     use tracing_subscriber::EnvFilter;
 
     fn trie_ctx() -> &'static mut merkle_trie::Context<'static> {
@@ -116,11 +118,7 @@ mod tests {
         assert_eq!(&onchain_event.r#type, &generated_event.r#type);
     }
 
-    async fn commit_message(
-        engine: &mut ShardEngine,
-        msg: &message::Message,
-        assert_success: bool,
-    ) -> ShardChunk {
+    async fn commit_message(engine: &mut ShardEngine, msg: &message::Message) -> ShardChunk {
         let messages_tx = engine.messages_tx();
 
         messages_tx
@@ -134,13 +132,34 @@ mod tests {
         }
 
         let chunk = test_helper::validate_and_commit_state_change(engine, &state_change);
-        if assert_success {
-            assert_eq!(
-                state_change.new_state_root,
-                chunk.header.as_ref().unwrap().shard_root
-            );
-            assert!(engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(msg)));
+        assert_eq!(
+            state_change.new_state_root,
+            chunk.header.as_ref().unwrap().shard_root
+        );
+        assert!(engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(msg)));
+        chunk
+    }
+
+    async fn assert_commit_fails(engine: &mut ShardEngine, msg: &message::Message) -> ShardChunk {
+        let messages_tx = engine.messages_tx();
+
+        messages_tx
+            .send(MempoolMessage::UserMessage(msg.clone()))
+            .await
+            .unwrap();
+        let state_change = engine.propose_state_change(1);
+
+        if state_change.transactions.is_empty() {
+            panic!("Failed to propose message");
         }
+
+        let chunk = test_helper::validate_and_commit_state_change(engine, &state_change);
+        assert_eq!(
+            state_change.new_state_root,
+            chunk.header.as_ref().unwrap().shard_root
+        );
+        // We don't fail the transaction for reject messages, they are just not included in the trie
+        assert!(!engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(msg)));
         chunk
     }
 
@@ -314,7 +333,7 @@ mod tests {
         )
         .await;
 
-        commit_message(&mut engine, &cast, true).await;
+        commit_message(&mut engine, &cast).await;
 
         // The cast is present in the store and the trie
         let casts_result = engine.get_casts_by_fid(cast.fid());
@@ -335,7 +354,7 @@ mod tests {
             None,
         );
 
-        commit_message(&mut engine, &delete_cast, true).await;
+        commit_message(&mut engine, &delete_cast).await;
 
         // The cast is not present in the store
         let casts_result = engine.get_casts_by_fid(test_helper::FID_FOR_TEST);
@@ -373,7 +392,7 @@ mod tests {
             None,
         );
 
-        commit_message(&mut engine, &link_add, true).await;
+        commit_message(&mut engine, &link_add).await;
 
         let link_result = engine.get_links_by_fid(test_helper::FID_FOR_TEST);
         assert_eq!(1, link_result.unwrap().messages_bytes.len());
@@ -386,7 +405,7 @@ mod tests {
             None,
         );
 
-        commit_message(&mut engine, &link_remove, true).await;
+        commit_message(&mut engine, &link_remove).await;
 
         let link_result = engine.get_links_by_fid(test_helper::FID_FOR_TEST);
         assert_eq!(0, link_result.unwrap().messages_bytes.len());
@@ -399,7 +418,7 @@ mod tests {
             None,
         );
 
-        commit_message(&mut engine, &link_compact_state, true).await;
+        commit_message(&mut engine, &link_compact_state).await;
 
         let link_result = engine.get_link_compact_state_messages_by_fid(test_helper::FID_FOR_TEST);
         assert_eq!(1, link_result.unwrap().messages_bytes.len());
@@ -425,7 +444,7 @@ mod tests {
             None,
         );
 
-        commit_message(&mut engine, &reaction_add, true).await;
+        commit_message(&mut engine, &reaction_add).await;
 
         let reaction_result = engine.get_reactions_by_fid(test_helper::FID_FOR_TEST);
         assert_eq!(1, reaction_result.unwrap().messages_bytes.len());
@@ -438,7 +457,7 @@ mod tests {
             None,
         );
 
-        commit_message(&mut engine, &reaction_remove, true).await;
+        commit_message(&mut engine, &reaction_remove).await;
 
         let reaction_result = engine.get_reactions_by_fid(test_helper::FID_FOR_TEST);
         assert_eq!(0, reaction_result.unwrap().messages_bytes.len());
@@ -463,7 +482,7 @@ mod tests {
             Some(&test_helper::default_signer()),
         );
 
-        commit_message(&mut engine, &user_data_add, true).await;
+        commit_message(&mut engine, &user_data_add).await;
 
         let user_data_result = engine.get_user_data_by_fid(test_helper::FID_FOR_TEST);
         assert_eq!(1, user_data_result.unwrap().messages_bytes.len());
@@ -491,7 +510,7 @@ mod tests {
             None,
         );
 
-        commit_message(&mut engine, &verification_add, true).await;
+        commit_message(&mut engine, &verification_add).await;
 
         let verification_result = engine.get_verifications_by_fid(test_helper::FID_FOR_TEST);
         assert_eq!(1, verification_result.unwrap().messages_bytes.len());
@@ -503,7 +522,7 @@ mod tests {
             None,
         );
 
-        commit_message(&mut engine, &verification_remove, true).await;
+        commit_message(&mut engine, &verification_remove).await;
 
         let verification_result = engine.get_verifications_by_fid(test_helper::FID_FOR_TEST);
         assert_eq!(0, verification_result.unwrap().messages_bytes.len());
@@ -530,7 +549,7 @@ mod tests {
             Some(&signer),
         );
 
-        commit_message(&mut engine, &username_proof_add, true).await;
+        commit_message(&mut engine, &username_proof_add).await;
 
         {
             let username_proof_result =
@@ -577,7 +596,7 @@ mod tests {
             &mut engine,
         )
         .await;
-        commit_message(&mut engine, &cast, true).await;
+        commit_message(&mut engine, &cast).await;
 
         let updated_account_root = engine.get_stores().trie.get_hash(
             &engine.db,
@@ -851,17 +870,17 @@ mod tests {
         );
 
         // Default size in tests is 4 casts, so first four messages should merge without issues
-        commit_message(&mut engine, &cast1, true).await;
+        commit_message(&mut engine, &cast1).await;
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast1);
-        commit_message(&mut engine, &cast2, true).await;
+        commit_message(&mut engine, &cast2).await;
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast2);
-        commit_message(&mut engine, &cast3, true).await;
+        commit_message(&mut engine, &cast3).await;
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast3);
-        commit_message(&mut engine, &cast4, true).await;
+        commit_message(&mut engine, &cast4).await;
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast4);
 
         // Fifth message should be merged, but should cause cast1 to be pruned
-        commit_message(&mut engine, &cast5, true).await;
+        commit_message(&mut engine, &cast5).await;
         assert_merge_event(&event_rx.try_recv().unwrap(), &cast5);
         assert_prune_event(&event_rx.try_recv().unwrap(), &cast1);
 
@@ -1058,13 +1077,13 @@ mod tests {
             .await;
         let mut event_rx = engine.get_senders().events_tx.subscribe();
 
-        commit_message(&mut engine, &msg1, true).await;
+        commit_message(&mut engine, &msg1).await;
         let _ = &event_rx.try_recv().unwrap(); // Ignore merge event
-        commit_message(&mut engine, &msg2, true).await;
+        commit_message(&mut engine, &msg2).await;
         let _ = &event_rx.try_recv().unwrap(); // Ignore merge event
-        commit_message(&mut engine, &same_fid_different_signer, true).await;
+        commit_message(&mut engine, &same_fid_different_signer).await;
         let _ = &event_rx.try_recv().unwrap(); // Ignore merge event
-        commit_message(&mut engine, &different_fid_same_signer, true).await;
+        commit_message(&mut engine, &different_fid_same_signer).await;
         let _ = &event_rx.try_recv().unwrap(); // Ignore merge event
 
         // All 4 messages exist
@@ -1100,6 +1119,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_merge_fname() {
+        let (mut engine, _tmpdir) = test_helper::new_engine();
+
+        test_helper::register_user(
+            test_helper::FID_FOR_TEST,
+            test_helper::default_signer(),
+            &mut engine,
+        )
+        .await;
+
+        let fname = &"farcaster".to_string();
+
+        let mut event_rx = engine.get_senders().events_tx.subscribe();
+        let messages_tx = engine.messages_tx();
+        let fname_transfer = username_factory::create_transfer(FID_FOR_TEST, fname);
+
+        messages_tx
+            .send(MempoolMessage::ValidatorMessage(
+                crate::proto::snapchain::ValidatorMessage {
+                    on_chain_event: None,
+                    fname_transfer: Some(fname_transfer.clone()),
+                },
+            ))
+            .await
+            .unwrap();
+        let state_change = engine.propose_state_change(1);
+        test_helper::validate_and_commit_state_change(&mut engine, &state_change);
+
+        // Emits a hub event for the user name proof
+        let transfer_event = &event_rx.try_recv().unwrap();
+        assert_eq!(
+            transfer_event.r#type,
+            hub_event::HubEventType::MergeUsernameProof as i32
+        );
+        assert_eq!(event_rx.try_recv().is_err(), true); // No more events
+
+        // fname exists in the trie and in the db
+        assert!(engine.trie_key_exists(trie_ctx(), &TrieKey::for_fname(FID_FOR_TEST, fname)));
+        let proof = engine.get_fname_proof(fname).unwrap();
+        assert!(proof.is_some());
+        assert_eq!(proof.unwrap().fid as u32, FID_FOR_TEST);
+    }
+
+    #[tokio::test]
     async fn test_missing_id_registration() {
         let (mut engine, _tmpdir) = test_helper::new_engine();
         test_helper::commit_event(
@@ -1116,7 +1179,7 @@ mod tests {
             ),
         )
         .await;
-        commit_message(&mut engine, &default_message("msg1"), false).await;
+        assert_commit_fails(&mut engine, &default_message("msg1")).await;
         let messages = engine.get_casts_by_fid(test_helper::FID_FOR_TEST).unwrap();
         assert_eq!(0, messages.messages_bytes.len());
         let id_register = events_factory::create_id_register_event(
@@ -1124,7 +1187,7 @@ mod tests {
             onchain_event::IdRegisterEventType::Register,
         );
         test_helper::commit_event(&mut engine, &id_register).await;
-        commit_message(&mut engine, &default_message("msg1"), true).await;
+        commit_message(&mut engine, &default_message("msg1")).await;
         let messages = engine.get_casts_by_fid(test_helper::FID_FOR_TEST).unwrap();
         assert_eq!(1, messages.messages_bytes.len());
     }
@@ -1145,7 +1208,7 @@ mod tests {
             ),
         )
         .await;
-        commit_message(&mut engine, &default_message("msg1"), false).await;
+        assert_commit_fails(&mut engine, &default_message("msg1")).await;
         let messages = engine.get_casts_by_fid(test_helper::FID_FOR_TEST).unwrap();
         assert_eq!(0, messages.messages_bytes.len());
         test_helper::commit_event(
@@ -1157,7 +1220,7 @@ mod tests {
             ),
         )
         .await;
-        commit_message(&mut engine, &default_message("msg1"), true).await;
+        commit_message(&mut engine, &default_message("msg1")).await;
         let messages = engine.get_casts_by_fid(test_helper::FID_FOR_TEST).unwrap();
         assert_eq!(1, messages.messages_bytes.len());
     }

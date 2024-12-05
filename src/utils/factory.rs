@@ -486,3 +486,36 @@ pub mod messages_factory {
         }
     }
 }
+
+pub mod username_factory {
+    use super::*;
+    use crate::proto::snapchain::FnameTransfer;
+    use crate::proto::username_proof::UserNameProof;
+
+    pub fn create_username_proof(
+        fid: u64,
+        username_type: crate::proto::username_proof::UserNameType,
+        name: &String,
+    ) -> UserNameProof {
+        UserNameProof {
+            timestamp: time::current_timestamp() as u64,
+            name: name.as_bytes().to_vec(),
+            owner: rand::random::<[u8; 32]>().to_vec(),
+            signature: rand::random::<[u8; 32]>().to_vec(),
+            fid,
+            r#type: username_type as i32,
+        }
+    }
+
+    pub fn create_transfer(fid: u32, name: &String) -> FnameTransfer {
+        FnameTransfer {
+            id: rand::random::<u64>(),
+            from_fid: 0,
+            proof: Some(create_username_proof(
+                fid as u64,
+                crate::proto::username_proof::UserNameType::UsernameTypeFname,
+                name,
+            )),
+        }
+    }
+}

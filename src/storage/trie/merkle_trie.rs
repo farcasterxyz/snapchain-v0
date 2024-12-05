@@ -3,6 +3,7 @@ use super::errors::TrieError;
 use super::trie_node::{TrieNode, TIMESTAMP_LENGTH};
 use crate::proto::msg as message;
 use crate::proto::onchain_event;
+use crate::proto::username_proof;
 use crate::storage::store::account::IntoU8;
 use crate::storage::trie::{trie_node, util};
 use std::collections::HashMap;
@@ -24,7 +25,7 @@ impl TrieKey {
         let mut key = Vec::new();
         key.extend_from_slice(&Self::for_fid(fid));
         // Left shift msg_ype by 3 bits so we don't collide with onchain event types.
-        // Supports 8 onchain event types and 32 message types
+        // Supports 8 reserved types (onchain events, fnames etc) and 32 message types
         key.push(msg_type << 3);
         key
     }
@@ -34,6 +35,14 @@ impl TrieKey {
         key.extend_from_slice(&Self::for_fid(event.fid as u32));
         key.push(event.r#type as u8);
         key.extend_from_slice(&event.transaction_hash);
+        key
+    }
+
+    pub fn for_fname(fid: u32, name: &String) -> Vec<u8> {
+        let mut key = Vec::new();
+        key.extend_from_slice(&Self::for_fid(fid));
+        key.push(8); // 1-7 is for onchain events, use 8 for fnames, and everything else for messages
+        key.extend_from_slice(&name.as_bytes());
         key
     }
 

@@ -1,10 +1,11 @@
-use super::account::{IntoU8, OnchainEventStorageError};
+use super::account::{IntoU8, OnchainEventStorageError, UserDataStore};
 use crate::core::error::HubError;
 use crate::core::types::Height;
 use crate::proto::hub_event::HubEvent;
 use crate::proto::msg::Message;
 use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
-use crate::proto::{hub_event, msg as message, onchain_event, snapchain};
+use crate::proto::username_proof::UserNameProof;
+use crate::proto::{hub_event, msg as message, onchain_event, snapchain, username_proof};
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch};
 use crate::storage::store::account::{CastStore, MessagesPage};
 use crate::storage::store::stores::{StoreLimits, Stores};
@@ -16,6 +17,7 @@ use merkle_trie::TrieKey;
 use message::MessageType;
 use snapchain::{Block, ShardChunk, Transaction};
 use std::collections::HashSet;
+use std::str;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc};
@@ -338,6 +340,7 @@ impl ShardEngine {
         let mut user_messages_count = 0;
         let mut system_messages_count = 0;
         let mut onchain_events_count = 0;
+        let mut merged_fnames_count = 0;
         let mut merged_messages_count = 0;
         let mut pruned_messages_count = 0;
         let mut revoked_messages_count = 0;
@@ -374,6 +377,33 @@ impl ShardEngine {
                     }
                     Err(err) => {
                         warn!("Error merging onchain event: {:?}", err);
+                    }
+                }
+            }
+            if let Some(fname_transfer) = &msg.fname_transfer {
+                if fname_transfer.proof.is_none() {
+                    warn!(
+                        fid = snapchain_txn.fid,
+                        id = fname_transfer.id,
+                        "Fname transfer has no proof"
+                    );
+                }
+                let proof = fname_transfer.proof.as_ref().unwrap();
+                // TODO: Verify the EIP-712 server signature
+                let event = UserDataStore::merge_username_proof(
+                    &self.stores.user_data_store,
+                    proof,
+                    txn_batch,
+                );
+                match event {
+                    Ok(hub_event) => {
+                        merged_fnames_count += 1;
+                        self.update_trie(&merkle_trie::Context::new(), &hub_event, txn_batch)?;
+                        events.push(hub_event.clone());
+                        system_messages_count += 1;
+                    }
+                    Err(err) => {
+                        warn!("Error merging fname transfer: {:?}", err);
                     }
                 }
             }
@@ -470,6 +500,7 @@ impl ShardEngine {
             user_messages_merged = user_messages_count,
             system_messages_merged = system_messages_count,
             onchain_events_merged = onchain_events_count,
+            fnames_merged = merged_fnames_count,
             messages_merged = merged_messages_count,
             messages_pruned = pruned_messages_count,
             messages_revoked = revoked_messages_count,
@@ -644,10 +675,40 @@ impl ShardEngine {
                         vec![TrieKey::for_message(&msg)],
                     )?;
                 }
+                if let Some(msg) = &merge.deleted_username_proof_message {
+                    self.stores.trie.delete(
+                        ctx,
+                        &self.db,
+                        txn_batch,
+                        vec![TrieKey::for_message(&msg)],
+                    )?;
+                }
+                if let Some(proof) = &merge.username_proof {
+                    if proof.r#type == username_proof::UserNameType::UsernameTypeFname as i32 {
+                        let name = str::from_utf8(&proof.name).unwrap().to_string();
+                        self.stores.trie.insert(
+                            ctx,
+                            &self.db,
+                            txn_batch,
+                            vec![TrieKey::for_fname(proof.fid as u32, &name)],
+                        )?;
+                    }
+                }
+                if let Some(proof) = &merge.deleted_username_proof {
+                    if proof.r#type == username_proof::UserNameType::UsernameTypeFname as i32 {
+                        let name = str::from_utf8(&proof.name).unwrap().to_string();
+                        self.stores.trie.delete(
+                            ctx,
+                            &self.db,
+                            txn_batch,
+                            vec![TrieKey::for_fname(proof.fid as u32, &name)],
+                        )?;
+                    }
+                }
             }
-            _ => {
-                // TODO: This fallback case should not exist, every event should be handled
-                return Err(EngineError::UnsupportedEvent);
+            &None => {
+                // This should never happen
+                panic!("No body in event");
             }
         }
         Ok(())
@@ -870,6 +931,10 @@ impl ShardEngine {
         self.stores
             .username_proof_store
             .get_adds_by_fid::<fn(&Message) -> bool>(fid, &PageOptions::default(), None)
+    }
+
+    pub fn get_fname_proof(&self, name: &String) -> Result<Option<UserNameProof>, HubError> {
+        UserDataStore::get_username_proof(&self.stores.user_data_store, name.as_bytes())
     }
 
     pub fn get_onchain_events(
