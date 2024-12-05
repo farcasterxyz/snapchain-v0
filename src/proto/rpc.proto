@@ -29,16 +29,8 @@ message SubscribeRequest {
   optional uint32 shard_index = 5;
 }
 
-/** 
-  * This message exists to support uploading messages from existing hubs to new snapchain nodes via HubRpcClient
-  */
-message LegacyMessage {
-  bytes data = 1;
-}
-
 service HubService {
   rpc SubmitMessage(msg.Message) returns (msg.Message);
-  rpc SubmitLegacyMessage(LegacyMessage) returns (LegacyMessage);
   rpc GetBlocks(BlocksRequest) returns (stream snapchain.Block);
   rpc GetShardChunks(ShardChunksRequest) returns (ShardChunksResponse);
   rpc Subscribe(SubscribeRequest) returns (stream hub_event.HubEvent);
