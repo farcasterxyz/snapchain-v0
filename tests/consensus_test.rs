@@ -77,6 +77,7 @@ impl NodeForTest {
             block_store.clone(),
             make_tmp_path(),
             statsd_client.clone(),
+            16,
         )
         .await;
 
