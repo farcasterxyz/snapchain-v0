@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use hex;
 use libp2p::identity::ed25519::Keypair;
-use snapchain::network::server::MySnapchainService;
+use snapchain::network::server::MyHubService;
 use snapchain::node::snapchain_node::SnapchainNode;
-use snapchain::proto::rpc::snapchain_service_server::SnapchainServiceServer;
+use snapchain::proto::rpc::hub_service_server::HubServiceServer;
 use snapchain::proto::snapchain::Block;
 use snapchain::storage::db::{PageOptions, RocksDB};
 use snapchain::storage::store::BlockStore;
@@ -110,7 +110,7 @@ impl NodeForTest {
         let grpc_shard_stores = node.shard_stores.clone();
         let grpc_shard_senders = node.shard_senders.clone();
         tokio::spawn(async move {
-            let service = MySnapchainService::new(
+            let service = MyHubService::new(
                 grpc_block_store,
                 grpc_shard_stores,
                 grpc_shard_senders,
@@ -119,7 +119,7 @@ impl NodeForTest {
 
             let grpc_socket_addr: SocketAddr = addr.parse().unwrap();
             let resp = Server::builder()
-                .add_service(SnapchainServiceServer::new(service))
+                .add_service(HubServiceServer::new(service))
                 .serve(grpc_socket_addr)
                 .await;
 
