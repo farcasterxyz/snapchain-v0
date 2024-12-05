@@ -44,6 +44,7 @@ pub struct Stores {
     db: Arc<RocksDB>,
     pub(crate) trie: merkle_trie::MerkleTrie,
     pub store_limits: StoreLimits,
+    pub(crate) prev_trie: merkle_trie::MerkleTrie,
 }
 
 #[derive(Clone)]
@@ -127,6 +128,7 @@ impl Stores {
         store_limits: StoreLimits,
     ) -> Stores {
         trie.initialize(&db).unwrap();
+        let prev_trie = trie.clone();
 
         let event_handler = StoreEventHandler::new(None, None, None);
         let shard_store = ShardStore::new(db.clone());
@@ -139,6 +141,7 @@ impl Stores {
         let username_proof_store = UsernameProofStore::new(db.clone(), event_handler.clone(), 100);
         Stores {
             trie,
+            prev_trie,
             shard_store,
             cast_store,
             link_store,
