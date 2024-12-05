@@ -170,6 +170,7 @@ pub async fn register_user(fid: u32, signer: SigningKey, engine: &mut ShardEngin
     commit_event(engine, &signer_event).await;
 }
 
+#[allow(dead_code)] // This is used by tests
 pub async fn register_fname(fid: u32, username: &String, engine: &mut ShardEngine) {
     let messages_tx = engine.messages_tx();
     let fname_transfer = username_factory::create_transfer(fid, username);

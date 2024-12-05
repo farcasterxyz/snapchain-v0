@@ -385,13 +385,13 @@ pub mod messages_factory {
         pub fn create_user_data_add(
             fid: u32,
             user_data_type: UserDataType,
-            value: String,
+            value: &String,
             timestamp: Option<u32>,
             private_key: Option<&SigningKey>,
         ) -> message::Message {
             let user_data_body = UserDataBody {
                 r#type: user_data_type as i32,
-                value,
+                value: value.clone(),
             };
             create_message_with_data(
                 fid,

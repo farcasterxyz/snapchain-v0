@@ -3,7 +3,6 @@ use super::errors::TrieError;
 use super::trie_node::{TrieNode, TIMESTAMP_LENGTH};
 use crate::proto::msg as message;
 use crate::proto::onchain_event;
-use crate::proto::username_proof;
 use crate::storage::store::account::IntoU8;
 use crate::storage::trie::{trie_node, util};
 use std::collections::HashMap;

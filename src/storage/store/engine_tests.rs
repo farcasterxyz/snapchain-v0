@@ -11,7 +11,7 @@ mod tests {
     use crate::storage::store::test_helper::FID_FOR_TEST;
     use crate::storage::trie::merkle_trie;
     use crate::storage::trie::merkle_trie::TrieKey;
-    use crate::utils::factory::{self, events_factory, messages_factory, username_factory};
+    use crate::utils::factory::{self, events_factory, messages_factory, time, username_factory};
     use ed25519_dalek::SigningKey;
     use prost::Message as _;
     use tracing::warn;
@@ -477,7 +477,7 @@ mod tests {
         let user_data_add = messages_factory::user_data::create_user_data_add(
             test_helper::FID_FOR_TEST,
             message::UserDataType::Bio,
-            "Hi it's me".to_string(),
+            &"Hi it's me".to_string(),
             Some(timestamp),
             Some(&test_helper::default_signer()),
         );
@@ -1222,6 +1222,74 @@ mod tests {
         .await;
         commit_message(&mut engine, &default_message("msg1")).await;
         let messages = engine.get_casts_by_fid(test_helper::FID_FOR_TEST).unwrap();
+        assert_eq!(1, messages.messages_bytes.len());
+    }
+
+    #[tokio::test]
+    async fn test_fname_validation() {
+        let (mut engine, _tmpdir) = test_helper::new_engine();
+        let fname = &"farcaster".to_string();
+        test_helper::register_user(FID_FOR_TEST, test_helper::default_signer(), &mut engine).await;
+        test_helper::register_user(
+            test_helper::FID2_FOR_TEST,
+            test_helper::default_signer(),
+            &mut engine,
+        )
+        .await;
+
+        // When fname is not registered, message is not merged
+        {
+            let msg = messages_factory::user_data::create_user_data_add(
+                FID_FOR_TEST,
+                message::UserDataType::Username,
+                fname,
+                None,
+                None,
+            );
+            assert_commit_fails(&mut engine, &msg).await;
+        }
+
+        test_helper::register_fname(FID_FOR_TEST, fname, &mut engine).await;
+
+        // When fname is owned by a different fid, message is not merged
+        {
+            let msg = messages_factory::user_data::create_user_data_add(
+                test_helper::FID2_FOR_TEST,
+                message::UserDataType::Username,
+                fname,
+                None,
+                None,
+            );
+            assert_commit_fails(&mut engine, &msg).await;
+        }
+
+        // When fname is registered and owned by the same fid, message is merged
+        {
+            let msg = messages_factory::user_data::create_user_data_add(
+                FID_FOR_TEST,
+                message::UserDataType::Username,
+                fname,
+                None,
+                None,
+            );
+            commit_message(&mut engine, &msg).await;
+        }
+        let messages = engine.get_user_data_by_fid(FID_FOR_TEST).unwrap();
+        assert_eq!(1, messages.messages_bytes.len());
+
+        // Allows resetting username to blank
+        {
+            let msg = messages_factory::user_data::create_user_data_add(
+                FID_FOR_TEST,
+                message::UserDataType::Username,
+                &"".to_string(),
+                Some(time::farcaster_time() + 10),
+                None,
+            );
+            commit_message(&mut engine, &msg).await;
+        }
+
+        let messages = engine.get_user_data_by_fid(FID_FOR_TEST).unwrap();
         assert_eq!(1, messages.messages_bytes.len());
     }
 }

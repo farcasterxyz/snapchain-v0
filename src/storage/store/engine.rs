@@ -38,9 +38,6 @@ enum EngineError {
     #[error("unsupported message type")]
     UnsupportedMessageType(MessageType),
 
-    #[error("unsupported event")]
-    UnsupportedEvent,
-
     #[error("merkle trie root hash mismatch")]
     HashMismatch,
 
@@ -55,6 +52,9 @@ enum EngineError {
 
     #[error("missing fid")]
     MissingFid,
+
+    #[error("fname not registered for fid")]
+    MissingFname,
 
     #[error("missing signer")]
     MissingSigner,
@@ -602,12 +602,14 @@ impl ShardEngine {
             }
         }?;
 
-        info!(
-            fid = fid,
-            msg_type = msg_type.into_u8(),
-            count = events.len(),
-            "Pruned messages"
-        );
+        if !events.is_empty() {
+            info!(
+                fid = fid,
+                msg_type = msg_type.into_u8(),
+                count = events.len(),
+                "Pruned messages"
+            );
+        }
         Ok(events)
     }
 
@@ -732,6 +734,55 @@ impl ShardEngine {
             .get_active_signer(message_data.fid as u32, message.signer.clone())?
             .ok_or(EngineError::MissingSigner)?;
 
+        match &message_data.body {
+            Some(message::message_data::Body::UserDataBody(user_data)) => {
+                if user_data.r#type == message::UserDataType::Username as i32 {
+                    self.validate_username(message_data.fid as u32, &user_data.value)?;
+                }
+            }
+            Some(message::message_data::Body::UsernameProofBody(_)) => {
+                // Validate ens
+            }
+            Some(message::message_data::Body::VerificationAddAddressBody(__add)) => {
+                // Validate verification
+            }
+            Some(message::message_data::Body::LinkCompactStateBody(_)) => {
+                // Validate link state length
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    fn validate_username(&self, fid: u32, fname: &str) -> Result<(), EngineError> {
+        if fname.is_empty() {
+            // Setting an empty username is allowed, no need to validate the proof
+            return Ok(());
+        }
+        let fname = fname.to_string();
+        // TODO: validate fname string
+
+        if fname.ends_with(".eth") {
+            // TODO: Validate ens names
+        } else {
+            let proof =
+                UserDataStore::get_username_proof(&self.stores.user_data_store, fname.as_bytes())
+                    .map_err(|e| EngineError::StoreError {
+                    inner: e,
+                    hash: vec![],
+                })?;
+            match proof {
+                Some(proof) => {
+                    if proof.fid as u32 != fid {
+                        return Err(EngineError::MissingFname);
+                    }
+                }
+                None => {
+                    return Err(EngineError::MissingFname);
+                }
+            }
+        }
         Ok(())
     }
 
