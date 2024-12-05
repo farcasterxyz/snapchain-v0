@@ -295,14 +295,19 @@ impl ShardEngine {
         let mut txn = RocksDbTransactionBatch::new();
 
         let count_fn = Self::make_count_fn(self.statsd_client.clone(), self.shard_id);
-        let count_callback = move |read_count: u64| {
-            count_fn("trie.db_get_count.total", read_count);
-            count_fn("trie.db_get_count.for_propose", read_count);
+        let count_callback = move |read_count: (u64, u64)| {
+            count_fn("trie.db_get_count.total", read_count.0);
+            count_fn("trie.db_get_count.for_propose", read_count.0);
+            count_fn("trie.mem_get_count.total", read_count.1);
+            count_fn("trie.mem_get_count.for_propose", read_count.1);
         };
 
         let result = self
             .prepare_proposal(
-                &merkle_trie::Context::with_callback(count_callback),
+                &merkle_trie::Context::with_callback(
+                    self.stores.trie.node_cache.clone(),
+                    count_callback,
+                ),
                 &mut txn,
                 shard,
                 messages,
@@ -818,13 +823,18 @@ impl ShardEngine {
         let mut result = true;
 
         let count_fn = Self::make_count_fn(self.statsd_client.clone(), self.shard_id);
-        let count_callback = move |read_count: u64| {
-            count_fn("trie.db_get_count.total", read_count);
-            count_fn("trie.db_get_count.for_validate", read_count);
+        let count_callback = move |read_count: (u64, u64)| {
+            count_fn("trie.db_get_count.total", read_count.0);
+            count_fn("trie.db_get_count.for_validate", read_count.0);
+            count_fn("trie.mem_get_count.total", read_count.1);
+            count_fn("trie.mem_get_count.for_validate", read_count.1);
         };
 
         if let Err(err) = self.replay_proposal(
-            &merkle_trie::Context::with_callback(count_callback),
+            &merkle_trie::Context::with_callback(
+                self.stores.trie.node_cache.clone(),
+                count_callback,
+            ),
             &mut txn,
             transactions,
             shard_root,
@@ -858,6 +868,7 @@ impl ShardEngine {
             let _ = self.senders.events_tx.send(event);
         }
         self.stores.trie.reload(&self.db).unwrap();
+        self.stores.trie.clear_cache();
 
         _ = self.emit_commit_metrics(&shard_chunk);
 
@@ -915,11 +926,16 @@ impl ShardEngine {
         let transactions = &shard_chunk.transactions;
 
         let count_fn = Self::make_count_fn(self.statsd_client.clone(), self.shard_id);
-        let count_callback = move |read_count: u64| {
-            count_fn("trie.db_get_count.total", read_count);
-            count_fn("trie.db_get_count.for_commit", read_count);
+        let count_callback = move |read_count: (u64, u64)| {
+            count_fn("trie.db_get_count.total", read_count.0);
+            count_fn("trie.db_get_count.for_commit", read_count.0);
+            count_fn("trie.mem_get_count.total", read_count.1);
+            count_fn("trie.mem_get_count.for_commit", read_count.1);
         };
-        let trie_ctx = &merkle_trie::Context::with_callback(count_callback);
+        let trie_ctx = &merkle_trie::Context::with_callback(
+            self.stores.trie.node_cache.clone(),
+            count_callback,
+        );
 
         match self.replay_proposal(trie_ctx, &mut txn, transactions, shard_root) {
             Err(err) => {

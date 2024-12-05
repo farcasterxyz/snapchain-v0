@@ -42,7 +42,9 @@ pub struct Stores {
     pub onchain_event_store: OnchainEventStore,
     pub username_proof_store: Store<UsernameProofStoreDef>,
     db: Arc<RocksDB>,
+
     pub(crate) trie: merkle_trie::MerkleTrie,
+
     pub store_limits: StoreLimits,
 }
 

@@ -1,10 +1,11 @@
 use super::super::db::{RocksDB, RocksDbTransactionBatch};
 use super::errors::TrieError;
-use super::trie_node::{TrieNode, TIMESTAMP_LENGTH};
+use super::trie_node::{TrieNode, TrieNodeType, TIMESTAMP_LENGTH};
 use crate::proto;
 use crate::storage::store::account::IntoU8;
 use crate::storage::trie::{trie_node, util};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tracing::info;
 pub use trie_node::Context;
 
@@ -70,6 +71,7 @@ pub struct MerkleTrie {
     branch_xform: util::BranchingFactorTransform,
     root: Option<TrieNode>,
     branching_factor: u32,
+    pub node_cache: Arc<Mutex<HashMap<Vec<u8>, TrieNodeType>>>,
 }
 
 impl MerkleTrie {
@@ -81,7 +83,12 @@ impl MerkleTrie {
             root: None,
             branch_xform,
             branching_factor,
+            node_cache: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    pub fn clear_cache(&mut self) {
+        self.node_cache.lock().unwrap().clear();
     }
 
     fn create_empty_root(&mut self, txn_batch: &mut RocksDbTransactionBatch) {
