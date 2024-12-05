@@ -19,23 +19,25 @@ const MAX_VALUES_RETURNED_PER_CALL: usize = 1024;
 pub struct Context<'a> {
     db_read_count: atomic::AtomicU64,
     mem_read_count: atomic::AtomicU64,
+    cache_read_count: atomic::AtomicU64,
     cache: Arc<Mutex<HashMap<Vec<u8>, TrieNodeType>>>,
-    on_drop: Option<Box<dyn FnOnce((u64, u64)) + 'a>>,
+    on_drop: Option<Box<dyn FnOnce((u64, u64, u64)) + 'a>>,
 }
 
 impl<'a> Context<'a> {
     pub fn new() -> Self {
-        let callback = move |_: (u64, u64)| {};
+        let callback = move |_: (u64, u64, u64)| {};
         Self::with_callback(Arc::new(Mutex::new(HashMap::new())), callback)
     }
 
     pub fn with_callback<F>(cache: Arc<Mutex<HashMap<Vec<u8>, TrieNodeType>>>, callback: F) -> Self
     where
-        F: FnOnce((u64, u64)) + 'a,
+        F: FnOnce((u64, u64, u64)) + 'a,
     {
         Self {
             db_read_count: atomic::AtomicU64::new(0),
             mem_read_count: atomic::AtomicU64::new(0),
+            cache_read_count: atomic::AtomicU64::new(0),
             on_drop: Some(Box::new(callback)),
             cache,
         }
@@ -47,7 +49,8 @@ impl<'a> Drop for Context<'a> {
         if let Some(callback) = self.on_drop.take() {
             let db_read_count = self.db_read_count.load(atomic::Ordering::Relaxed);
             let mem_read_count = self.mem_read_count.load(atomic::Ordering::Relaxed);
-            callback((db_read_count, mem_read_count));
+            let cache_read_count = self.cache_read_count.load(atomic::Ordering::Relaxed);
+            callback((db_read_count, mem_read_count, cache_read_count));
         }
     }
 }
@@ -492,6 +495,7 @@ impl TrieNode {
 
                         let got = ctx.cache.lock().unwrap().get(&child_prefix).cloned();
                         let result: TrieNodeType = if let Some(child_node) = got {
+                            ctx.cache_read_count.fetch_add(1, atomic::Ordering::Relaxed);
                             child_node
                         } else {
                             // TODO: probably need count here
