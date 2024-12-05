@@ -1,5 +1,4 @@
 syntax = "proto3";
-package username_proof;
 
 enum UserNameType {
   USERNAME_TYPE_NONE = 0;

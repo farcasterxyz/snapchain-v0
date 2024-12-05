@@ -4,12 +4,11 @@ use prost::{DecodeError, Message};
 
 use super::{make_fid_key, StoreEventHandler};
 use crate::core::error::HubError;
-use crate::proto::hub_event::hub_event::Body;
-use crate::proto::hub_event::{HubEvent, HubEventType, MergeOnChainEventBody};
-use crate::proto::onchain_event::{
-    on_chain_event, IdRegisterEventBody, IdRegisterEventType, OnChainEvent, OnChainEventType,
+use crate::proto::{
+    self, on_chain_event, IdRegisterEventBody, IdRegisterEventType, OnChainEvent, OnChainEventType,
     SignerEventBody, SignerEventType,
 };
+use crate::proto::{HubEvent, HubEventType, MergeOnChainEventBody};
 use crate::storage::constants::{OnChainEventPostfix, RootPrefix, PAGE_SIZE_MAX};
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch, RocksdbError};
 use crate::storage::util::increment_vec_u8;
@@ -377,9 +376,11 @@ impl OnchainEventStore {
         merge_onchain_event(&self.db, txn, onchain_event.clone())?;
         let hub_event = &mut HubEvent {
             r#type: HubEventType::MergeOnChainEvent as i32,
-            body: Some(Body::MergeOnChainEventBody(MergeOnChainEventBody {
-                on_chain_event: Some(onchain_event.clone()),
-            })),
+            body: Some(proto::hub_event::Body::MergeOnChainEventBody(
+                MergeOnChainEventBody {
+                    on_chain_event: Some(onchain_event.clone()),
+                },
+            )),
             id: 0,
         };
         let id = self

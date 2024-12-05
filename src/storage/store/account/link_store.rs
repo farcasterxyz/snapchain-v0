@@ -7,17 +7,17 @@ use super::{
 };
 use crate::{
     core::error::HubError,
-    proto::msg::{link_body::Target, SignatureScheme},
+    proto::{link_body::Target, SignatureScheme},
     storage::util::vec_to_u8_24,
 };
-use crate::{proto::msg::message_data::Body, storage::db::PageOptions};
-use crate::{proto::msg::LinkBody, storage::util::increment_vec_u8};
+use crate::{proto::message_data::Body, storage::db::PageOptions};
+use crate::{proto::LinkBody, storage::util::increment_vec_u8};
 use crate::{
-    proto::msg::MessageData,
+    proto::MessageData,
     storage::constants::{RootPrefix, UserPostfix},
 };
 use crate::{
-    proto::msg::{Message, MessageType},
+    proto::{Message, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
 use std::{borrow::Borrow, convert::TryInto, sync::Arc};

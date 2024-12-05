@@ -1,6 +1,6 @@
-use crate::proto::admin_rpc::admin_service_server::AdminService;
-use crate::proto::snapchain::ValidatorMessage;
-use crate::proto::{admin_rpc, onchain_event::OnChainEvent};
+use crate::proto::admin_service_server::AdminService;
+use crate::proto::ValidatorMessage;
+use crate::proto::{self, OnChainEvent};
 use crate::storage::store::engine::{MempoolMessage, Senders};
 use rocksdb;
 use std::collections::HashMap;
@@ -91,8 +91,8 @@ impl MyAdminService {
 impl AdminService for MyAdminService {
     async fn terminate(
         &self,
-        request: Request<admin_rpc::TerminateRequest>,
-    ) -> Result<Response<admin_rpc::TerminateResponse>, Status> {
+        request: Request<proto::TerminateRequest>,
+    ) -> Result<Response<proto::TerminateResponse>, Status> {
         let destroy_database = request.get_ref().destroy_database;
 
         if destroy_database {
@@ -110,7 +110,7 @@ impl AdminService for MyAdminService {
             process::exit(0);
         });
 
-        let response = Response::new(admin_rpc::TerminateResponse {});
+        let response = Response::new(proto::TerminateResponse {});
         Ok(response)
     }
 

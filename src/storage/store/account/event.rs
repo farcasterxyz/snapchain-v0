@@ -1,5 +1,5 @@
 use crate::core::error::HubError;
-use crate::proto::hub_event::HubEvent;
+use crate::proto::HubEvent;
 use crate::storage::constants::{RootPrefix, PAGE_SIZE_MAX};
 use crate::storage::db::RocksDbTransactionBatch;
 use crate::storage::db::{PageOptions, RocksDB};

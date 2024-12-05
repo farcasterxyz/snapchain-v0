@@ -7,18 +7,14 @@ use super::{
 use crate::storage::constants::{RootPrefix, UserPostfix};
 use crate::storage::db::PageOptions;
 
-use crate::proto::hub_event;
+use crate::proto::{self, HubEvent, HubEventType, MergeUserNameProofBody, Message, MessageType};
 
-use crate::proto::msg::message_data::Body;
-use crate::proto::username_proof::UserNameType;
-use hub_event::{HubEvent, HubEventType, MergeUserNameProofBody};
+use crate::proto::message_data::Body;
+use crate::proto::UserNameType;
 
 use crate::core::error::HubError;
+use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
 use crate::storage::util;
-use crate::{
-    proto::{self, msg::Message, msg::MessageType},
-    storage::db::{RocksDB, RocksDbTransactionBatch},
-};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -101,7 +97,7 @@ impl StoreDef for UsernameProofStoreDef {
     }
 
     fn is_add_type(&self, message: &Message) -> bool {
-        message.signature_scheme == proto::msg::SignatureScheme::Ed25519 as i32
+        message.signature_scheme == proto::SignatureScheme::Ed25519 as i32
             && message.data.is_some()
             && message.data.as_ref().unwrap().r#type == MessageType::UsernameProof.into_u8() as i32
             && message.data.as_ref().unwrap().body.is_some()
@@ -291,7 +287,7 @@ impl StoreDef for UsernameProofStoreDef {
 
         HubEvent {
             r#type: HubEventType::MergeUsernameProof as i32,
-            body: Some(hub_event::hub_event::Body::MergeUsernameProofBody(
+            body: Some(proto::hub_event::Body::MergeUsernameProofBody(
                 MergeUserNameProofBody {
                     username_proof: None,
                     deleted_username_proof: username_proof_body,
@@ -331,7 +327,7 @@ impl StoreDef for UsernameProofStoreDef {
 
         HubEvent {
             r#type: HubEventType::MergeUsernameProof as i32,
-            body: Some(hub_event::hub_event::Body::MergeUsernameProofBody(
+            body: Some(proto::hub_event::Body::MergeUsernameProofBody(
                 MergeUserNameProofBody {
                     username_proof: username_proof_body,
                     deleted_username_proof: deleted_proof_body,
@@ -413,14 +409,12 @@ impl UsernameProofStore {
 
         let fid = read_fid_key(&fid_result.unwrap());
         let partial_message = Message {
-            data: Some(proto::msg::MessageData {
+            data: Some(proto::MessageData {
                 fid: fid as u64,
-                body: Some(Body::UsernameProofBody(
-                    proto::username_proof::UserNameProof {
-                        name: name.clone(),
-                        ..Default::default()
-                    },
-                )),
+                body: Some(Body::UsernameProofBody(proto::UserNameProof {
+                    name: name.clone(),
+                    ..Default::default()
+                })),
                 ..Default::default()
             }),
             ..Default::default()
@@ -443,14 +437,12 @@ impl UsernameProofStore {
         fid: u32,
     ) -> Result<Option<Message>, HubError> {
         let partial_message = Message {
-            data: Some(proto::msg::MessageData {
+            data: Some(proto::MessageData {
                 fid: fid as u64,
-                body: Some(Body::UsernameProofBody(
-                    proto::username_proof::UserNameProof {
-                        name: name.clone(),
-                        ..Default::default()
-                    },
-                )),
+                body: Some(Body::UsernameProofBody(proto::UserNameProof {
+                    name: name.clone(),
+                    ..Default::default()
+                })),
                 ..Default::default()
             }),
             ..Default::default()

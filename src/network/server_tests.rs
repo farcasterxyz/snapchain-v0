@@ -5,9 +5,9 @@ mod tests {
     use std::time::Duration;
 
     use crate::network::server::MyHubService;
-    use crate::proto::hub_event::{HubEvent, HubEventType};
-    use crate::proto::rpc::hub_service_server::HubService;
-    use crate::proto::rpc::SubscribeRequest;
+    use crate::proto::hub_service_server::HubService;
+    use crate::proto::SubscribeRequest;
+    use crate::proto::{HubEvent, HubEventType};
     use crate::storage::db::{self, RocksDB, RocksDbTransactionBatch};
     use crate::storage::store::engine::Senders;
     use crate::storage::store::stores::{StoreLimits, Stores};

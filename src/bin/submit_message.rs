@@ -1,8 +1,9 @@
 use clap::Parser;
 use ed25519_dalek::{SecretKey, SigningKey};
 use hex::FromHex;
+use snapchain::proto::hub_service_client::HubServiceClient;
 use snapchain::utils::cli::compose_message;
-use snapchain::{proto::rpc::hub_service_client::HubServiceClient, utils::cli::send_message};
+use snapchain::utils::cli::send_message;
 
 #[derive(Parser)]
 struct Cli {

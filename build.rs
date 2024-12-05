@@ -3,8 +3,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Custom type attributes required for malachite
     builder = builder
-        .type_attribute("snapchain.ShardHash", "#[derive(Eq, PartialOrd, Ord)]")
-        .type_attribute("snapchain.Height", "#[derive(Copy, Eq, PartialOrd, Ord)]")
+        .type_attribute("ShardHash", "#[derive(Eq, PartialOrd, Ord)]")
+        .type_attribute("Height", "#[derive(Copy, Eq, PartialOrd, Ord)]")
         // TODO: this generates a lot of code, perhaps choose specific structures
         .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]");
 

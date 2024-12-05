@@ -1,4 +1,4 @@
-use crate::proto::snapchain::{Height, ShardChunk, ShardHeader};
+use crate::proto::{Height, ShardChunk, ShardHeader};
 use crate::storage::store::engine::{MempoolMessage, ShardStateChange};
 use crate::storage::store::stores::StoreLimits;
 use crate::storage::store::test_helper;

@@ -9,7 +9,7 @@ use crate::storage::constants::{RootPrefix, UserPostfix};
 use crate::storage::db::PageOptions;
 use crate::storage::util::{bytes_compare, increment_vec_u8};
 use crate::{
-    proto::msg::{self as message, Message, MessageType},
+    proto::{self as message, Message, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
 use std::{borrow::Borrow, convert::TryInto, sync::Arc};

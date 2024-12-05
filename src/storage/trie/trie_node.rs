@@ -5,7 +5,7 @@ use super::super::{
 };
 use super::errors::TrieError;
 use super::merkle_trie::TrieSnapshot;
-use crate::proto::sync_trie::DbTrieNode;
+use crate::proto::DbTrieNode;
 use prost::Message as _;
 use std::collections::HashMap;
 use std::sync::atomic;

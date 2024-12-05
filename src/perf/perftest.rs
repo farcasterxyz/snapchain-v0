@@ -1,14 +1,14 @@
-use crate::proto::onchain_event;
-use crate::proto::rpc::hub_service_client::HubServiceClient;
-use crate::proto::snapchain::Block;
+use crate::proto;
+use crate::proto::hub_service_client::HubServiceClient;
+use crate::proto::Block;
 use crate::storage::store::test_helper;
+use crate::utils::cli::send_on_chain_event;
 use crate::utils::cli::{compose_message, follow_blocks, send_message};
 use crate::utils::factory::events_factory;
 use crate::{
-    consensus::proposer::current_time, proto::admin_rpc::admin_service_client::AdminServiceClient,
+    consensus::proposer::current_time, proto::admin_service_client::AdminServiceClient,
     utils::cli::compose_rent_event,
 };
-use crate::{proto::msg as message, utils::cli::send_on_chain_event};
 use clap::Parser;
 use ed25519_dalek::{SecretKey, SigningKey};
 use figment::{
@@ -73,7 +73,7 @@ pub fn load_and_merge_config(config_path: &str) -> Result<Config, Box<dyn Error>
 }
 
 fn start_submit_messages(
-    messages_tx: mpsc::Sender<message::Message>,
+    messages_tx: mpsc::Sender<proto::Message>,
     config: Config,
 ) -> Vec<tokio::task::JoinHandle<()>> {
     let mut submit_message_handles = vec![];
@@ -115,10 +115,8 @@ fn start_submit_messages(
                 .await
                 .unwrap();
 
-            let id_register_event = events_factory::create_id_register_event(
-                FID,
-                onchain_event::IdRegisterEventType::Register,
-            );
+            let id_register_event =
+                events_factory::create_id_register_event(FID, proto::IdRegisterEventType::Register);
 
             send_on_chain_event(&mut admin_client, id_register_event)
                 .await
@@ -127,7 +125,7 @@ fn start_submit_messages(
             let signer_event = events_factory::create_signer_event(
                 FID,
                 test_helper::default_signer(),
-                onchain_event::SignerEventType::Add,
+                proto::SignerEventType::Add,
             );
 
             send_on_chain_event(&mut admin_client, signer_event)
@@ -167,7 +165,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     println!("Starting scenario {:#?}", cfg);
     let (blocks_tx, mut blocks_rx) = mpsc::channel::<Block>(10_000_000);
 
-    let (messages_tx, mut messages_rx) = mpsc::channel::<message::Message>(10_000_000);
+    let (messages_tx, mut messages_rx) = mpsc::channel::<proto::Message>(10_000_000);
     let submit_message_handles = start_submit_messages(messages_tx, cfg.clone());
 
     let follow_blocks_handle = tokio::spawn(async move {

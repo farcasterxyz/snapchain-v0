@@ -1,9 +1,9 @@
 use crate::core::types::{
     proto, Address, Height, ShardHash, ShardId, SnapchainShard, SnapchainValidator,
 };
-use crate::proto::rpc::hub_service_client::HubServiceClient;
-use crate::proto::rpc::{BlocksRequest, ShardChunksRequest};
-use crate::proto::snapchain::{Block, BlockHeader, FullProposal, ShardChunk, ShardHeader};
+use crate::proto::hub_service_client::HubServiceClient;
+use crate::proto::{Block, BlockHeader, FullProposal, ShardChunk, ShardHeader};
+use crate::proto::{BlocksRequest, ShardChunksRequest};
 use crate::storage::store::engine::{BlockEngine, ShardEngine, ShardStateChange};
 use crate::storage::store::BlockStorageError;
 use malachite_common::{Round, Validity};

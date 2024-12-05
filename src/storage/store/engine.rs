@@ -1,11 +1,11 @@
 use super::account::{IntoU8, OnchainEventStorageError, UserDataStore};
 use crate::core::error::HubError;
 use crate::core::types::Height;
-use crate::proto::hub_event::HubEvent;
-use crate::proto::msg::Message;
-use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
-use crate::proto::username_proof::UserNameProof;
-use crate::proto::{hub_event, msg as message, onchain_event, snapchain, username_proof};
+use crate::proto::HubEvent;
+use crate::proto::Message;
+use crate::proto::UserNameProof;
+use crate::proto::{self, Block, MessageType, ShardChunk, Transaction};
+use crate::proto::{OnChainEvent, OnChainEventType};
 use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch};
 use crate::storage::store::account::{CastStore, MessagesPage};
 use crate::storage::store::stores::{StoreLimits, Stores};
@@ -15,8 +15,6 @@ use crate::storage::trie::merkle_trie;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use itertools::Itertools;
 use merkle_trie::TrieKey;
-use message::MessageType;
-use snapchain::{Block, ShardChunk, Transaction};
 use std::collections::HashSet;
 use std::str;
 use std::sync::Arc;
@@ -76,8 +74,8 @@ impl EngineError {
 
 #[derive(Clone)]
 pub enum MempoolMessage {
-    UserMessage(message::Message),
-    ValidatorMessage(snapchain::ValidatorMessage),
+    UserMessage(proto::Message),
+    ValidatorMessage(proto::ValidatorMessage),
 }
 
 impl MempoolMessage {
@@ -391,11 +389,8 @@ impl ShardEngine {
                         events.push(hub_event.clone());
                         system_messages_count += 1;
                         match &onchain_event.body {
-                            Some(onchain_event::on_chain_event::Body::SignerEventBody(
-                                signer_event,
-                            )) => {
-                                if signer_event.event_type
-                                    == onchain_event::SignerEventType::Remove as i32
+                            Some(proto::on_chain_event::Body::SignerEventBody(signer_event)) => {
+                                if signer_event.event_type == proto::SignerEventType::Remove as i32
                                 {
                                     revoked_signers.insert(signer_event.key.clone());
                                 }
@@ -543,9 +538,9 @@ impl ShardEngine {
 
     fn merge_message(
         &mut self,
-        msg: &message::Message,
+        msg: &proto::Message,
         txn_batch: &mut RocksDbTransactionBatch,
-    ) -> Result<hub_event::HubEvent, EngineError> {
+    ) -> Result<proto::HubEvent, EngineError> {
         let data = msg.data.as_ref().ok_or(EngineError::NoMessageData)?;
         let mt = MessageType::try_from(data.r#type).or(Err(EngineError::InvalidMessageType))?;
 
@@ -644,11 +639,11 @@ impl ShardEngine {
     fn update_trie(
         &mut self,
         ctx: &merkle_trie::Context,
-        event: &hub_event::HubEvent,
+        event: &proto::HubEvent,
         txn_batch: &mut RocksDbTransactionBatch,
     ) -> Result<(), EngineError> {
         match &event.body {
-            Some(hub_event::hub_event::Body::MergeMessageBody(merge)) => {
+            Some(proto::hub_event::Body::MergeMessageBody(merge)) => {
                 if let Some(msg) = &merge.message {
                     self.stores.trie.insert(
                         ctx,
@@ -666,7 +661,7 @@ impl ShardEngine {
                     )?;
                 }
             }
-            Some(hub_event::hub_event::Body::MergeOnChainEventBody(merge)) => {
+            Some(proto::hub_event::Body::MergeOnChainEventBody(merge)) => {
                 if let Some(onchain_event) = &merge.on_chain_event {
                     self.stores.trie.insert(
                         ctx,
@@ -676,7 +671,7 @@ impl ShardEngine {
                     )?;
                 }
             }
-            Some(hub_event::hub_event::Body::PruneMessageBody(prune)) => {
+            Some(proto::hub_event::Body::PruneMessageBody(prune)) => {
                 if let Some(msg) = &prune.message {
                     self.stores.trie.delete(
                         ctx,
@@ -686,7 +681,7 @@ impl ShardEngine {
                     )?;
                 }
             }
-            Some(hub_event::hub_event::Body::RevokeMessageBody(revoke)) => {
+            Some(proto::hub_event::Body::RevokeMessageBody(revoke)) => {
                 if let Some(msg) = &revoke.message {
                     self.stores.trie.delete(
                         ctx,
@@ -696,7 +691,7 @@ impl ShardEngine {
                     )?;
                 }
             }
-            Some(hub_event::hub_event::Body::MergeUsernameProofBody(merge)) => {
+            Some(proto::hub_event::Body::MergeUsernameProofBody(merge)) => {
                 if let Some(msg) = &merge.username_proof_message {
                     self.stores.trie.insert(
                         ctx,
@@ -714,7 +709,7 @@ impl ShardEngine {
                     )?;
                 }
                 if let Some(proof) = &merge.username_proof {
-                    if proof.r#type == username_proof::UserNameType::UsernameTypeFname as i32 {
+                    if proof.r#type == proto::UserNameType::UsernameTypeFname as i32 {
                         let name = str::from_utf8(&proof.name).unwrap().to_string();
                         self.stores.trie.insert(
                             ctx,
@@ -725,7 +720,7 @@ impl ShardEngine {
                     }
                 }
                 if let Some(proof) = &merge.deleted_username_proof {
-                    if proof.r#type == username_proof::UserNameType::UsernameTypeFname as i32 {
+                    if proof.r#type == proto::UserNameType::UsernameTypeFname as i32 {
                         let name = str::from_utf8(&proof.name).unwrap().to_string();
                         self.stores.trie.delete(
                             ctx,
@@ -744,7 +739,7 @@ impl ShardEngine {
         Ok(())
     }
 
-    fn validate_user_message(&self, message: &message::Message) -> Result<(), EngineError> {
+    fn validate_user_message(&self, message: &proto::Message) -> Result<(), EngineError> {
         // Ensure message data is present
         let message_data = message.data.as_ref().ok_or(EngineError::NoMessageData)?;
 
@@ -763,18 +758,18 @@ impl ShardEngine {
             .ok_or(EngineError::MissingSigner)?;
 
         match &message_data.body {
-            Some(message::message_data::Body::UserDataBody(user_data)) => {
-                if user_data.r#type == message::UserDataType::Username as i32 {
+            Some(proto::message_data::Body::UserDataBody(user_data)) => {
+                if user_data.r#type == proto::UserDataType::Username as i32 {
                     self.validate_username(message_data.fid as u32, &user_data.value)?;
                 }
             }
-            Some(message::message_data::Body::UsernameProofBody(_)) => {
+            Some(proto::message_data::Body::UsernameProofBody(_)) => {
                 // Validate ens
             }
-            Some(message::message_data::Body::VerificationAddAddressBody(__add)) => {
+            Some(proto::message_data::Body::VerificationAddAddressBody(__add)) => {
                 // Validate verification
             }
-            Some(message::message_data::Body::LinkCompactStateBody(_)) => {
+            Some(proto::message_data::Body::LinkCompactStateBody(_)) => {
                 // Validate link state length
             }
             _ => {}

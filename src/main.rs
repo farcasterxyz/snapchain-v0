@@ -20,8 +20,8 @@ use snapchain::network::gossip::GossipEvent;
 use snapchain::network::gossip::SnapchainGossip;
 use snapchain::network::server::MyHubService;
 use snapchain::node::snapchain_node::SnapchainNode;
-use snapchain::proto::admin_rpc::admin_service_server::AdminServiceServer;
-use snapchain::proto::rpc::hub_service_server::HubServiceServer;
+use snapchain::proto::admin_service_server::AdminServiceServer;
+use snapchain::proto::hub_service_server::HubServiceServer;
 use snapchain::storage::db::RocksDB;
 use snapchain::utils::statsd_wrapper::StatsdClientWrapper;
 

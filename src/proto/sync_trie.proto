@@ -1,5 +1,4 @@
 syntax = "proto3";
-package sync_trie;
 
 message DbTrieNode {
   bytes key = 1;

@@ -1,5 +1,4 @@
 syntax = "proto3";
-package onchain_event;
 
 enum OnChainEventType {
   EVENT_TYPE_NONE = 0;

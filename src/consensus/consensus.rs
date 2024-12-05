@@ -20,7 +20,7 @@ use crate::core::types::{
     SnapchainValidatorContext,
 };
 use crate::network::gossip::GossipEvent;
-use crate::proto::snapchain::FullProposal;
+use crate::proto::FullProposal;
 pub use malachite_consensus::Params as ConsensusParams;
 pub use malachite_consensus::State as ConsensusState;
 use ractor::time::send_after;

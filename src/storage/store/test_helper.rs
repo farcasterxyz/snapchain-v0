@@ -8,9 +8,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tempfile;
 
-use crate::proto::onchain_event;
-use crate::proto::onchain_event::OnChainEvent;
-use crate::proto::snapchain::{Height, ShardChunk, ShardHeader, Transaction};
+use crate::proto;
+use crate::proto::OnChainEvent;
+use crate::proto::{Height, ShardChunk, ShardHeader, Transaction};
 use crate::storage::store::engine::{MempoolMessage, ShardStateChange};
 use crate::utils::factory::{events_factory, username_factory};
 use hex::FromHex;
@@ -100,7 +100,7 @@ pub async fn commit_event(engine: &mut ShardEngine, event: &OnChainEvent) -> Sha
 
     messages_tx
         .send(MempoolMessage::ValidatorMessage(
-            crate::proto::snapchain::ValidatorMessage {
+            crate::proto::ValidatorMessage {
                 on_chain_event: Some(event.clone()),
                 fname_transfer: None,
             },
@@ -169,10 +169,10 @@ pub fn default_storage_event(fid: u32) -> OnChainEvent {
 pub async fn register_user(fid: u32, signer: SigningKey, engine: &mut ShardEngine) {
     commit_event(engine, &default_storage_event(fid)).await;
     let id_register_event =
-        events_factory::create_id_register_event(fid, onchain_event::IdRegisterEventType::Register);
+        events_factory::create_id_register_event(fid, proto::IdRegisterEventType::Register);
     commit_event(engine, &id_register_event).await;
     let signer_event =
-        events_factory::create_signer_event(fid, signer, onchain_event::SignerEventType::Add);
+        events_factory::create_signer_event(fid, signer, proto::SignerEventType::Add);
     commit_event(engine, &signer_event).await;
 }
 
@@ -182,7 +182,7 @@ pub async fn register_fname(fid: u32, username: &String, engine: &mut ShardEngin
     let fname_transfer = username_factory::create_transfer(fid, username);
     messages_tx
         .send(MempoolMessage::ValidatorMessage(
-            crate::proto::snapchain::ValidatorMessage {
+            crate::proto::ValidatorMessage {
                 on_chain_event: None,
                 fname_transfer: Some(fname_transfer),
             },

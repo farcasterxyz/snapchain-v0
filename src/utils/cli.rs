@@ -1,8 +1,7 @@
-use crate::proto::admin_rpc::admin_service_client::AdminServiceClient;
-use crate::proto::msg as message;
-use crate::proto::onchain_event::OnChainEvent;
-use crate::proto::rpc::hub_service_client::HubServiceClient;
-use crate::proto::{rpc, snapchain::Block};
+use crate::proto::admin_service_client::AdminServiceClient;
+use crate::proto::hub_service_client::HubServiceClient;
+use crate::proto::OnChainEvent;
+use crate::proto::{self, Block};
 use crate::utils::factory::messages_factory;
 use ed25519_dalek::SigningKey;
 use std::error::Error;
@@ -18,8 +17,8 @@ const FETCH_SIZE: u64 = 100;
 // and clearly needs a lot of work. Use at your own risk.
 pub async fn send_message(
     client: &mut HubServiceClient<Channel>,
-    msg: &message::Message,
-) -> Result<message::Message, Box<dyn Error>> {
+    msg: &proto::Message,
+) -> Result<proto::Message, Box<dyn Error>> {
     let request = tonic::Request::new(msg.clone());
     let response = client.submit_message(request).await?;
     // println!("{}", serde_json::to_string(&response.get_ref()).unwrap());
@@ -44,7 +43,7 @@ pub fn compose_message(
     text: &str,
     timestamp: Option<u32>,
     private_key: Option<&SigningKey>,
-) -> message::Message {
+) -> proto::Message {
     messages_factory::casts::create_cast_add(fid, text, timestamp, private_key)
 }
 
@@ -52,12 +51,12 @@ pub async fn follow_blocks(
     addr: String,
     block_tx: mpsc::Sender<Block>,
 ) -> Result<(), Box<dyn Error>> {
-    let mut client = rpc::hub_service_client::HubServiceClient::connect(addr).await?;
+    let mut client = proto::hub_service_client::HubServiceClient::connect(addr).await?;
 
     let mut i = 1;
 
     loop {
-        let msg = rpc::BlocksRequest {
+        let msg = proto::BlocksRequest {
             shard_id: 0,
             start_block_number: i,
             stop_block_number: Some(i + FETCH_SIZE),

@@ -1,6 +1,6 @@
 use crate::core::types::FARCASTER_EPOCH;
-use crate::proto::msg as message;
-use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
+use crate::proto as message;
+use crate::proto::{OnChainEvent, OnChainEventType};
 use ed25519_dalek::{SecretKey, Signer, SigningKey};
 use hex::FromHex;
 use message::CastType::Cast;
@@ -33,7 +33,7 @@ pub mod time {
 
 pub mod events_factory {
     use super::*;
-    use crate::proto::onchain_event;
+    use crate::proto;
 
     pub fn create_onchain_event(fid: u32) -> OnChainEvent {
         OnChainEvent {
@@ -83,7 +83,7 @@ pub mod events_factory {
             }
         }
 
-        let rent_event_body = onchain_event::StorageRentEventBody {
+        let rent_event_body = proto::StorageRentEventBody {
             expiry: 0, // This field is ignored, we use block_timestamp to calculate expiry
             units: rent_units,
             payer: rand::random::<[u8; 32]>().to_vec(),
@@ -99,7 +99,7 @@ pub mod events_factory {
             fid: fid as u64,
             tx_index: 0,
             version: 1,
-            body: Some(onchain_event::on_chain_event::Body::StorageRentEventBody(
+            body: Some(proto::on_chain_event::Body::StorageRentEventBody(
                 rent_event_body,
             )),
         }
@@ -108,9 +108,9 @@ pub mod events_factory {
     pub fn create_signer_event(
         fid: u32,
         signer: SigningKey,
-        event_type: onchain_event::SignerEventType,
+        event_type: proto::SignerEventType,
     ) -> OnChainEvent {
-        let signer_event_body = onchain_event::SignerEventBody {
+        let signer_event_body = proto::SignerEventBody {
             key: signer.verifying_key().as_bytes().to_vec(),
             event_type: event_type as i32,
             metadata: vec![],
@@ -128,7 +128,7 @@ pub mod events_factory {
             fid: fid as u64,
             tx_index: 0,
             version: 1,
-            body: Some(onchain_event::on_chain_event::Body::SignerEventBody(
+            body: Some(proto::on_chain_event::Body::SignerEventBody(
                 signer_event_body,
             )),
         }
@@ -136,9 +136,9 @@ pub mod events_factory {
 
     pub fn create_id_register_event(
         fid: u32,
-        event_type: onchain_event::IdRegisterEventType,
+        event_type: proto::IdRegisterEventType,
     ) -> OnChainEvent {
-        let id_register_event_body = onchain_event::IdRegisterEventBody {
+        let id_register_event_body = proto::IdRegisterEventBody {
             to: vec![],
             event_type: event_type as i32,
             from: vec![],
@@ -155,7 +155,7 @@ pub mod events_factory {
             fid: fid as u64,
             tx_index: 0,
             version: 1,
-            body: Some(onchain_event::on_chain_event::Body::IdRegisterEventBody(
+            body: Some(proto::on_chain_event::Body::IdRegisterEventBody(
                 id_register_event_body,
             )),
         }
@@ -218,7 +218,7 @@ pub mod messages_factory {
 
     pub mod casts {
         use super::*;
-        use crate::proto::msg::CastRemoveBody;
+        use crate::proto::CastRemoveBody;
 
         pub fn create_cast_add(
             fid: u32,
@@ -249,7 +249,7 @@ pub mod messages_factory {
             target_hash: &Vec<u8>,
             timestamp: Option<u32>,
             private_key: Option<&SigningKey>,
-        ) -> crate::proto::msg::Message {
+        ) -> crate::proto::Message {
             let cast_remove = CastRemoveBody {
                 target_hash: target_hash.clone(),
             };
@@ -295,7 +295,7 @@ pub mod messages_factory {
             target_fid: u32,
             timestamp: Option<u32>,
             private_key: Option<&SigningKey>,
-        ) -> crate::proto::msg::Message {
+        ) -> crate::proto::Message {
             let link_body = LinkBody {
                 r#type: link_type,
                 display_timestamp: None,
@@ -316,7 +316,7 @@ pub mod messages_factory {
             target_fid: u32,
             timestamp: Option<u32>,
             private_key: Option<&SigningKey>,
-        ) -> crate::proto::msg::Message {
+        ) -> crate::proto::Message {
             let link_compact_state_body = LinkCompactStateBody {
                 r#type: link_type,
                 target_fids: vec![target_fid as u64],
@@ -456,11 +456,11 @@ pub mod messages_factory {
 
     pub mod username_proof {
         use super::*;
-        use crate::proto::username_proof::UserNameProof;
+        use crate::proto::UserNameProof;
 
         pub fn create_username_proof(
             fid: u64,
-            username_type: crate::proto::username_proof::UserNameType,
+            username_type: crate::proto::UserNameType,
             name: String,
             owner: String,
             signature: String,
@@ -489,12 +489,12 @@ pub mod messages_factory {
 
 pub mod username_factory {
     use super::*;
-    use crate::proto::snapchain::FnameTransfer;
-    use crate::proto::username_proof::UserNameProof;
+    use crate::proto::FnameTransfer;
+    use crate::proto::UserNameProof;
 
     pub fn create_username_proof(
         fid: u64,
-        username_type: crate::proto::username_proof::UserNameType,
+        username_type: crate::proto::UserNameType,
         name: &String,
     ) -> UserNameProof {
         UserNameProof {
@@ -513,7 +513,7 @@ pub mod username_factory {
             from_fid: 0,
             proof: Some(create_username_proof(
                 fid as u64,
-                crate::proto::username_proof::UserNameType::UsernameTypeFname,
+                crate::proto::UserNameType::UsernameTypeFname,
                 name,
             )),
         }

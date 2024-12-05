@@ -1,10 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use crate::proto::hub_event::HubEvent;
-    use crate::proto::msg::{self as message, ReactionType};
-    use crate::proto::onchain_event::{OnChainEvent, OnChainEventType};
-    use crate::proto::snapchain::ShardChunk;
-    use crate::proto::{hub_event, onchain_event};
+    use crate::proto::HubEvent;
+    use crate::proto::ShardChunk;
+    use crate::proto::{self, ReactionType};
+    use crate::proto::{OnChainEvent, OnChainEventType};
     use crate::storage::db::RocksDbTransactionBatch;
     use crate::storage::store::engine::{MempoolMessage, ShardEngine};
     use crate::storage::store::test_helper;
@@ -38,7 +37,7 @@ mod tests {
         hex::encode(b)
     }
 
-    fn default_message(text: &str) -> message::Message {
+    fn default_message(text: &str) -> proto::Message {
         messages_factory::casts::create_cast_add(
             test_helper::FID_FOR_TEST,
             text,
@@ -51,7 +50,7 @@ mod tests {
         events_factory::create_onchain_event(test_helper::FID_FOR_TEST)
     }
 
-    fn entities() -> (message::Message, message::Message) {
+    fn entities() -> (proto::Message, proto::Message) {
         let msg1 = default_message("msg1");
         let msg2 = default_message("msg2");
 
@@ -68,9 +67,9 @@ mod tests {
         (msg1, msg2)
     }
 
-    fn assert_merge_event(event: &HubEvent, merged_message: &message::Message) {
+    fn assert_merge_event(event: &HubEvent, merged_message: &proto::Message) {
         let generated_event = match &event.body {
-            Some(crate::proto::hub_event::hub_event::Body::MergeMessageBody(msg)) => msg,
+            Some(crate::proto::hub_event::Body::MergeMessageBody(msg)) => msg,
             _ => panic!("Unexpected event type: {:?}", event.body),
         };
         assert_eq!(
@@ -79,9 +78,9 @@ mod tests {
         );
     }
 
-    fn assert_prune_event(event: &HubEvent, pruned_message: &message::Message) {
+    fn assert_prune_event(event: &HubEvent, pruned_message: &proto::Message) {
         let generated_event = match &event.body {
-            Some(crate::proto::hub_event::hub_event::Body::PruneMessageBody(msg)) => msg,
+            Some(crate::proto::hub_event::Body::PruneMessageBody(msg)) => msg,
             _ => panic!("Unexpected event type: {:?}", event.body),
         };
         assert_eq!(
@@ -90,9 +89,9 @@ mod tests {
         );
     }
 
-    fn assert_revoke_event(event: &HubEvent, revoked_message: &message::Message) {
+    fn assert_revoke_event(event: &HubEvent, revoked_message: &proto::Message) {
         let generated_event = match &event.body {
-            Some(crate::proto::hub_event::hub_event::Body::RevokeMessageBody(msg)) => msg,
+            Some(crate::proto::hub_event::Body::RevokeMessageBody(msg)) => msg,
             _ => panic!("Unexpected event type: {:?}", event.body),
         };
         assert_eq!(
@@ -103,9 +102,7 @@ mod tests {
 
     fn assert_onchain_hub_event(event: &HubEvent, onchain_event: &OnChainEvent) {
         let generated_event = match &event.body {
-            Some(crate::proto::hub_event::hub_event::Body::MergeOnChainEventBody(onchain)) => {
-                onchain
-            }
+            Some(crate::proto::hub_event::Body::MergeOnChainEventBody(onchain)) => onchain,
             _ => panic!("Unexpected event type: {:?}", event.body),
         }
         .on_chain_event
@@ -118,7 +115,7 @@ mod tests {
         assert_eq!(&onchain_event.r#type, &generated_event.r#type);
     }
 
-    async fn commit_message(engine: &mut ShardEngine, msg: &message::Message) -> ShardChunk {
+    async fn commit_message(engine: &mut ShardEngine, msg: &proto::Message) -> ShardChunk {
         let messages_tx = engine.messages_tx();
 
         messages_tx
@@ -144,7 +141,7 @@ mod tests {
         chunk
     }
 
-    async fn assert_commit_fails(engine: &mut ShardEngine, msg: &message::Message) -> ShardChunk {
+    async fn assert_commit_fails(engine: &mut ShardEngine, msg: &proto::Message) -> ShardChunk {
         let messages_tx = engine.messages_tx();
 
         messages_tx
@@ -195,7 +192,7 @@ mod tests {
         // Propose a message that doesn't require storage
         messages_tx
             .send(MempoolMessage::ValidatorMessage(
-                crate::proto::snapchain::ValidatorMessage {
+                crate::proto::ValidatorMessage {
                     on_chain_event: Some(events_factory::create_onchain_event(
                         test_helper::FID_FOR_TEST,
                     )),
@@ -326,7 +323,7 @@ mod tests {
         let casts_result = engine.get_casts_by_fid(msg1.fid());
         let messages = casts_result.unwrap().messages_bytes;
         assert_eq!(1, messages.len());
-        let decoded = message::Message::decode(&*messages[0]).unwrap();
+        let decoded = proto::Message::decode(&*messages[0]).unwrap();
         assert_eq!(to_hex(&msg1.hash), to_hex(&decoded.hash));
 
         // And events are generated
@@ -367,7 +364,7 @@ mod tests {
         let casts_result = engine.get_casts_by_fid(cast.fid());
         let messages = casts_result.unwrap().messages_bytes;
         assert_eq!(1, messages.len());
-        let decoded = message::Message::decode(&*messages[0]).unwrap();
+        let decoded = proto::Message::decode(&*messages[0]).unwrap();
         assert_eq!(to_hex(&cast.hash), to_hex(&decoded.hash));
         assert_eq!(
             engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&cast)),
@@ -504,7 +501,7 @@ mod tests {
 
         let user_data_add = messages_factory::user_data::create_user_data_add(
             test_helper::FID_FOR_TEST,
-            message::UserDataType::Bio,
+            proto::UserDataType::Bio,
             &"Hi it's me".to_string(),
             Some(timestamp),
             Some(&test_helper::default_signer()),
@@ -569,7 +566,7 @@ mod tests {
 
         let username_proof_add = messages_factory::username_proof::create_username_proof(
             test_helper::FID_FOR_TEST as u64,
-            crate::proto::username_proof::UserNameType::UsernameTypeFname,
+            crate::proto::UserNameType::UsernameTypeFname,
             name.clone(),
             owner.clone(),
             signature.clone(),
@@ -798,7 +795,7 @@ mod tests {
         let mut event_rx = engine.get_senders().events_tx.subscribe();
         messages_tx
             .send(MempoolMessage::ValidatorMessage(
-                crate::proto::snapchain::ValidatorMessage {
+                crate::proto::ValidatorMessage {
                     on_chain_event: Some(onchain_event.clone()),
                     fname_transfer: None,
                 },
@@ -838,7 +835,7 @@ mod tests {
         assert_eq!(event_rx.recv().await.unwrap(), events.events[0]);
 
         let generated_event = match events.events[0].clone().body {
-            Some(crate::proto::hub_event::hub_event::Body::MergeOnChainEventBody(e)) => e,
+            Some(crate::proto::hub_event::Body::MergeOnChainEventBody(e)) => e,
             _ => panic!("Unexpected event type"),
         };
         assert_eq!(
@@ -1126,7 +1123,7 @@ mod tests {
         let another_signer_event = events_factory::create_signer_event(
             test_helper::FID_FOR_TEST,
             another_signer.clone(),
-            onchain_event::SignerEventType::Add,
+            proto::SignerEventType::Add,
         );
         test_helper::commit_event(&mut engine, &another_signer_event).await;
         test_helper::register_user(test_helper::FID_FOR_TEST + 1, signer.clone(), &mut engine)
@@ -1154,7 +1151,7 @@ mod tests {
         let revoke_event = events_factory::create_signer_event(
             test_helper::FID_FOR_TEST,
             signer.clone(),
-            onchain_event::SignerEventType::Remove,
+            proto::SignerEventType::Remove,
         );
         test_helper::commit_event(&mut engine, &revoke_event).await;
         assert_onchain_hub_event(&event_rx.try_recv().unwrap(), &revoke_event);
@@ -1193,7 +1190,7 @@ mod tests {
 
         messages_tx
             .send(MempoolMessage::ValidatorMessage(
-                crate::proto::snapchain::ValidatorMessage {
+                crate::proto::ValidatorMessage {
                     on_chain_event: None,
                     fname_transfer: Some(fname_transfer.clone()),
                 },
@@ -1212,7 +1209,7 @@ mod tests {
         let transfer_event = &event_rx.try_recv().unwrap();
         assert_eq!(
             transfer_event.r#type,
-            hub_event::HubEventType::MergeUsernameProof as i32
+            proto::HubEventType::MergeUsernameProof as i32
         );
         assert_eq!(event_rx.try_recv().is_err(), true); // No more events
 
@@ -1236,7 +1233,7 @@ mod tests {
             &factory::events_factory::create_signer_event(
                 test_helper::FID_FOR_TEST,
                 test_helper::default_signer(),
-                onchain_event::SignerEventType::Add,
+                proto::SignerEventType::Add,
             ),
         )
         .await;
@@ -1245,7 +1242,7 @@ mod tests {
         assert_eq!(0, messages.messages_bytes.len());
         let id_register = events_factory::create_id_register_event(
             test_helper::FID_FOR_TEST,
-            onchain_event::IdRegisterEventType::Register,
+            proto::IdRegisterEventType::Register,
         );
         test_helper::commit_event(&mut engine, &id_register).await;
         commit_message(&mut engine, &default_message("msg1")).await;
@@ -1265,7 +1262,7 @@ mod tests {
             &mut engine,
             &factory::events_factory::create_id_register_event(
                 test_helper::FID_FOR_TEST,
-                onchain_event::IdRegisterEventType::Register,
+                proto::IdRegisterEventType::Register,
             ),
         )
         .await;
@@ -1277,7 +1274,7 @@ mod tests {
             &factory::events_factory::create_signer_event(
                 test_helper::FID_FOR_TEST,
                 test_helper::default_signer(),
-                onchain_event::SignerEventType::Add,
+                proto::SignerEventType::Add,
             ),
         )
         .await;
@@ -1302,7 +1299,7 @@ mod tests {
         {
             let msg = messages_factory::user_data::create_user_data_add(
                 FID_FOR_TEST,
-                message::UserDataType::Username,
+                proto::UserDataType::Username,
                 fname,
                 None,
                 None,
@@ -1316,7 +1313,7 @@ mod tests {
         {
             let msg = messages_factory::user_data::create_user_data_add(
                 test_helper::FID2_FOR_TEST,
-                message::UserDataType::Username,
+                proto::UserDataType::Username,
                 fname,
                 None,
                 None,
@@ -1328,7 +1325,7 @@ mod tests {
         {
             let msg = messages_factory::user_data::create_user_data_add(
                 FID_FOR_TEST,
-                message::UserDataType::Username,
+                proto::UserDataType::Username,
                 fname,
                 None,
                 None,
@@ -1342,7 +1339,7 @@ mod tests {
         {
             let msg = messages_factory::user_data::create_user_data_add(
                 FID_FOR_TEST,
-                message::UserDataType::Username,
+                proto::UserDataType::Username,
                 &"".to_string(),
                 Some(time::farcaster_time() + 10),
                 None,
