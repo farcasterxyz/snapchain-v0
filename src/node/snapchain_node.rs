@@ -42,6 +42,7 @@ impl SnapchainNode {
         block_store: BlockStore,
         rocksdb_dir: String,
         statsd_client: StatsdClientWrapper,
+        trie_branching_factor: u32,
     ) -> Self {
         let validator_address = Address(keypair.public().to_bytes());
 
@@ -83,13 +84,14 @@ impl SnapchainNode {
             let db = RocksDB::new(format!("{}/shard{}", rocksdb_dir, shard_id).as_str());
             db.open().unwrap();
 
-            let trie = merkle_trie::MerkleTrie::new(16).unwrap(); //TODO: don't hardcode; don't unwrap()
+            let trie = merkle_trie::MerkleTrie::new(trie_branching_factor).unwrap(); //TODO: don't unwrap()
             let engine = ShardEngine::new(
                 Arc::new(db),
                 trie,
                 shard_id,
                 StoreLimits::default(),
                 statsd_client.clone(),
+                config.max_messages_per_block,
             );
 
             shard_senders.insert(shard_id, engine.get_senders());

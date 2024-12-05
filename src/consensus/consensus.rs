@@ -51,6 +51,8 @@ pub struct Config {
 
     #[serde(with = "humantime_serde")]
     pub propose_value_delay: Duration,
+
+    pub max_messages_per_block: u32,
 }
 
 impl Config {
@@ -80,6 +82,7 @@ impl Config {
                 .collect::<Vec<String>>()
                 .join(","),
             propose_value_delay: self.propose_value_delay,
+            max_messages_per_block: self.max_messages_per_block,
         }
     }
 }
@@ -90,6 +93,7 @@ impl Default for Config {
             private_key: hex::encode(SecretKey::generate()),
             shard_ids: "1".to_string(),
             propose_value_delay: Duration::from_millis(250),
+            max_messages_per_block: 250, //TODO
         }
     }
 }

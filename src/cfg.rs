@@ -36,6 +36,7 @@ pub struct Config {
     pub rocksdb_dir: String,
     pub clear_db: bool,
     pub statsd: StatsdConfig,
+    pub trie_branching_factor: u32,
 }
 
 impl Default for Config {
@@ -50,6 +51,7 @@ impl Default for Config {
             rocksdb_dir: ".rocks".to_string(),
             clear_db: false,
             statsd: StatsdConfig::default(),
+            trie_branching_factor: 16,
         }
     }
 }
