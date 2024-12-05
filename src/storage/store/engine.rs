@@ -193,10 +193,12 @@ impl ShardEngine {
                 break;
             }
 
-            match self.messages_rx.try_recv() {
-                Ok(msg) => messages.push(msg),
-                Err(mpsc::error::TryRecvError::Empty) => (),
-                Err(err) => return Err(EngineError::from(err)),
+            while messages.len() < self.max_messages_per_block as usize {
+                match self.messages_rx.try_recv() {
+                    Ok(msg) => messages.push(msg),
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(err) => return Err(EngineError::from(err)),
+                }
             }
 
             if messages.len() >= self.max_messages_per_block as usize {
