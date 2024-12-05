@@ -89,9 +89,13 @@ impl Proposer for ShardProposer {
         round: Round,
         _timeout: Duration,
     ) -> FullProposal {
-        // Sleep before proposing the value so we don't produce blocks too fast
-        // TODO: rethink/reconsider
-        tokio::time::sleep(self.propose_value_delay).await;
+        // TODO: perhaps not the best place to get our messages, but this is (currently) the
+        // last place we're still in an async function
+        let messages = self
+            .engine
+            .pull_messages(self.propose_value_delay)
+            .await
+            .unwrap(); // TODO: don't unwrap
 
         let previous_chunk = self.engine.get_last_shard_chunk();
         let parent_hash = match previous_chunk {
@@ -99,7 +103,9 @@ impl Proposer for ShardProposer {
             None => vec![0, 32],
         };
 
-        let state_change = self.engine.propose_state_change(self.shard_id.shard_id());
+        let state_change = self
+            .engine
+            .propose_state_change(self.shard_id.shard_id(), messages);
         let shard_header = ShardHeader {
             parent_hash,
             timestamp: current_time(),

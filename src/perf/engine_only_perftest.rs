@@ -4,6 +4,7 @@ use crate::storage::store::stores::StoreLimits;
 use crate::storage::store::test_helper;
 use crate::utils::cli::compose_message;
 use std::error::Error;
+use std::time::Duration;
 
 fn state_change_to_shard_chunk(
     shard_index: u32,
@@ -53,7 +54,8 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
             i += 1;
         }
 
-        let state_change = engine.propose_state_change(1);
+        let messages = engine.pull_messages(Duration::from_millis(50)).await?;
+        let state_change = engine.propose_state_change(1, messages);
 
         let valid = engine.validate_state_change(&state_change);
         assert!(valid);
