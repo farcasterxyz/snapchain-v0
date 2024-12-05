@@ -24,7 +24,6 @@ use crate::{
     proto::msg::MessageType,
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
-use prost::Message;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -218,7 +217,8 @@ impl UserDataStore {
     pub fn merge_username_proof(
         store: &Store<UserDataStoreDef>,
         username_proof: &UserNameProof,
-    ) -> Result<Vec<u8>, HubError> {
+        txn: &mut RocksDbTransactionBatch,
+    ) -> Result<HubEvent, HubError> {
         let existing_proof = get_username_proof(&store.db(), &username_proof.name)?;
         let mut existing_fid: Option<u32> = None;
 
@@ -248,11 +248,10 @@ impl UserDataStore {
             });
         }
 
-        let mut txn = RocksDbTransactionBatch::new();
         if username_proof.fid == 0 {
-            delete_username_proof_transaction(&mut txn, username_proof, existing_fid);
+            delete_username_proof_transaction(txn, username_proof, existing_fid);
         } else {
-            put_username_proof_transaction(&mut txn, username_proof);
+            put_username_proof_transaction(txn, username_proof);
         }
 
         let mut hub_event = HubEvent {
@@ -269,14 +268,10 @@ impl UserDataStore {
         };
         let id = store
             .event_handler()
-            .commit_transaction(&mut txn, &mut hub_event)?;
-
-        store.db().commit(txn)?;
+            .commit_transaction(txn, &mut hub_event)?;
 
         hub_event.id = id;
-        let hub_event_bytes = hub_event.encode_to_vec();
-
-        Ok(hub_event_bytes)
+        Ok(hub_event)
     }
 
     fn username_proof_compare(a: &UserNameProof, b: &UserNameProof) -> i8 {

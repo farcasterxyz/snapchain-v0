@@ -2,6 +2,7 @@ syntax = "proto3";
 package snapchain;
 
 import "message.proto";
+import "username_proof.proto";
 import "onchain_event.proto";
 
 // Common types
@@ -122,7 +123,9 @@ message Transaction {
 
 // Fname transfers
 message FnameTransfer {
-  uint64 fid = 1;
+  uint64 id = 1;
+  uint64 from_fid = 2;
+  username_proof.UserNameProof proof = 4;
 }
 
 // Validator initiated prunes/revokes etc

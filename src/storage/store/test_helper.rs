@@ -11,7 +11,7 @@ use crate::proto::onchain_event;
 use crate::proto::onchain_event::OnChainEvent;
 use crate::proto::snapchain::{Height, ShardChunk, ShardHeader, Transaction};
 use crate::storage::store::engine::{MempoolMessage, ShardStateChange};
-use crate::utils::factory::events_factory;
+use crate::utils::factory::{events_factory, username_factory};
 use hex::FromHex;
 
 pub const FID_FOR_TEST: u32 = 1234;
@@ -168,6 +168,24 @@ pub async fn register_user(fid: u32, signer: SigningKey, engine: &mut ShardEngin
     let signer_event =
         events_factory::create_signer_event(fid, signer, onchain_event::SignerEventType::Add);
     commit_event(engine, &signer_event).await;
+}
+
+#[allow(dead_code)] // This is used by tests
+pub async fn register_fname(fid: u32, username: &String, engine: &mut ShardEngine) {
+    let messages_tx = engine.messages_tx();
+    let fname_transfer = username_factory::create_transfer(fid, username);
+    messages_tx
+        .send(MempoolMessage::ValidatorMessage(
+            crate::proto::snapchain::ValidatorMessage {
+                on_chain_event: None,
+                fname_transfer: Some(fname_transfer),
+            },
+        ))
+        .await
+        .unwrap();
+    let state_change = engine.propose_state_change(1);
+
+    validate_and_commit_state_change(engine, &state_change);
 }
 
 pub fn default_signer() -> SigningKey {
