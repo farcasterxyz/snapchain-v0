@@ -122,6 +122,7 @@ pub struct ShardEngine {
     stores: Stores,
     messages_rx: mpsc::Receiver<MempoolMessage>,
     statsd_client: StatsdClientWrapper,
+    max_messages_per_block: u32,
 }
 
 impl ShardEngine {
@@ -131,6 +132,7 @@ impl ShardEngine {
         shard_id: u32,
         store_limits: StoreLimits,
         statsd_client: StatsdClientWrapper,
+        max_messages_per_block: u32,
     ) -> ShardEngine {
         // TODO: adding the trie here introduces many calls that want to return errors. Rethink unwrap strategy.
         let (messages_tx, messages_rx) = mpsc::channel::<MempoolMessage>(10_000);
@@ -141,6 +143,7 @@ impl ShardEngine {
             messages_rx,
             db,
             statsd_client,
+            max_messages_per_block,
         }
     }
 
@@ -182,7 +185,7 @@ impl ShardEngine {
     ) -> Result<ShardStateChange, EngineError> {
         let mut messages = Vec::new();
 
-        loop {
+        for _ in 0..self.max_messages_per_block {
             match self.messages_rx.try_recv() {
                 Ok(msg) => messages.push(msg),
                 Err(mpsc::error::TryRecvError::Empty) => break,
@@ -752,6 +755,13 @@ impl ShardEngine {
         self.count("commit.transactions", counts.transactions);
         self.count("commit.user_messages", counts.user_messages);
         self.count("commit.system_messages", counts.system_messages);
+
+        // useful to see on perf test dashboards
+        self.gauge(
+            "trie.branching_factor",
+            self.stores.trie.branching_factor() as u64,
+        );
+        self.gauge("max_messages_per_block", self.max_messages_per_block as u64);
 
         Ok(())
     }

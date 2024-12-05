@@ -62,6 +62,7 @@ pub struct TrieSnapshot {
 pub struct MerkleTrie {
     branch_xform: util::BranchingFactorTransform,
     root: Option<TrieNode>,
+    branching_factor: u32,
 }
 
 impl MerkleTrie {
@@ -72,6 +73,7 @@ impl MerkleTrie {
         Ok(MerkleTrie {
             root: None,
             branch_xform,
+            branching_factor,
         })
     }
 
@@ -342,6 +344,10 @@ impl MerkleTrie {
                 prefix: prefix.to_vec(),
             })
         }
+    }
+
+    pub fn branching_factor(&self) -> u32 {
+        self.branching_factor
     }
 }
 
