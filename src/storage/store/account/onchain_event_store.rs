@@ -4,9 +4,8 @@ use prost::{DecodeError, Message};
 
 use super::{make_fid_key, StoreEventHandler};
 use crate::core::error::HubError;
-use crate::proto::hub_event::Body;
 use crate::proto::{
-    on_chain_event, IdRegisterEventBody, IdRegisterEventType, OnChainEvent, OnChainEventType,
+    self, on_chain_event, IdRegisterEventBody, IdRegisterEventType, OnChainEvent, OnChainEventType,
     SignerEventBody, SignerEventType,
 };
 use crate::proto::{HubEvent, HubEventType, MergeOnChainEventBody};
@@ -377,9 +376,11 @@ impl OnchainEventStore {
         merge_onchain_event(&self.db, txn, onchain_event.clone())?;
         let hub_event = &mut HubEvent {
             r#type: HubEventType::MergeOnChainEvent as i32,
-            body: Some(Body::MergeOnChainEventBody(MergeOnChainEventBody {
-                on_chain_event: Some(onchain_event.clone()),
-            })),
+            body: Some(proto::hub_event::Body::MergeOnChainEventBody(
+                MergeOnChainEventBody {
+                    on_chain_event: Some(onchain_event.clone()),
+                },
+            )),
             id: 0,
         };
         let id = self

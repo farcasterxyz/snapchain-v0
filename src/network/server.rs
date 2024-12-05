@@ -1,19 +1,17 @@
 use std::collections::HashMap;
 
 use crate::core::error::HubError;
-use crate::proto::hub_event::HubEvent;
-use crate::proto::msg as message;
-use crate::proto::rpc::hub_service_server::HubService;
-use crate::proto::rpc::{BlocksRequest, ShardChunksRequest, ShardChunksResponse, SubscribeRequest};
-use crate::proto::snapchain::Block;
+use crate::proto;
+use crate::proto::hub_service_server::HubService;
+use crate::proto::Block;
+use crate::proto::HubEvent;
+use crate::proto::{BlocksRequest, ShardChunksRequest, ShardChunksResponse, SubscribeRequest};
 use crate::storage::db::PageOptions;
 use crate::storage::store::engine::{MempoolMessage, Senders};
 use crate::storage::store::stores::Stores;
 use crate::storage::store::BlockStore;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use hex::ToHex;
-use prost::Message;
-use serde::Deserialize;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};

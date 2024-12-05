@@ -489,12 +489,12 @@ pub mod messages_factory {
 
 pub mod username_factory {
     use super::*;
-    use crate::proto::snapchain::FnameTransfer;
-    use crate::proto::username_proof::UserNameProof;
+    use crate::proto::FnameTransfer;
+    use crate::proto::UserNameProof;
 
     pub fn create_username_proof(
         fid: u64,
-        username_type: crate::proto::username_proof::UserNameType,
+        username_type: crate::proto::UserNameType,
         name: &String,
     ) -> UserNameProof {
         UserNameProof {
@@ -513,7 +513,7 @@ pub mod username_factory {
             from_fid: 0,
             proof: Some(create_username_proof(
                 fid as u64,
-                crate::proto::username_proof::UserNameType::UsernameTypeFname,
+                crate::proto::UserNameType::UsernameTypeFname,
                 name,
             )),
         }
