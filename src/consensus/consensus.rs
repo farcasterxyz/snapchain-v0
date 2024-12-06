@@ -47,7 +47,8 @@ impl<Ctx: Context + SnapchainContext> From<TimeoutElapsed<Timeout>> for Consensu
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub private_key: String,
-    pub shard_ids: String,
+    pub num_shards: u32,
+    pub shard_ids: Vec<u32>,
 
     #[serde(with = "humantime_serde")]
     pub propose_value_delay: Duration,
@@ -62,25 +63,11 @@ impl Config {
         Keypair::from(secret_key.unwrap())
     }
 
-    pub fn shard_ids(&self) -> Vec<u32> {
-        self.shard_ids
-            .split(',')
-            .map(|s| s.parse().unwrap())
-            .collect()
-    }
-
-    pub fn num_shards(&self) -> u32 {
-        self.shard_ids().len() as u32
-    }
-
     pub fn with_shard_ids(&self, shard_ids: Vec<u32>) -> Self {
         Self {
             private_key: self.private_key.clone(),
-            shard_ids: shard_ids
-                .iter()
-                .map(|i| i.to_string())
-                .collect::<Vec<String>>()
-                .join(","),
+            num_shards: shard_ids.len() as u32,
+            shard_ids,
             propose_value_delay: self.propose_value_delay,
             max_messages_per_block: self.max_messages_per_block,
         }
@@ -91,7 +78,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             private_key: hex::encode(SecretKey::generate()),
-            shard_ids: "1".to_string(),
+            shard_ids: vec![1],
+            num_shards: 1,
             propose_value_delay: Duration::from_millis(250),
             max_messages_per_block: 250, //TODO
         }
