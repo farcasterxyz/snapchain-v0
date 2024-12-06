@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::core::error::HubError;
 use crate::proto;
 use crate::proto::hub_service_server::HubService;
@@ -12,6 +10,8 @@ use crate::storage::store::stores::{StoreLimits, Stores};
 use crate::storage::store::BlockStore;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use hex::ToHex;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
@@ -21,7 +21,7 @@ pub struct MyHubService {
     block_store: BlockStore,
     shard_stores: HashMap<u32, Stores>,
     shard_senders: HashMap<u32, Senders>,
-    message_tx: mpsc::Sender<MempoolMessage>,
+    num_shards: u32,
     statsd_client: StatsdClientWrapper,
 }
 
@@ -31,54 +31,71 @@ impl MyHubService {
         shard_stores: HashMap<u32, Stores>,
         shard_senders: HashMap<u32, Senders>,
         statsd_client: StatsdClientWrapper,
+        num_shards: u32,
     ) -> Self {
-        // TODO(aditi): This logic will change once a mempool exists
-        let message_tx = shard_senders.get(&1u32).unwrap().messages_tx.clone();
-
         Self {
             block_store,
             shard_senders,
             shard_stores,
-            message_tx,
             statsd_client,
+            num_shards,
         }
     }
-}
 
-#[tonic::async_trait]
-impl HubService for MyHubService {
-    async fn submit_message(
+    async fn submit_message_internal(
         &self,
-        request: Request<proto::Message>,
-    ) -> Result<Response<proto::Message>, Status> {
-        let start_time = std::time::Instant::now();
-
-        let hash = request.get_ref().hash.encode_hex::<String>();
-        info!(hash, "Received call to [submit_message] RPC");
-
-        let message = request.into_inner();
-
-        let stores = self.shard_stores.get(&1u32).unwrap();
-        // TODO: This is a hack to get around the fact that self cannot be made mutable
-        let mut readonly_engine = ShardEngine::new(
-            stores.db.clone(),
-            stores.trie.clone(),
-            1,
-            StoreLimits::default(),
-            self.statsd_client.clone(),
-            100,
-        );
-        let result = readonly_engine.simulate_message(&message);
-
-        if let Err(err) = result {
-            return Err(Status::invalid_argument(format!(
-                "Invalid message: {}",
-                err.to_string()
-            )));
+        message: proto::Message,
+        bypass_validation: bool,
+    ) -> Result<proto::Message, Status> {
+        let fid = message.fid();
+        if fid == 0 {
+            return Err(Status::invalid_argument(
+                "no fid or invalid fid".to_string(),
+            ));
         }
 
-        let result = self
-            .message_tx
+        let dst_shard = route_message(fid, self.num_shards);
+
+        let sender = match self.shard_senders.get(&dst_shard) {
+            Some(sender) => sender,
+            None => {
+                return Err(Status::invalid_argument(
+                    "no shard sender for fid".to_string(),
+                ))
+            }
+        };
+
+        let stores = match self.shard_stores.get(&dst_shard) {
+            Some(sender) => sender,
+            None => {
+                return Err(Status::invalid_argument(
+                    "no shard store for fid".to_string(),
+                ))
+            }
+        };
+
+        if !bypass_validation {
+            // TODO: This is a hack to get around the fact that self cannot be made mutable
+            let mut readonly_engine = ShardEngine::new(
+                stores.db.clone(),
+                stores.trie.clone(),
+                1,
+                StoreLimits::default(),
+                self.statsd_client.clone(),
+                100,
+            );
+            let result = readonly_engine.simulate_message(&message);
+
+            if let Err(err) = result {
+                return Err(Status::invalid_argument(format!(
+                    "Invalid message: {}",
+                    err.to_string()
+                )));
+            }
+        }
+
+        let result = sender
+            .messages_tx
             .send(MempoolMessage::UserMessage(message.clone()))
             .await;
 
@@ -94,14 +111,77 @@ impl HubService for MyHubService {
             }
         }
 
-        let elapsed = start_time.elapsed().as_millis();
+        Ok(message)
+    }
+}
 
-        let response = Response::new(message);
+// TODO: find a better place for this
+fn route_message(fid: u32, num_shards: u32) -> u32 {
+    let hash = Sha256::digest(fid.to_be_bytes());
+    let hash_u32 = u32::from_be_bytes(hash[..4].try_into().unwrap());
+    (hash_u32 % num_shards) + 1
+}
 
-        self.statsd_client
-            .time("rpc.submit_message.duration", elapsed as u64);
+#[tonic::async_trait]
+impl HubService for MyHubService {
+    async fn submit_message_with_options(
+        &self,
+        request: Request<proto::SubmitMessageRequest>,
+    ) -> Result<Response<proto::SubmitMessageResponse>, Status> {
+        let start_time = std::time::Instant::now();
 
-        Ok(response)
+        let hash = request
+            .get_ref()
+            .message
+            .as_ref()
+            .map(|msg| msg.hash.encode_hex::<String>())
+            .unwrap_or_default();
+        info!(%hash, "Received call to [submit_message_with_options] RPC");
+
+        let proto::SubmitMessageRequest {
+            message,
+            bypass_validation,
+        } = request.into_inner();
+
+        let message = match message {
+            Some(msg) => msg,
+            None => return Err(Status::invalid_argument("Message is required")),
+        };
+
+        let response_message = self
+            .submit_message_internal(message, bypass_validation.unwrap_or(false))
+            .await?;
+
+        let response = proto::SubmitMessageResponse {
+            message: Some(response_message),
+        };
+
+        self.statsd_client.time(
+            "rpc.submit_message_with_options.duration",
+            start_time.elapsed().as_millis() as u64,
+        );
+
+        Ok(Response::new(response))
+    }
+
+    async fn submit_message(
+        &self,
+        request: Request<proto::Message>,
+    ) -> Result<Response<proto::Message>, Status> {
+        let start_time = std::time::Instant::now();
+
+        let hash = request.get_ref().hash.encode_hex::<String>();
+        info!(hash, "Received call to [submit_message] RPC");
+
+        let message = request.into_inner();
+        let response_message = self.submit_message_internal(message, false).await?;
+
+        self.statsd_client.time(
+            "rpc.submit_message.duration",
+            start_time.elapsed().as_millis() as u64,
+        );
+
+        Ok(Response::new(response_message))
     }
 
     type GetBlocksStream = ReceiverStream<Result<Block, Status>>;
@@ -198,7 +278,7 @@ impl HubService for MyHubService {
         // TODO(aditi): Rethink the channel size
         let (server_tx, client_rx) = mpsc::channel::<Result<HubEvent, Status>>(100);
         let events_txs = match request.get_ref().shard_index {
-            Some(shard_id) => match self.shard_senders.get(&(shard_id as u32)) {
+            Some(shard_id) => match self.shard_senders.get(&(shard_id)) {
                 None => {
                     return Err(Status::from_error(Box::new(
                         HubError::invalid_internal_state("Missing shard event tx"),

@@ -116,6 +116,7 @@ impl NodeForTest {
                 grpc_shard_stores,
                 grpc_shard_senders,
                 statsd_client.clone(),
+                num_shards,
             );
 
             let grpc_socket_addr: SocketAddr = addr.parse().unwrap();

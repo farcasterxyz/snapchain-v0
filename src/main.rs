@@ -166,6 +166,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             rpc_shard_stores,
             rpc_shard_senders,
             statsd_client.clone(),
+            app_config.consensus.num_shards,
         );
 
         let resp = Server::builder()

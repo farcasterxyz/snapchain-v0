@@ -28,8 +28,19 @@ message SubscribeRequest {
   optional uint32 shard_index = 5;
 }
 
+message SubmitMessageRequest {
+  Message message = 1;
+  optional bool bypass_validation = 99;
+}
+
+message SubmitMessageResponse {
+  Message message = 1;
+}
+
+
 service HubService {
   rpc SubmitMessage(Message) returns (Message);
+  rpc SubmitMessageWithOptions(SubmitMessageRequest) returns (SubmitMessageResponse);
   rpc GetBlocks(BlocksRequest) returns (stream Block);
   rpc GetShardChunks(ShardChunksRequest) returns (ShardChunksResponse);
   rpc Subscribe(SubscribeRequest) returns (stream HubEvent);
