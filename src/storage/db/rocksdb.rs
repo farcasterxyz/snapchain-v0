@@ -242,14 +242,24 @@ impl RocksDB {
             Some(prefix) => prefix,
         };
 
-        let upper_bound = match &page_options.page_token {
-            None => stop_iterator_prefix,
-            Some(page_token) => page_token.clone(),
+        let upper_bound = if page_options.reverse {
+            if let Some(page_token) = &page_options.page_token {
+                page_token.clone()
+            } else {
+                stop_iterator_prefix.clone()
+            }
+        } else {
+            stop_iterator_prefix.clone()
         };
 
-        let lower_bound = match &page_options.page_token {
-            None => start_iterator_prefix,
-            Some(page_token) => increment_vec_u8(page_token),
+        let lower_bound = if page_options.reverse {
+            start_iterator_prefix
+        } else {
+            if let Some(page_token) = &page_options.page_token {
+                increment_vec_u8(&page_token)
+            } else {
+                start_iterator_prefix
+            }
         };
 
         let mut opts = rocksdb::ReadOptions::default();
