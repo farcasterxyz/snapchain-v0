@@ -206,7 +206,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 // Every 5 ticks, re-register the validators so that new nodes can discover each other
                 if tick_count % 5 == 0 {
                     let nonce = tick_count as u64;
-                    for i in 0..=app_config.consensus.num_shards() {
+
+                    let ids = {
+                        // prepend 0 to shard_ids for the following loop
+                        let mut ids = vec![0u32];
+                        ids.extend(&app_config.consensus.shard_ids);
+                        ids
+                    };
+
+                    for i in ids {
                         let current_height =
                         if i == 0 {
                             block_store.max_block_number().unwrap_or_else(|_| 0)

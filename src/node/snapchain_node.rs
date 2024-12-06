@@ -54,7 +54,7 @@ impl SnapchainNode {
         let mut shard_stores: HashMap<u32, Stores> = HashMap::new();
 
         // Create the shard validators
-        for shard_id in config.shard_ids() {
+        for shard_id in config.shard_ids {
             if shard_id == 0 {
                 panic!("Shard ID 0 is reserved for the block shard, created automaticaly");
             } else if shard_id > MAX_SHARDS {
@@ -155,7 +155,7 @@ impl SnapchainNode {
             validator_address.clone(),
             block_shard.clone(),
             shard_decision_rx,
-            config.num_shards(),
+            config.num_shards,
             block_tx,
             engine,
         );
