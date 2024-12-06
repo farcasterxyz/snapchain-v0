@@ -15,7 +15,7 @@ use hex::ToHex;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
-use tracing::info;
+use tracing::{error, info};
 
 pub struct MyHubService {
     block_store: BlockStore,
@@ -193,6 +193,8 @@ impl HubService for MyHubService {
         &self,
         request: Request<SubscribeRequest>,
     ) -> Result<Response<Self::SubscribeStream>, Status> {
+        // TODO(aditi): Incorporate event types
+        info!("Received call to [subscribe] RPC");
         // TODO(aditi): Rethink the channel size
         let (server_tx, client_rx) = mpsc::channel::<Result<HubEvent, Status>>(100);
         let events_txs = match request.get_ref().shard_index {
@@ -213,58 +215,70 @@ impl HubService for MyHubService {
 
         let shard_stores = match request.get_ref().shard_index {
             Some(shard_id) => {
-                vec![self.shard_stores.get(&shard_id).unwrap()]
+                vec![self.shard_stores.get(&shard_id).cloned().unwrap()]
             }
-            None => self.shard_stores.values().collect(),
+            None => self.shard_stores.values().cloned().collect(),
         };
 
         let start_id = request.get_ref().from_id.unwrap_or(0);
 
-        let mut page_token = None;
-        for store in shard_stores {
-            loop {
-                // TODO(aditi): We should stop pulling the raw db out of the shard store and create a new store type for events to house the db.
-                let old_events = HubEvent::get_events(
-                    store.shard_store.db.clone(),
-                    start_id,
-                    None,
-                    Some(PageOptions {
-                        page_token: page_token.clone(),
-                        page_size: None,
-                        reverse: false,
-                    }),
-                )
-                .unwrap();
+        tokio::spawn(async move {
+            let mut page_token = None;
+            for store in shard_stores {
+                loop {
+                    // TODO(aditi): We should stop pulling the raw db out of the shard store and create a new store type for events to house the db.
+                    let old_events = HubEvent::get_events(
+                        store.shard_store.db.clone(),
+                        start_id,
+                        None,
+                        Some(PageOptions {
+                            page_token: page_token.clone(),
+                            page_size: None,
+                            reverse: false,
+                        }),
+                    )
+                    .unwrap();
 
-                for event in old_events.events {
-                    if let Err(err) = server_tx.send(Ok(event)).await {
-                        return Err(Status::from_error(Box::new(err)));
-                    }
-                }
-
-                page_token = old_events.next_page_token;
-                if page_token.is_none() {
-                    break;
-                }
-            }
-        }
-
-        // TODO(aditi): It's possible that events show up between when we finish reading from the db and the subscription starts. We don't handle this case in the current hub code, but we may want to down the line.
-        for event_tx in events_txs {
-            let tx = server_tx.clone();
-            tokio::spawn(async move {
-                let mut event_rx = event_tx.subscribe();
-                while let Ok(hub_event) = event_rx.recv().await {
-                    match tx.send(Ok(hub_event)).await {
-                        Ok(_) => {}
-                        Err(_) => {
-                            // This means the client hung up
-                            break;
+                    for event in old_events.events {
+                        if let Err(_) = server_tx.send(Ok(event)).await {
+                            return;
                         }
                     }
+
+                    page_token = old_events.next_page_token;
+                    if page_token.is_none() {
+                        break;
+                    }
                 }
-            });
-        }
+            }
+
+            // TODO(aditi): It's possible that events show up between when we finish reading from the db and the subscription starts. We don't handle this case in the current hub code, but we may want to down the line.
+            for event_tx in events_txs {
+                let tx = server_tx.clone();
+                tokio::spawn(async move {
+                    let mut event_rx = event_tx.subscribe();
+                    loop {
+                        match event_rx.recv().await {
+                            Ok(hub_event) => {
+                                match tx.send(Ok(hub_event)).await {
+                                    Ok(_) => {}
+                                    Err(_) => {
+                                        // This means the client hung up
+                                        break;
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                error!(
+                                    { err = err.to_string() },
+                                    "[subscribe] error receiving from event stream"
+                                )
+                            }
+                        }
+                    }
+                });
+            }
+        });
 
         Ok(Response::new(ReceiverStream::new(client_rx)))
     }
