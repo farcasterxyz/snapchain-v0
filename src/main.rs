@@ -237,7 +237,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Some(msg) = system_rx.recv() => {
                 match msg {
                     SystemMessage::Consensus(consensus_msg) => {
-                        // Forward to apropriate consesnsus actors
+                        // Forward to appropriate consensus actors
                         node.dispatch(consensus_msg);
                     }
                 }
