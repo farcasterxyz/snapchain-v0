@@ -1,0 +1,55 @@
+use crate::perf::generate::{MessageGenerator, NextMessage};
+use crate::proto;
+use crate::storage::store::test_helper;
+use crate::utils::cli;
+use crate::utils::factory::events_factory;
+use ed25519_dalek::SigningKey;
+use rand::Rng;
+use std::collections::HashSet;
+
+pub struct MultiUser {
+    initialized_fids: HashSet<u32>,
+    private_key: SigningKey,
+    thread_id: u32,
+}
+
+impl MultiUser {
+    pub fn new(thread_id: u32) -> Self {
+        Self {
+            initialized_fids: HashSet::new(),
+            private_key: test_helper::default_signer(),
+            thread_id,
+        }
+    }
+}
+
+impl MessageGenerator for MultiUser {
+    fn next(&mut self, seq: u64) -> Vec<NextMessage> {
+        let mut rng = rand::thread_rng();
+
+        let fid: u32 = rng.gen_range(1..=5000) + 1_000_000 * self.thread_id;
+        let mut messages = Vec::new();
+
+        // If the FID has not been initialized, return initial messages
+        if !self.initialized_fids.contains(&fid) {
+            let private_key = self.private_key.clone();
+
+            messages.push(NextMessage::OnChainEvent(cli::compose_rent_event(fid)));
+            messages.push(NextMessage::OnChainEvent(
+                events_factory::create_id_register_event(fid, proto::IdRegisterEventType::Register),
+            ));
+            messages.push(NextMessage::OnChainEvent(
+                events_factory::create_signer_event(fid, private_key, proto::SignerEventType::Add),
+            ));
+
+            self.initialized_fids.insert(fid);
+        }
+
+        // Add a benchmarking message
+        let text = format!("For benchmarking {}", seq);
+        let msg = cli::compose_message(fid, &text, None, Some(&self.private_key));
+        messages.push(NextMessage::Message(msg));
+
+        messages
+    }
+}

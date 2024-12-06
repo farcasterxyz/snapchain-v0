@@ -27,7 +27,7 @@ pub async fn send_message(
 
 pub async fn send_on_chain_event(
     client: &mut AdminServiceClient<Channel>,
-    onchain_event: OnChainEvent,
+    onchain_event: &OnChainEvent,
 ) -> Result<OnChainEvent, Box<dyn Error>> {
     let request = tonic::Request::new(onchain_event.clone());
     let response = client.submit_on_chain_event(request).await?;
