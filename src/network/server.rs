@@ -7,8 +7,8 @@ use crate::proto::Block;
 use crate::proto::HubEvent;
 use crate::proto::{BlocksRequest, ShardChunksRequest, ShardChunksResponse, SubscribeRequest};
 use crate::storage::db::PageOptions;
-use crate::storage::store::engine::{MempoolMessage, Senders};
-use crate::storage::store::stores::Stores;
+use crate::storage::store::engine::{MempoolMessage, Senders, ShardEngine};
+use crate::storage::store::stores::{StoreLimits, Stores};
 use crate::storage::store::BlockStore;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use hex::ToHex;
@@ -58,6 +58,25 @@ impl HubService for MyHubService {
 
         let message = request.into_inner();
 
+        let stores = self.shard_stores.get(&1u32).unwrap();
+        // TODO: This is a hack to get around the fact that self cannot be made mutable
+        let mut readonly_engine = ShardEngine::new(
+            stores.db.clone(),
+            stores.trie.clone(),
+            1,
+            StoreLimits::default(),
+            self.statsd_client.clone(),
+            100,
+        );
+        let result = readonly_engine.simulate_message(&message);
+
+        if let Err(err) = result {
+            return Err(Status::invalid_argument(format!(
+                "Invalid message: {}",
+                err.to_string()
+            )));
+        }
+
         let result = self
             .message_tx
             .send(MempoolMessage::UserMessage(message.clone()))
@@ -66,9 +85,11 @@ impl HubService for MyHubService {
         match result {
             Ok(_) => {
                 self.statsd_client.count("rpc.submit_message.success", 1);
+                info!("successfully submitted message");
             }
-            Err(_) => {
+            Err(e) => {
                 self.statsd_client.count("rpc.submit_message.failure", 1);
+                info!("error sending: {:?}", e.to_string());
                 return Err(Status::internal("failed to submit message"));
             }
         }

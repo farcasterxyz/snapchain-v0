@@ -13,6 +13,7 @@ mod tests {
     use crate::storage::store::stores::{StoreLimits, Stores};
     use crate::storage::store::BlockStore;
     use crate::storage::trie::merkle_trie;
+    use crate::utils::factory::messages_factory;
     use crate::utils::statsd_wrapper::StatsdClientWrapper;
     use futures::StreamExt;
     use tempfile;
@@ -167,5 +168,21 @@ mod tests {
             num_shard2_events,
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn test_submit_message_fails_with_error_for_invalid_messages() {
+        let (_stores, _senders, service) = make_server();
+
+        // Message with no fid registration
+        let invalid_message = messages_factory::casts::create_cast_add(123, "test", None, None);
+
+        let response = service
+            .submit_message(Request::new(invalid_message))
+            .await
+            .unwrap_err();
+
+        assert_eq!(response.code(), tonic::Code::InvalidArgument);
+        assert_eq!(response.message(), "Invalid message: missing fid");
     }
 }

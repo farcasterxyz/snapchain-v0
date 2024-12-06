@@ -41,29 +41,44 @@ pub enum EngineError {
     #[error("merkle trie root hash mismatch")]
     HashMismatch,
 
-    #[error("message has no data")]
-    NoMessageData,
-
     #[error("Unable to get usage count")]
     UsageCountError,
-
-    #[error("invalid message type")]
-    InvalidMessageType,
-
-    #[error("missing fid")]
-    MissingFid,
-
-    #[error("fname not registered for fid")]
-    MissingFname,
-
-    #[error("missing signer")]
-    MissingSigner,
 
     #[error("message receive error")]
     MessageReceiveError(#[from] mpsc::error::TryRecvError),
 
     #[error(transparent)]
     MergeOnchainEventError(#[from] OnchainEventStorageError),
+
+    #[error(transparent)]
+    EngineMessageValidationError(#[from] MessageValidationError),
+}
+
+#[derive(Error, Debug, Clone)]
+pub enum MessageValidationError {
+    #[error("message has no data")]
+    NoMessageData,
+
+    #[error("missing fid")]
+    MissingFid,
+
+    #[error("missing signer")]
+    MissingSigner,
+
+    #[error("invalid message type")]
+    InvalidMessageType(i32),
+
+    #[error("store error")]
+    StoreError { inner: HubError, hash: Vec<u8> },
+
+    #[error("fname not registered for fid")]
+    MissingFname,
+}
+
+impl MessageValidationError {
+    pub fn new_store_error(hash: Vec<u8>) -> impl FnOnce(HubError) -> Self {
+        move |inner: HubError| MessageValidationError::StoreError { inner, hash }
+    }
 }
 
 impl EngineError {
@@ -220,7 +235,7 @@ impl ShardEngine {
 
         let mut snapchain_txns = self.create_transactions_from_mempool(messages)?;
         for snapchain_txn in &mut snapchain_txns {
-            let (account_root, _events) =
+            let (account_root, _events, _) =
                 self.replay_snapchain_txn(trie_ctx, &snapchain_txn, txn_batch)?;
             snapchain_txn.account_root = account_root;
         }
@@ -325,7 +340,7 @@ impl ShardEngine {
     ) -> Result<Vec<HubEvent>, EngineError> {
         let mut events = vec![];
         for snapchain_txn in transactions {
-            let (account_root, txn_events) =
+            let (account_root, txn_events, _) =
                 self.replay_snapchain_txn(trie_ctx, snapchain_txn, txn_batch)?;
             // Reject early if account roots fail to match (shard roots will definitely fail)
             if &account_root != &snapchain_txn.account_root {
@@ -360,7 +375,7 @@ impl ShardEngine {
         trie_ctx: &merkle_trie::Context,
         snapchain_txn: &Transaction,
         txn_batch: &mut RocksDbTransactionBatch,
-    ) -> Result<(Vec<u8>, Vec<HubEvent>), EngineError> {
+    ) -> Result<(Vec<u8>, Vec<HubEvent>, Vec<MessageValidationError>), EngineError> {
         let total_user_messages = snapchain_txn.user_messages.len();
         let total_system_messages = snapchain_txn.system_messages.len();
         let mut user_messages_count = 0;
@@ -373,6 +388,8 @@ impl ShardEngine {
         let mut events = vec![];
         let mut message_types = HashSet::new();
         let mut revoked_signers = HashSet::new();
+
+        let mut validation_errors = vec![];
 
         // System messages first, then user messages and finally prunes
         for msg in &snapchain_txn.system_messages {
@@ -513,6 +530,7 @@ impl ShardEngine {
                         "Error validating user message: {:?}",
                         err
                     );
+                    validation_errors.push(err);
                 }
             }
         }
@@ -561,50 +579,56 @@ impl ShardEngine {
         );
 
         // Return the new account root hash
-        Ok((account_root, events))
+        Ok((account_root, events, validation_errors))
     }
 
     fn merge_message(
         &mut self,
         msg: &proto::Message,
         txn_batch: &mut RocksDbTransactionBatch,
-    ) -> Result<proto::HubEvent, EngineError> {
-        let data = msg.data.as_ref().ok_or(EngineError::NoMessageData)?;
-        let mt = MessageType::try_from(data.r#type).or(Err(EngineError::InvalidMessageType))?;
+    ) -> Result<proto::HubEvent, MessageValidationError> {
+        let data = msg
+            .data
+            .as_ref()
+            .ok_or(MessageValidationError::NoMessageData)?;
+        let mt = MessageType::try_from(data.r#type)
+            .or(Err(MessageValidationError::InvalidMessageType(data.r#type)))?;
 
         let event = match mt {
             MessageType::CastAdd | MessageType::CastRemove => self
                 .stores
                 .cast_store
                 .merge(msg, txn_batch)
-                .map_err(EngineError::new_store_error(msg.hash.clone())),
+                .map_err(MessageValidationError::new_store_error(msg.hash.clone())),
             MessageType::LinkAdd | MessageType::LinkRemove | MessageType::LinkCompactState => self
                 .stores
                 .link_store
                 .merge(msg, txn_batch)
-                .map_err(EngineError::new_store_error(msg.hash.clone())),
+                .map_err(MessageValidationError::new_store_error(msg.hash.clone())),
             MessageType::ReactionAdd | MessageType::ReactionRemove => self
                 .stores
                 .reaction_store
                 .merge(msg, txn_batch)
-                .map_err(EngineError::new_store_error(msg.hash.clone())),
+                .map_err(MessageValidationError::new_store_error(msg.hash.clone())),
             MessageType::UserDataAdd => self
                 .stores
                 .user_data_store
                 .merge(msg, txn_batch)
-                .map_err(EngineError::new_store_error(msg.hash.clone())),
+                .map_err(MessageValidationError::new_store_error(msg.hash.clone())),
             MessageType::VerificationAddEthAddress | MessageType::VerificationRemove => self
                 .stores
                 .verification_store
                 .merge(msg, txn_batch)
-                .map_err(EngineError::new_store_error(msg.hash.clone())),
+                .map_err(MessageValidationError::new_store_error(msg.hash.clone())),
             MessageType::UsernameProof => {
                 let store = &self.stores.username_proof_store;
                 let result = store.merge(msg, txn_batch);
-                result.map_err(EngineError::new_store_error(msg.hash.clone()))
+                result.map_err(MessageValidationError::new_store_error(msg.hash.clone()))
             }
             unhandled_type => {
-                return Err(EngineError::UnsupportedMessageType(unhandled_type));
+                return Err(MessageValidationError::InvalidMessageType(
+                    unhandled_type as i32,
+                ));
             }
         }?;
 
@@ -767,23 +791,31 @@ impl ShardEngine {
         Ok(())
     }
 
-    fn validate_user_message(&self, message: &proto::Message) -> Result<(), EngineError> {
+    fn validate_user_message(
+        &self,
+        message: &proto::Message,
+    ) -> Result<(), MessageValidationError> {
         // Ensure message data is present
-        let message_data = message.data.as_ref().ok_or(EngineError::NoMessageData)?;
+        let message_data = message
+            .data
+            .as_ref()
+            .ok_or(MessageValidationError::NoMessageData)?;
 
         // TODO(aditi): Check network
 
         // Check that the user has a custody address
         self.stores
             .onchain_event_store
-            .get_id_register_event_by_fid(message_data.fid as u32)?
-            .ok_or(EngineError::MissingFid)?;
+            .get_id_register_event_by_fid(message_data.fid as u32)
+            .map_err(|_| MessageValidationError::MissingFid)?
+            .ok_or(MessageValidationError::MissingFid)?;
 
         // Check that signer is valid
         self.stores
             .onchain_event_store
-            .get_active_signer(message_data.fid as u32, message.signer.clone())?
-            .ok_or(EngineError::MissingSigner)?;
+            .get_active_signer(message_data.fid as u32, message.signer.clone())
+            .map_err(|_| MessageValidationError::MissingSigner)?
+            .ok_or(MessageValidationError::MissingSigner)?;
 
         match &message_data.body {
             Some(proto::message_data::Body::UserDataBody(user_data)) => {
@@ -806,7 +838,7 @@ impl ShardEngine {
         Ok(())
     }
 
-    fn validate_username(&self, fid: u32, fname: &str) -> Result<(), EngineError> {
+    fn validate_username(&self, fid: u32, fname: &str) -> Result<(), MessageValidationError> {
         if fname.is_empty() {
             // Setting an empty username is allowed, no need to validate the proof
             return Ok(());
@@ -819,18 +851,18 @@ impl ShardEngine {
         } else {
             let proof =
                 UserDataStore::get_username_proof(&self.stores.user_data_store, fname.as_bytes())
-                    .map_err(|e| EngineError::StoreError {
+                    .map_err(|e| MessageValidationError::StoreError {
                     inner: e,
                     hash: vec![],
                 })?;
             match proof {
                 Some(proof) => {
                     if proof.fid as u32 != fid {
-                        return Err(EngineError::MissingFname);
+                        return Err(MessageValidationError::MissingFname);
                     }
                 }
                 None => {
-                    return Err(EngineError::MissingFname);
+                    return Err(MessageValidationError::MissingFname);
                 }
             }
         }
@@ -956,6 +988,41 @@ impl ShardEngine {
             }
             Ok(events) => {
                 self.commit_and_emit_events(shard_chunk, events, txn);
+            }
+        }
+    }
+
+    pub fn simulate_message(&mut self, message: &Message) -> Result<(), MessageValidationError> {
+        let mut txn = RocksDbTransactionBatch::new();
+        let snapchain_txn = Transaction {
+            fid: message.fid() as u64,
+            account_root: vec![],
+            system_messages: vec![],
+            user_messages: vec![message.clone()],
+        };
+        let result =
+            self.replay_snapchain_txn(&merkle_trie::Context::new(), &snapchain_txn, &mut txn);
+
+        match result {
+            Ok((_, _, errors)) => {
+                self.stores.trie.reload(&self.db).map_err(|e| {
+                    MessageValidationError::StoreError {
+                        inner: HubError::invalid_internal_state(&*e.to_string()),
+                        hash: vec![],
+                    }
+                })?;
+                if !errors.is_empty() {
+                    return Err(errors[0].clone());
+                } else {
+                    Ok(())
+                }
+            }
+            Err(err) => {
+                error!("Error simulating message: {:?}", err);
+                Err(MessageValidationError::StoreError {
+                    inner: HubError::invalid_internal_state(&*err.to_string()),
+                    hash: vec![],
+                })
             }
         }
     }
