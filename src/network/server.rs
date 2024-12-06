@@ -1,4 +1,5 @@
 use crate::core::error::HubError;
+use crate::mempool::routing;
 use crate::proto;
 use crate::proto::hub_service_server::HubService;
 use crate::proto::Block;
@@ -10,7 +11,6 @@ use crate::storage::store::stores::{StoreLimits, Stores};
 use crate::storage::store::BlockStore;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use hex::ToHex;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -54,7 +54,7 @@ impl MyHubService {
             ));
         }
 
-        let dst_shard = route_message(fid, self.num_shards);
+        let dst_shard = routing::route_message(fid, self.num_shards);
 
         let sender = match self.shard_senders.get(&dst_shard) {
             Some(sender) => sender,
@@ -113,13 +113,6 @@ impl MyHubService {
 
         Ok(message)
     }
-}
-
-// TODO: find a better place for this
-fn route_message(fid: u32, num_shards: u32) -> u32 {
-    let hash = Sha256::digest(fid.to_be_bytes());
-    let hash_u32 = u32::from_be_bytes(hash[..4].try_into().unwrap());
-    (hash_u32 % num_shards) + 1
 }
 
 #[tonic::async_trait]
