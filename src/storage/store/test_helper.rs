@@ -5,7 +5,6 @@ use crate::storage::trie::merkle_trie;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use ed25519_dalek::{SecretKey, SigningKey};
 use std::sync::Arc;
-use std::time::Duration;
 use tempfile;
 
 use crate::proto;
@@ -96,23 +95,13 @@ pub fn new_engine() -> (ShardEngine, tempfile::TempDir) {
 }
 
 pub async fn commit_event(engine: &mut ShardEngine, event: &OnChainEvent) -> ShardChunk {
-    let messages_tx = engine.messages_tx();
-
-    messages_tx
-        .send(MempoolMessage::ValidatorMessage(
-            crate::proto::ValidatorMessage {
-                on_chain_event: Some(event.clone()),
-                fname_transfer: None,
-            },
-        ))
-        .await
-        .unwrap();
-
-    let messages = engine
-        .pull_messages(Duration::from_millis(50))
-        .await
-        .unwrap();
-    let state_change = engine.propose_state_change(1, messages);
+    let state_change = engine.propose_state_change(
+        1,
+        vec![MempoolMessage::ValidatorMessage(proto::ValidatorMessage {
+            on_chain_event: Some(event.clone()),
+            fname_transfer: None,
+        })],
+    );
 
     validate_and_commit_state_change(engine, &state_change)
 }
@@ -183,22 +172,14 @@ pub async fn register_fname(
     timestamp: Option<u64>,
     engine: &mut ShardEngine,
 ) {
-    let messages_tx = engine.messages_tx();
     let fname_transfer = username_factory::create_transfer(fid, username, timestamp, None);
-    messages_tx
-        .send(MempoolMessage::ValidatorMessage(
-            crate::proto::ValidatorMessage {
-                on_chain_event: None,
-                fname_transfer: Some(fname_transfer),
-            },
-        ))
-        .await
-        .unwrap();
-    let messages = engine
-        .pull_messages(Duration::from_millis(50))
-        .await
-        .unwrap();
-    let state_change = engine.propose_state_change(1, messages);
+    let state_change = engine.propose_state_change(
+        1,
+        vec![MempoolMessage::ValidatorMessage(proto::ValidatorMessage {
+            on_chain_event: None,
+            fname_transfer: Some(fname_transfer),
+        })],
+    );
 
     validate_and_commit_state_change(engine, &state_change);
 }
