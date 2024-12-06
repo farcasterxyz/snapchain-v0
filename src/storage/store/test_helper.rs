@@ -177,9 +177,14 @@ pub async fn register_user(fid: u32, signer: SigningKey, engine: &mut ShardEngin
 }
 
 #[allow(dead_code)] // This is used by tests
-pub async fn register_fname(fid: u32, username: &String, engine: &mut ShardEngine) {
+pub async fn register_fname(
+    fid: u32,
+    username: &String,
+    timestamp: Option<u64>,
+    engine: &mut ShardEngine,
+) {
     let messages_tx = engine.messages_tx();
-    let fname_transfer = username_factory::create_transfer(fid, username);
+    let fname_transfer = username_factory::create_transfer(fid, username, timestamp, None);
     messages_tx
         .send(MempoolMessage::ValidatorMessage(
             crate::proto::ValidatorMessage {

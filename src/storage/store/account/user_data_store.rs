@@ -1,5 +1,5 @@
 use super::{
-    is_message_in_time_range, make_user_key,
+    is_message_in_time_range, make_user_key, message_decode,
     name_registry_events::{
         delete_username_proof_transaction, get_fname_proof_by_fid, get_username_proof,
         put_username_proof_transaction,
@@ -197,6 +197,37 @@ impl UserDataStore {
                 return is_message_in_time_range(start_time, stop_time, message);
             }),
         )
+    }
+
+    pub fn get_user_data_by_fid_and_type(
+        store: &Store<UserDataStoreDef>,
+        fid: u32,
+        user_data_type: proto::UserDataType,
+    ) -> Result<proto::Message, HubError> {
+        let result = store.get_adds_by_fid(
+            fid,
+            &PageOptions::default(),
+            Some(|message: &proto::Message| {
+                if let Some(user_data_body) = &message.data.as_ref().unwrap().body {
+                    if let Body::UserDataBody(user_data) = user_data_body {
+                        if user_data.r#type == user_data_type as i32 {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }),
+        );
+
+        if result.is_ok() && result.as_ref().unwrap().messages_bytes.len() == 1 {
+            let user_data_message = &result?.messages_bytes[0];
+            Ok(message_decode(user_data_message)?)
+        } else {
+            Err(HubError {
+                code: "not_found".to_string(),
+                message: "user data not found".to_string(),
+            })
+        }
     }
 
     pub fn get_username_proof(

@@ -7,7 +7,7 @@ mod tests {
     use crate::storage::db::RocksDbTransactionBatch;
     use crate::storage::store::engine::{MempoolMessage, ShardEngine};
     use crate::storage::store::test_helper;
-    use crate::storage::store::test_helper::FID_FOR_TEST;
+    use crate::storage::store::test_helper::{register_fname, FID2_FOR_TEST, FID_FOR_TEST};
     use crate::storage::trie::merkle_trie;
     use crate::storage::trie::merkle_trie::TrieKey;
     use crate::utils::factory::{self, events_factory, messages_factory, time, username_factory};
@@ -1186,7 +1186,7 @@ mod tests {
 
         let mut event_rx = engine.get_senders().events_tx.subscribe();
         let messages_tx = engine.messages_tx();
-        let fname_transfer = username_factory::create_transfer(FID_FOR_TEST, fname);
+        let fname_transfer = username_factory::create_transfer(FID_FOR_TEST, fname, None, None);
 
         messages_tx
             .send(MempoolMessage::ValidatorMessage(
@@ -1218,6 +1218,63 @@ mod tests {
         let proof = engine.get_fname_proof(fname).unwrap();
         assert!(proof.is_some());
         assert_eq!(proof.unwrap().fid as u32, FID_FOR_TEST);
+    }
+
+    #[tokio::test]
+    async fn test_username_revoked_when_proof_transferred() {
+        let (mut engine, _tmpdir) = test_helper::new_engine();
+
+        test_helper::register_user(
+            test_helper::FID_FOR_TEST,
+            test_helper::default_signer(),
+            &mut engine,
+        )
+        .await;
+
+        let fname = &"farcaster".to_string();
+        register_fname(FID_FOR_TEST, fname, None, &mut engine).await;
+
+        let fid_username_msg = messages_factory::user_data::create_user_data_add(
+            FID_FOR_TEST,
+            proto::UserDataType::Username,
+            fname,
+            None,
+            None,
+        );
+        commit_message(&mut engine, &fid_username_msg).await;
+
+        assert!(engine.trie_key_exists(trie_ctx(), &TrieKey::for_fname(FID_FOR_TEST, fname)));
+        assert!(engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&fid_username_msg)));
+
+        let original_fid_user_data = engine.get_user_data_by_fid(FID_FOR_TEST).unwrap();
+        assert_eq!(original_fid_user_data.messages_bytes.len(), 1);
+
+        // Now transfer the fname, and the username userdata add should be revoked
+        let transfer = username_factory::create_transfer(
+            FID2_FOR_TEST,
+            fname,
+            Some(time::current_timestamp() as u64 + 10),
+            Some(FID_FOR_TEST),
+        );
+        let state_change = engine.propose_state_change(
+            1,
+            vec![MempoolMessage::ValidatorMessage(
+                proto::ValidatorMessage {
+                    on_chain_event: None,
+                    fname_transfer: Some(transfer),
+                },
+            )],
+        );
+        test_helper::validate_and_commit_state_change(&mut engine, &state_change);
+
+        // Fname has moved to the new fid and the username userdata is revoked
+        assert!(engine.trie_key_exists(trie_ctx(), &TrieKey::for_fname(FID2_FOR_TEST, fname)));
+
+        assert!(!engine.trie_key_exists(trie_ctx(), &TrieKey::for_fname(FID_FOR_TEST, fname)));
+        assert!(!engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(&fid_username_msg)));
+
+        let original_fid_user_data = engine.get_user_data_by_fid(FID_FOR_TEST).unwrap();
+        assert_eq!(original_fid_user_data.messages_bytes.len(), 0);
     }
 
     #[tokio::test]
@@ -1307,7 +1364,7 @@ mod tests {
             assert_commit_fails(&mut engine, &msg).await;
         }
 
-        test_helper::register_fname(FID_FOR_TEST, fname, &mut engine).await;
+        test_helper::register_fname(FID_FOR_TEST, fname, None, &mut engine).await;
 
         // When fname is owned by a different fid, message is not merged
         {
@@ -1332,8 +1389,9 @@ mod tests {
             );
             commit_message(&mut engine, &msg).await;
         }
-        let messages = engine.get_user_data_by_fid(FID_FOR_TEST).unwrap();
-        assert_eq!(1, messages.messages_bytes.len());
+        let message =
+            engine.get_user_data_by_fid_and_type(FID_FOR_TEST, proto::UserDataType::Username);
+        assert_eq!(message.is_ok(), true);
 
         // Allows resetting username to blank
         {
@@ -1347,7 +1405,8 @@ mod tests {
             commit_message(&mut engine, &msg).await;
         }
 
-        let messages = engine.get_user_data_by_fid(FID_FOR_TEST).unwrap();
-        assert_eq!(1, messages.messages_bytes.len());
+        let message =
+            engine.get_user_data_by_fid_and_type(FID_FOR_TEST, proto::UserDataType::Username);
+        assert_eq!(message.is_ok(), true);
     }
 }
