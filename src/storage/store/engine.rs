@@ -446,7 +446,7 @@ impl ShardEngine {
                         warn!("Error merging fname transfer: {:?}", err);
                     }
                 }
-                // If the name was transfered from an existing fid, we need to make sure to revoke any existing username UserDataAdd
+                // If the name was transferred from an existing fid, we need to make sure to revoke any existing username UserDataAdd
                 if fname_transfer.from_fid > 0 {
                     let existing_username = self.get_user_data_by_fid_and_type(
                         fname_transfer.from_fid as u32,
