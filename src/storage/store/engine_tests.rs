@@ -7,7 +7,7 @@ mod tests {
     use crate::storage::db::RocksDbTransactionBatch;
     use crate::storage::store::engine::{MempoolMessage, ShardEngine};
     use crate::storage::store::test_helper;
-    use crate::storage::store::test_helper::{FID2_FOR_TEST, FID_FOR_TEST};
+    use crate::storage::store::test_helper::{register_user, FID2_FOR_TEST, FID_FOR_TEST};
     use crate::storage::trie::merkle_trie;
     use crate::storage::trie::merkle_trie::TrieKey;
     use crate::utils::factory::{self, events_factory, messages_factory, time, username_factory};
@@ -1192,5 +1192,21 @@ mod tests {
         let message =
             engine.get_user_data_by_fid_and_type(FID_FOR_TEST, proto::UserDataType::Username);
         assert_eq!(message.is_ok(), true);
+    }
+
+    #[tokio::test]
+    async fn test_simulate_message() {
+        let (mut engine, _tmpdir) = test_helper::new_engine();
+
+        let message = default_message("msg1");
+
+        let result = engine.simulate_message(&message);
+        assert_eq!(result.is_ok(), false);
+        assert_eq!(result.unwrap_err().to_string(), "missing fid");
+
+        register_user(FID_FOR_TEST, test_helper::default_signer(), &mut engine).await;
+
+        let result = engine.simulate_message(&message);
+        assert_eq!(result.is_ok(), true);
     }
 }
