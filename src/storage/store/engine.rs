@@ -429,6 +429,34 @@ impl ShardEngine {
                         warn!("Error merging fname transfer: {:?}", err);
                     }
                 }
+                // If the name was transfered from an existing fid, we need to make sure to revoke any existing username UserDataAdd
+                if fname_transfer.from_fid > 0 {
+                    let existing_username = self.get_user_data_by_fid_and_type(
+                        fname_transfer.from_fid as u32,
+                        proto::UserDataType::Username,
+                    );
+                    if existing_username.is_ok() {
+                        let existing_username = existing_username.unwrap();
+                        let event = self
+                            .stores
+                            .user_data_store
+                            .revoke(&existing_username, txn_batch);
+                        match event {
+                            Ok(hub_event) => {
+                                revoked_messages_count += 1;
+                                self.update_trie(
+                                    &merkle_trie::Context::new(),
+                                    &hub_event,
+                                    txn_batch,
+                                )?;
+                                events.push(hub_event.clone());
+                            }
+                            Err(err) => {
+                                warn!("Error revoking existing username: {:?}", err);
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -993,6 +1021,18 @@ impl ShardEngine {
         self.stores
             .user_data_store
             .get_adds_by_fid::<fn(&Message) -> bool>(fid, &PageOptions::default(), None)
+    }
+
+    pub fn get_user_data_by_fid_and_type(
+        &self,
+        fid: u32,
+        user_data_type: proto::UserDataType,
+    ) -> Result<Message, HubError> {
+        UserDataStore::get_user_data_by_fid_and_type(
+            &self.stores.user_data_store,
+            fid,
+            user_data_type,
+        )
     }
 
     pub fn get_verifications_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
