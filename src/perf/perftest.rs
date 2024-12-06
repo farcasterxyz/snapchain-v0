@@ -4,8 +4,8 @@ use crate::perf::{gen_single, generate};
 use crate::proto;
 use crate::proto::hub_service_client::HubServiceClient;
 use crate::proto::Block;
+use crate::utils::cli::follow_blocks;
 use crate::utils::cli::send_on_chain_event;
-use crate::utils::cli::{follow_blocks, send_message};
 use crate::{consensus::proposer::current_time, proto::admin_service_client::AdminServiceClient};
 use clap::Parser;
 use figment::{
@@ -113,8 +113,15 @@ fn start_submit_messages(
 
                 match msg {
                     generate::NextMessage::Message(message) => {
-                        let response = send_message(&mut client, &message).await.unwrap();
-                        messages_tx.send(response).await.unwrap();
+                        let response = client
+                            .submit_message_with_options(proto::SubmitMessageRequest {
+                                message: Some(message),
+                                bypass_validation: Some(true),
+                            })
+                            .await
+                            .unwrap();
+                        let sent = response.into_inner().message.unwrap();
+                        messages_tx.send(sent).await.unwrap();
                     }
                     generate::NextMessage::OnChainEvent(event) => {
                         send_on_chain_event(&mut admin_client, &event)
