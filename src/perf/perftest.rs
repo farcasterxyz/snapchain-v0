@@ -1,24 +1,20 @@
+use crate::perf::gen_single::SingleUser;
+use crate::perf::generate::{new_generator, GeneratorTypes};
+use crate::perf::{gen_single, generate};
 use crate::proto;
 use crate::proto::hub_service_client::HubServiceClient;
 use crate::proto::Block;
-use crate::storage::store::test_helper;
 use crate::utils::cli::send_on_chain_event;
-use crate::utils::cli::{compose_message, follow_blocks, send_message};
-use crate::utils::factory::events_factory;
-use crate::{
-    consensus::proposer::current_time, proto::admin_service_client::AdminServiceClient,
-    utils::cli::compose_rent_event,
-};
+use crate::utils::cli::{follow_blocks, send_message};
+use crate::{consensus::proposer::current_time, proto::admin_service_client::AdminServiceClient};
 use clap::Parser;
-use ed25519_dalek::{SecretKey, SigningKey};
 use figment::{
     providers::{Env, Format, Toml},
     Figment,
 };
 use hex;
-use hex::FromHex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::error::Error;
 use std::path::Path;
 use std::sync::{atomic, Arc};
@@ -75,76 +71,59 @@ pub fn load_and_merge_config(config_path: &str) -> Result<Config, Box<dyn Error>
 fn start_submit_messages(
     messages_tx: mpsc::Sender<proto::Message>,
     config: Config,
+    gen_type: GeneratorTypes,
 ) -> Vec<tokio::task::JoinHandle<()>> {
+    gen_single::assert_send::<SingleUser>();
+
     let mut submit_message_handles = vec![];
-    const FID: u32 = 6833;
 
-    let i = Arc::new(atomic::AtomicU64::new(1));
+    let seq = Arc::new(atomic::AtomicU64::new(0));
 
-    for rpc_addr in config.submit_message.rpc_addrs {
+    for (index, rpc_addr) in config.submit_message.rpc_addrs.into_iter().enumerate() {
+        let thread_id = (index + 1) as u32;
         let messages_tx = messages_tx.clone();
-        let private_key = SigningKey::from_bytes(
-            &SecretKey::from_hex(
-                "1000000000000000000000000000000000000000000000000000000000000000",
-            )
-            .unwrap(),
-        );
+        let seq = seq.clone();
+        let gen_type = gen_type.clone();
 
-        let i = i.clone();
+        submit_message_handles.push(tokio::spawn(async move {
+            let mut generator = new_generator(gen_type, thread_id);
 
-        let submit_message_handle = tokio::spawn(async move {
             let mut submit_message_timer = time::interval(config.submit_message.interval);
 
             println!("connecting to {}", &rpc_addr);
-            let mut client = match HubServiceClient::connect(rpc_addr.clone()).await {
-                Ok(client) => client,
-                Err(e) => {
-                    panic!("Error connecting to {}: {}", &rpc_addr, e);
-                }
-            };
-
-            let mut admin_client = match AdminServiceClient::connect(rpc_addr.clone()).await {
-                Ok(client) => client,
-                Err(e) => {
-                    panic!("Error connecting to {}: {}", &rpc_addr, e);
-                }
-            };
-
-            let rent_event = compose_rent_event(FID);
-            send_on_chain_event(&mut admin_client, rent_event)
+            let mut client = HubServiceClient::connect(rpc_addr.clone())
                 .await
-                .unwrap();
+                .unwrap_or_else(|e| panic!("Error connecting to {}: {}", &rpc_addr, e));
 
-            let id_register_event =
-                events_factory::create_id_register_event(FID, proto::IdRegisterEventType::Register);
-
-            send_on_chain_event(&mut admin_client, id_register_event)
+            let mut admin_client = AdminServiceClient::connect(rpc_addr.clone())
                 .await
-                .unwrap();
+                .unwrap_or_else(|e| panic!("Error connecting to {}: {}", &rpc_addr, e));
 
-            let signer_event = events_factory::create_signer_event(
-                FID,
-                test_helper::default_signer(),
-                proto::SignerEventType::Add,
-            );
-
-            send_on_chain_event(&mut admin_client, signer_event)
-                .await
-                .unwrap();
-
+            let mut message_queue: VecDeque<generate::NextMessage> = VecDeque::new();
             loop {
                 submit_message_timer.tick().await;
+                let seq = seq.fetch_add(1, atomic::Ordering::SeqCst);
 
-                let current_i = i.fetch_add(1, atomic::Ordering::SeqCst);
-                let text = format!("For benchmarking {}", current_i);
+                if message_queue.is_empty() {
+                    let msgs = generator.next(seq);
+                    message_queue.extend(msgs);
+                }
 
-                let msg = compose_message(FID, text.as_str(), None, Some(&private_key));
-                let message = send_message(&mut client, &msg).await.unwrap();
-                messages_tx.send(message).await.unwrap();
+                let msg = message_queue.pop_front().expect("message queue was empty");
+
+                match msg {
+                    generate::NextMessage::Message(message) => {
+                        let response = send_message(&mut client, &message).await.unwrap();
+                        messages_tx.send(response).await.unwrap();
+                    }
+                    generate::NextMessage::OnChainEvent(event) => {
+                        send_on_chain_event(&mut admin_client, &event)
+                            .await
+                            .expect("Failed to send on-chain event");
+                    }
+                }
             }
-        });
-
-        submit_message_handles.push(submit_message_handle);
+        }));
     }
 
     submit_message_handles
@@ -159,6 +138,8 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         process::exit(1);
     }));
 
+    let gen_type = GeneratorTypes::MultiUser;
+
     let cli_args = CliArgs::parse();
     let cfg = load_and_merge_config(&cli_args.config_path)?;
 
@@ -166,7 +147,8 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     let (blocks_tx, mut blocks_rx) = mpsc::channel::<Block>(10_000_000);
 
     let (messages_tx, mut messages_rx) = mpsc::channel::<proto::Message>(10_000_000);
-    let submit_message_handles = start_submit_messages(messages_tx, cfg.clone());
+
+    let submit_message_handles = start_submit_messages(messages_tx, cfg.clone(), gen_type);
 
     let follow_blocks_handle = tokio::spawn(async move {
         if !cfg.follow_blocks.enable {
