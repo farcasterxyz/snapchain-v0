@@ -18,41 +18,37 @@ const MAX_VALUES_RETURNED_PER_CALL: usize = 1024;
 
 pub struct Context<'a> {
     db_read_count: atomic::AtomicU64,
-    on_drop: Option<Box<dyn FnOnce(u64) + 'a>>,
+    mem_read_count: atomic::AtomicU64,
+    on_drop: Option<Box<dyn FnOnce((u64, u64)) + 'a>>,
 }
 
 impl<'a> Context<'a> {
     pub fn new() -> Self {
         Self {
             db_read_count: atomic::AtomicU64::new(0),
+            mem_read_count: atomic::AtomicU64::new(0),
             on_drop: None,
         }
     }
 
     pub fn with_callback<F>(callback: F) -> Self
     where
-        F: FnOnce(u64) + 'a,
+        F: FnOnce((u64, u64)) + 'a,
     {
         Self {
             db_read_count: atomic::AtomicU64::new(0),
+            mem_read_count: atomic::AtomicU64::new(0),
             on_drop: Some(Box::new(callback)),
         }
-    }
-
-    pub fn increment_read_count(&self) {
-        self.db_read_count.fetch_add(1, atomic::Ordering::Relaxed);
-    }
-
-    pub fn read_count(&self) -> u64 {
-        self.db_read_count.load(atomic::Ordering::Relaxed)
     }
 }
 
 impl<'a> Drop for Context<'a> {
     fn drop(&mut self) {
         if let Some(callback) = self.on_drop.take() {
-            let read_count = self.db_read_count.load(atomic::Ordering::Relaxed);
-            callback(read_count);
+            let db_read_count = self.db_read_count.load(atomic::Ordering::Relaxed);
+            let mem_read_count = self.mem_read_count.load(atomic::Ordering::Relaxed);
+            callback((db_read_count, mem_read_count));
         }
     }
 }
@@ -491,17 +487,22 @@ impl TrieNode {
 
         match self.children.entry(char) {
             Entry::Occupied(mut entry) => {
-                if let TrieNodeType::Serialized(_) = entry.get_mut() {
-                    let child_prefix = Self::make_primary_key(prefix, Some(char));
-                    let child_node = db
-                        .get(&child_prefix)
-                        .map_err(TrieError::wrap_database)?
-                        .map(|b| TrieNode::deserialize(&b).unwrap())
-                        .unwrap_or_default();
+                match entry.get_mut() {
+                    TrieNodeType::Serialized(_) => {
+                        let child_prefix = Self::make_primary_key(prefix, Some(char));
+                        let child_node = db
+                            .get(&child_prefix)
+                            .map_err(TrieError::wrap_database)?
+                            .map(|b| TrieNode::deserialize(&b).unwrap())
+                            .unwrap_or_default();
 
-                    *entry.get_mut() = TrieNodeType::Node(child_node);
+                        *entry.get_mut() = TrieNodeType::Node(child_node);
 
-                    ctx.db_read_count.fetch_add(1, atomic::Ordering::Relaxed);
+                        ctx.db_read_count.fetch_add(1, atomic::Ordering::Relaxed);
+                    }
+                    TrieNodeType::Node(_) => {
+                        ctx.mem_read_count.fetch_add(1, atomic::Ordering::Relaxed);
+                    }
                 }
                 match entry.into_mut() {
                     TrieNodeType::Node(node) => Ok(node),
