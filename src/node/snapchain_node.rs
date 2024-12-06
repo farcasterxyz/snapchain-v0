@@ -56,7 +56,7 @@ impl SnapchainNode {
         // Create the shard validators
         for shard_id in config.shard_ids() {
             if shard_id == 0 {
-                panic!("Shard ID 0 is reserved for the block shard, created automaticaly");
+                panic!("Shard ID 0 is reserved for the block shard, created automatically");
             } else if shard_id > MAX_SHARDS {
                 panic!("Shard ID must be between 1 and 3");
             }
