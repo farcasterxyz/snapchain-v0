@@ -40,7 +40,7 @@ async fn main() {
     }
 }
 
-fn show_msg(shard_id: u32, shard_height: u64, msg: &Message) {
+fn show_msg(shard_id: u32, _shard_height: u64, msg: &Message) {
     let hash = hex::encode(&msg.hash);
 
     let data = match msg.data.as_ref() {
