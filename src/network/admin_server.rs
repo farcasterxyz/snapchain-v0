@@ -1,3 +1,4 @@
+use crate::mempool::routing;
 use crate::proto::admin_service_server::AdminService;
 use crate::proto::ValidatorMessage;
 use crate::proto::{self, OnChainEvent};
@@ -6,7 +7,6 @@ use rocksdb;
 use std::collections::HashMap;
 use std::{io, path, process};
 use thiserror::Error;
-use tokio::sync::mpsc;
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
@@ -62,7 +62,8 @@ impl DbManager {
 
 pub struct MyAdminService {
     db_manager: DbManager,
-    message_tx: mpsc::Sender<MempoolMessage>,
+    num_shards: u32,
+    pub shard_senders: HashMap<u32, Senders>,
 }
 
 #[derive(Debug, Error)]
@@ -77,12 +78,15 @@ pub enum AdminServiceError {
 const DB_DESTROY_KEY: &[u8] = b"__destroy_all_databases_on_start__";
 
 impl MyAdminService {
-    pub fn new(db_manager: DbManager, shard_senders: HashMap<u32, Senders>) -> Self {
-        // TODO(aditi): This logic will change once a mempool exists
-        let message_tx = shard_senders.get(&1u32).unwrap().messages_tx.clone();
+    pub fn new(
+        db_manager: DbManager,
+        shard_senders: HashMap<u32, Senders>,
+        num_shards: u32,
+    ) -> Self {
         Self {
             db_manager,
-            message_tx,
+            shard_senders,
+            num_shards,
         }
     }
 }
@@ -122,13 +126,32 @@ impl AdminService for MyAdminService {
 
         let onchain_event = request.into_inner();
 
-        let result = self
-            .message_tx
+        let fid = onchain_event.fid as u32;
+        if fid == 0 {
+            return Err(Status::invalid_argument(
+                "no fid or invalid fid".to_string(),
+            ));
+        }
+
+        let dst_shard = routing::route_message(fid, self.num_shards);
+
+        let sender = match self.shard_senders.get(&dst_shard) {
+            Some(sender) => sender,
+            None => {
+                return Err(Status::invalid_argument(
+                    "no shard sender for fid".to_string(),
+                ))
+            }
+        };
+
+        let result = sender
+            .messages_tx
             .send(MempoolMessage::ValidatorMessage(ValidatorMessage {
                 on_chain_event: Some(onchain_event.clone()),
                 fname_transfer: None,
             }))
             .await;
+
         match result {
             Ok(()) => {
                 let response = Response::new(onchain_event);

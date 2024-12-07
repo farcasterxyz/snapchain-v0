@@ -1,8 +1,11 @@
 log_format = "json"
 
+[statsd]
+prefix = "snaptest"
+
 [fnames]
 disable = false
-stop_at = 9999999999
+stop_at = 200
 start_from = 0
 url = "https://fnames.farcaster.xyz/transfers"
 

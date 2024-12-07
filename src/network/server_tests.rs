@@ -109,6 +109,7 @@ mod tests {
         let shard2_senders = Senders::new(msgs_tx.clone());
         let stores = HashMap::from([(1, shard1_stores), (2, shard2_stores)]);
         let senders = HashMap::from([(1, shard1_senders), (2, shard2_senders)]);
+        let num_shards = senders.len() as u32;
 
         (
             stores.clone(),
@@ -118,6 +119,7 @@ mod tests {
                 stores,
                 senders,
                 statsd_client,
+                num_shards,
             ),
         )
     }

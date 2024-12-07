@@ -154,7 +154,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )
     .await;
 
-    let admin_service = MyAdminService::new(db_manager, node.shard_senders.clone());
+    let admin_service = MyAdminService::new(
+        db_manager,
+        node.shard_senders.clone(),
+        app_config.consensus.num_shards,
+    );
 
     let rpc_shard_stores = node.shard_stores.clone();
     let rpc_shard_senders = node.shard_senders.clone();
@@ -166,6 +170,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             rpc_shard_stores,
             rpc_shard_senders,
             statsd_client.clone(),
+            app_config.consensus.num_shards,
         );
 
         let resp = Server::builder()

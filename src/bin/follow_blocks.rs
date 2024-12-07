@@ -27,16 +27,20 @@ async fn main() {
         println!("Block {}", block_number);
 
         for chunk in &block.shard_chunks {
+            let height = chunk.header.as_ref().unwrap().height.unwrap();
+            let shard_id = height.shard_index;
+            let shard_height = height.block_number;
+
             for tx in &chunk.transactions {
                 for msg in &tx.user_messages {
-                    show_msg(msg);
+                    show_msg(shard_id, shard_height, msg);
                 }
             }
         }
     }
 }
 
-fn show_msg(msg: &Message) {
+fn show_msg(shard_id: u32, _shard_height: u64, msg: &Message) {
     let hash = hex::encode(&msg.hash);
 
     let data = match msg.data.as_ref() {
@@ -58,7 +62,7 @@ fn show_msg(msg: &Message) {
     match mt {
         MessageType::CastAdd => {
             if let Some(message_data::Body::CastAddBody(body)) = data.body.as_ref() {
-                println!(" - {} {} {}", hash, msg.fid(), body.text);
+                println!(" - {} {} {} {}", hash, shard_id, msg.fid(), body.text);
             } else {
                 panic!("Body is not CastAddBody");
             }
