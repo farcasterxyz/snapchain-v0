@@ -35,6 +35,9 @@ pub enum OnchainEventStorageError {
 
     #[error("Unexpected event type")]
     UnexpectedEventType,
+
+    #[error("Duplicate onchain event")]
+    DuplicateOnchainEvent,
 }
 
 /** A page of messages returned from various APIs */
@@ -74,6 +77,9 @@ pub fn merge_onchain_event(
     onchain_event: OnChainEvent,
 ) -> Result<(), OnchainEventStorageError> {
     let primary_key = make_onchain_event_primary_key(&onchain_event);
+    if let Some(_) = db.get(&primary_key)? {
+        return Err(OnchainEventStorageError::DuplicateOnchainEvent);
+    }
     txn.put(primary_key, onchain_event.encode_to_vec());
     build_secondary_indices(db, txn, &onchain_event)?;
     Ok(())
