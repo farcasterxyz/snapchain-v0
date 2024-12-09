@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use hex;
 use libp2p::identity::ed25519::Keypair;
+use snapchain::mempool::mempool;
 use snapchain::network::server::MyHubService;
 use snapchain::node::snapchain_node::SnapchainNode;
 use snapchain::proto::hub_service_server::HubServiceServer;
@@ -71,6 +72,7 @@ impl NodeForTest {
         let node = SnapchainNode::create(
             keypair.clone(),
             config,
+            mempool::Config::default(),
             None,
             gossip_tx,
             Some(block_tx),

@@ -84,6 +84,7 @@ pub fn new_engine_with_options(options: EngineOptions) -> (ShardEngine, tempfile
             test_limits,
             statsd_client,
             256,
+            256 * 2,
         ),
         dir,
     )

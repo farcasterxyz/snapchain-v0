@@ -12,3 +12,6 @@ url = "https://fnames.farcaster.xyz/transfers"
 [consensus]
 num_shards = 1
 shard_ids = [1]
+
+[mempool]
+queue_size = 500

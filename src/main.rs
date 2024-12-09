@@ -144,6 +144,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let node = SnapchainNode::create(
         keypair.clone(),
         app_config.consensus.clone(),
+        app_config.mempool.clone(),
         Some(app_config.rpc_address.clone()),
         gossip_tx.clone(),
         None,

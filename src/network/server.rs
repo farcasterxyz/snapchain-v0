@@ -66,7 +66,7 @@ impl MyHubService {
         };
 
         let stores = match self.shard_stores.get(&dst_shard) {
-            Some(sender) => sender,
+            Some(store) => store,
             None => {
                 return Err(Status::invalid_argument(
                     "no shard store for fid".to_string(),
@@ -83,6 +83,7 @@ impl MyHubService {
                 StoreLimits::default(),
                 self.statsd_client.clone(),
                 100,
+                200,
             );
             let result = readonly_engine.simulate_message(&message);
 
@@ -94,15 +95,18 @@ impl MyHubService {
             }
         }
 
-        let result = sender
+        match sender
             .messages_tx
-            .send(MempoolMessage::UserMessage(message.clone()))
-            .await;
-
-        match result {
+            .try_send(MempoolMessage::UserMessage(message.clone()))
+        {
             Ok(_) => {
                 self.statsd_client.count("rpc.submit_message.success", 1);
                 info!("successfully submitted message");
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.statsd_client
+                    .count("rpc.submit_message.channel_full", 1);
+                return Err(Status::resource_exhausted("channel is full"));
             }
             Err(e) => {
                 self.statsd_client.count("rpc.submit_message.failure", 1);

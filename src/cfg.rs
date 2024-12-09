@@ -1,4 +1,4 @@
-use crate::{connectors, consensus, network};
+use crate::{connectors, consensus, mempool, network};
 use clap::Parser;
 use figment::{
     providers::{Env, Format, Serialized, Toml},
@@ -32,6 +32,7 @@ pub struct Config {
     pub onchain_events: connectors::onchain_events::Config,
     pub consensus: consensus::consensus::Config,
     pub gossip: network::gossip::Config,
+    pub mempool: mempool::mempool::Config,
     pub rpc_address: String,
     pub rocksdb_dir: String,
     pub clear_db: bool,
@@ -47,6 +48,7 @@ impl Default for Config {
             onchain_events: connectors::onchain_events::Config::default(),
             consensus: consensus::consensus::Config::default(),
             gossip: network::gossip::Config::default(),
+            mempool: mempool::mempool::Config::default(),
             rpc_address: "0.0.0.0:3383".to_string(),
             rocksdb_dir: ".rocks".to_string(),
             clear_db: false,
