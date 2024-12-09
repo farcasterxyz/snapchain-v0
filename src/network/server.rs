@@ -3,9 +3,15 @@ use crate::mempool::routing;
 use crate::proto;
 use crate::proto::hub_service_server::HubService;
 use crate::proto::Block;
+use crate::proto::DbStats;
+use crate::proto::GetInfoRequest;
+use crate::proto::GetInfoResponse;
 use crate::proto::HubEvent;
 use crate::proto::{BlocksRequest, ShardChunksRequest, ShardChunksResponse, SubscribeRequest};
+use crate::storage::constants::OnChainEventPostfix;
+use crate::storage::constants::RootPrefix;
 use crate::storage::db::PageOptions;
+use crate::storage::db::RocksDbTransactionBatch;
 use crate::storage::store::engine::{MempoolMessage, Senders, ShardEngine};
 use crate::storage::store::stores::{StoreLimits, Stores};
 use crate::storage::store::BlockStore;
@@ -262,6 +268,39 @@ impl HubService for MyHubService {
                 }
             }
         }
+    }
+
+    async fn get_info(
+        &self,
+        _request: Request<GetInfoRequest>,
+    ) -> Result<Response<GetInfoResponse>, Status> {
+        let mut num_fid_registrations = 0;
+        let mut approx_size = 0;
+        let mut num_messages = 0;
+        for (_, shard_store) in self.shard_stores.iter() {
+            approx_size += shard_store.db.approximate_size();
+            num_messages += shard_store.trie.get_count(
+                &shard_store.db,
+                &mut RocksDbTransactionBatch::new(),
+                &[],
+            );
+            num_fid_registrations += shard_store
+                .db
+                .count_keys_at_prefix(vec![
+                    RootPrefix::OnChainEvent as u8,
+                    OnChainEventPostfix::IdRegisterByFid as u8,
+                ])
+                .map_err(|err| Status::from_error(Box::new(err)))?
+                as u64;
+        }
+
+        Ok(Response::new(GetInfoResponse {
+            db_stats: Some(DbStats {
+                num_fid_registrations,
+                num_messages,
+                approx_size,
+            }),
+        }))
     }
 
     type SubscribeStream = ReceiverStream<Result<HubEvent, Status>>;

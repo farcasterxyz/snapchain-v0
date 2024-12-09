@@ -390,11 +390,35 @@ impl RocksDB {
             .map(|metadata| metadata.len()) // Extract the file size.
             .sum() // Sum the sizes.
     }
+
+    /**
+     * Count the number of keys with a given prefix.
+     */
+    pub fn count_keys_at_prefix(&self, prefix: Vec<u8>) -> Result<u32, HubError> {
+        let iter_opts = RocksDB::get_iterator_options(
+            Some(prefix.clone()),
+            Some(increment_vec_u8(&prefix.to_vec())),
+            &PageOptions::default(),
+        );
+
+        let db = self.db();
+        let mut iter = db.as_ref().unwrap().raw_iterator_opt(iter_opts.opts);
+
+        let mut count = 0;
+        iter.seek_to_first();
+        while iter.valid() {
+            count += 1;
+
+            iter.next();
+        }
+
+        Ok(count)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::db::RocksDbTransactionBatch;
+    use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
 
     #[test]
     fn test_merge_rocksdb_transaction() {
@@ -501,6 +525,51 @@ mod tests {
             b"value4_new".to_vec()
         );
         assert_eq!(txn1.batch.get(&b"key5".to_vec()).unwrap().is_none(), true);
+    }
+
+    #[test]
+    fn test_count_keys_at_prefix() {
+        let tmp_path = tempfile::tempdir()
+            .unwrap()
+            .path()
+            .as_os_str()
+            .to_string_lossy()
+            .to_string();
+        let db = RocksDB::new(&tmp_path);
+        db.open().unwrap();
+
+        // Add some keys
+        db.put(b"key100", b"value1").unwrap();
+        db.put(b"key101", b"value3").unwrap();
+        db.put(b"key104", b"value4").unwrap();
+        db.put(b"key200", b"value2").unwrap();
+
+        // Count all keys
+        let count = db.count_keys_at_prefix(b"key".to_vec());
+        assert_eq!(count.unwrap(), 4);
+
+        // Count keys at prefix
+        let count = db.count_keys_at_prefix(b"key1".to_vec());
+        assert_eq!(count.unwrap(), 3);
+
+        // Count keys at prefix with a specific prefix that doesn't exist
+        let count = db.count_keys_at_prefix(b"key11".to_vec());
+        assert_eq!(count.unwrap(), 0);
+
+        // Count keys at prefix with a specific sub prefix
+        let count = db.count_keys_at_prefix(b"key10".to_vec());
+        assert_eq!(count.unwrap(), 3);
+
+        // Count keys at prefix with a specific prefix
+        let count = db.count_keys_at_prefix(b"key200".to_vec());
+        assert_eq!(count.unwrap(), 1);
+
+        // Count keys at prefix with a specific prefix that doesn't exist
+        let count = db.count_keys_at_prefix(b"key201".to_vec());
+        assert_eq!(count.unwrap(), 0);
+
+        // Cleanup
+        db.destroy().unwrap();
     }
 
     #[test]
