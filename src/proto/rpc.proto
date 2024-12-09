@@ -37,6 +37,19 @@ message SubmitMessageResponse {
   Message message = 1;
 }
 
+message DbStats {
+  uint64 num_messages = 1;
+  uint64 num_fid_registrations = 2;
+  uint64 approx_size = 4;
+}
+
+message GetInfoRequest {
+}
+
+// Response Types for the Sync RPC Methods
+message GetInfoResponse {
+  DbStats db_stats = 5;
+}
 
 service HubService {
   rpc SubmitMessage(Message) returns (Message);
@@ -44,4 +57,5 @@ service HubService {
   rpc GetBlocks(BlocksRequest) returns (stream Block);
   rpc GetShardChunks(ShardChunksRequest) returns (ShardChunksResponse);
   rpc Subscribe(SubscribeRequest) returns (stream HubEvent);
+  rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
 };
