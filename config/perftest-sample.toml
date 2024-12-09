@@ -7,7 +7,7 @@ rpc_addrs = [
     "http://127.0.0.12:3383",
     "http://127.0.0.13:3383"
 ]
-interval = "100ms"
+interval = "2500us"
 
 [follow_blocks]
 rpc_addr = "http://127.0.0.11:3383"

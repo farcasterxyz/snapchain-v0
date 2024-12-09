@@ -109,24 +109,37 @@ fn start_submit_messages(
                     message_queue.extend(msgs);
                 }
 
-                let msg = message_queue.pop_front().expect("message queue was empty");
+                let msg = message_queue.front().expect("message queue was empty");
 
                 match msg {
                     generate::NextMessage::Message(message) => {
                         let response = client
                             .submit_message_with_options(proto::SubmitMessageRequest {
-                                message: Some(message),
+                                message: Some(message.clone()),
                                 bypass_validation: Some(true),
                             })
-                            .await
-                            .unwrap();
-                        let sent = response.into_inner().message.unwrap();
-                        messages_tx.send(sent).await.unwrap();
+                            .await;
+
+                        match response {
+                            Ok(resp) => {
+                                let sent = resp.into_inner().message.unwrap();
+                                messages_tx.send(sent).await.unwrap();
+                                message_queue.pop_front(); // Remove message only if successfully sent
+                            }
+                            Err(status) if status.code() == tonic::Code::ResourceExhausted => {
+                                // TODO: emit metrics
+                            }
+                            Err(e) => {
+                                panic!("Unexpected error: {:?}", e); // Handle other errors as needed
+                            }
+                        }
                     }
                     generate::NextMessage::OnChainEvent(event) => {
-                        send_on_chain_event(&mut admin_client, &event)
-                            .await
-                            .expect("Failed to send on-chain event");
+                        if let Err(e) = send_on_chain_event(&mut admin_client, &event).await {
+                            panic!("Failed to send on-chain event: {:?}", e);
+                        } else {
+                            message_queue.pop_front(); // Remove event if successfully sent
+                        }
                     }
                 }
             }
