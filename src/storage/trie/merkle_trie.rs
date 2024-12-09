@@ -135,6 +135,10 @@ impl MerkleTrie {
         }
     }
 
+    pub fn unload_children(&mut self) {
+        self.root.as_mut().unwrap().unload_children();
+    }
+
     pub fn insert(
         &mut self,
         ctx: &Context,
