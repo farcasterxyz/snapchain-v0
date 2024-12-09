@@ -22,6 +22,7 @@ use tokio::time;
 use tonic::transport::Server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
+use snapchain::mempool::mempool;
 
 struct NodeForTest {
     keypair: Keypair,
@@ -71,6 +72,7 @@ impl NodeForTest {
         let node = SnapchainNode::create(
             keypair.clone(),
             config,
+            mempool::Config::default(),
             None,
             gossip_tx,
             Some(block_tx),
