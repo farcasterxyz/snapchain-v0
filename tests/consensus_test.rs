@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use hex;
 use libp2p::identity::ed25519::Keypair;
+use snapchain::mempool::mempool;
 use snapchain::network::server::MyHubService;
 use snapchain::node::snapchain_node::SnapchainNode;
 use snapchain::proto::hub_service_server::HubServiceServer;
@@ -22,7 +23,6 @@ use tokio::time;
 use tonic::transport::Server;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
-use snapchain::mempool::mempool;
 
 struct NodeForTest {
     keypair: Keypair,
