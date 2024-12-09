@@ -93,25 +93,32 @@ impl RocksDB {
         let mut opts = Options::default();
         opts.create_if_missing(true); // Creates a database if it does not exist
 
+        // Configuration options to limit memory usage
+        opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB write buffer size
+        opts.set_max_write_buffer_number(4); // Maximum of 4 write buffers
+        opts.set_db_write_buffer_size(256 * 1024 * 1024); // Total memory for all buffers: 256MB
+
+        // Configure block-based options with LRU cache
+        let block_cache_size = 64 * 1024 * 1024; // Block cache size: 64MB
+        let cache = rocksdb::Cache::new_lru_cache(block_cache_size);
+        let mut block_opts = rocksdb::BlockBasedOptions::default();
+        block_opts.set_block_cache(&cache);
+
+        // Apply block-based options to the main options
+        opts.set_block_based_table_factory(&block_opts);
+
+        // Replace deprecated methods with max background jobs
+        opts.set_max_background_jobs(6); // Adjust to combine flush and compaction threads
+
         let mut tx_db_opts = rocksdb::TransactionDBOptions::default();
         tx_db_opts.set_default_lock_timeout(5000); // 5 seconds
 
-        // Open the database with multi-threaded support
-        let db = rocksdb::TransactionDB::open(&opts, &tx_db_opts, &self.path)?;
+        // Open the database with transaction support
+        let db = TransactionDB::open(&opts, &tx_db_opts, &self.path)?;
         *db_lock = Some(db);
-
-        // We put the db in a RwLock to make the compiler happy, but it is strictly not required.
-        // We can use unsafe to replace the value directly, and this will work fine, and shave off
-        // 100ns per db read/write operation.
-        // eg:
-        // unsafe {
-        //     let db_ptr = &self.db as *const Option<TransactionDB> as *mut Option<TransactionDB>;
-        //     std::ptr::replace(db_ptr, Some(db));
-        // }
 
         Ok(())
     }
-
     pub fn location(&self) -> String {
         self.path.clone()
     }
