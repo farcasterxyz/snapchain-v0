@@ -923,8 +923,8 @@ impl ShardEngine {
             // An error here just means there are no active receivers, which is fine and will happen if there are no active subscribe rpcs
             let _ = self.senders.events_tx.send(event);
         }
+        self.stores.trie.unload_children();
         self.stores.trie.reload(&self.db).unwrap();
-
         _ = self.emit_commit_metrics(&shard_chunk);
 
         match self.stores.shard_store.put_shard_chunk(shard_chunk) {
