@@ -83,6 +83,7 @@ impl MyHubService {
                 StoreLimits::default(),
                 self.statsd_client.clone(),
                 100,
+                200,
             );
             let result = readonly_engine.simulate_message(&message);
 

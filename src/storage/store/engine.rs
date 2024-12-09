@@ -150,9 +150,11 @@ impl ShardEngine {
         store_limits: StoreLimits,
         statsd_client: StatsdClientWrapper,
         max_messages_per_block: u32,
+        mempool_queue_size: u32,
     ) -> ShardEngine {
         // TODO: adding the trie here introduces many calls that want to return errors. Rethink unwrap strategy.
-        let (messages_tx, messages_rx) = mpsc::channel::<MempoolMessage>(10_000);
+        let (messages_tx, messages_rx) =
+            mpsc::channel::<MempoolMessage>(mempool_queue_size as usize);
         ShardEngine {
             shard_id,
             stores: Stores::new(db.clone(), trie, store_limits),
