@@ -24,7 +24,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
 
-const MAX_SHARDS: u32 = 3;
+const MAX_SHARDS: u32 = 64;
 
 pub struct SnapchainNode {
     pub consensus_actors: BTreeMap<u32, ActorRef<ConsensusMsg<SnapchainValidatorContext>>>,
@@ -60,7 +60,7 @@ impl SnapchainNode {
             if shard_id == 0 {
                 panic!("Shard ID 0 is reserved for the block shard, created automaticaly");
             } else if shard_id > MAX_SHARDS {
-                panic!("Shard ID must be between 1 and 3");
+                panic!("Shard ID must be between 1 and {}", MAX_SHARDS);
             }
 
             let current_height = match block_store.max_block_number() {
