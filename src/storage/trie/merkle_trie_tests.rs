@@ -112,6 +112,13 @@ mod tests {
         let event_key = TrieKey::for_onchain_event(&event);
         assert_eq!(event_key[0..4], TrieKey::for_fid(1234));
         assert_eq!(event_key[4], event.r#type as u8);
-        assert_eq!(event_key[5..], event.transaction_hash);
+        assert_eq!(
+            event_key[5..(5 + event.transaction_hash.len())],
+            event.transaction_hash
+        );
+        assert_eq!(
+            event_key[(5 + event.transaction_hash.len())..],
+            event.log_index.to_be_bytes()
+        );
     }
 }
