@@ -104,6 +104,7 @@ impl SnapchainNode {
                 validator_address.clone(),
                 shard.clone(),
                 engine,
+                statsd_client.clone(),
                 shard_decision_tx.clone(),
                 config.propose_value_delay,
             );
@@ -161,6 +162,7 @@ impl SnapchainNode {
             config.num_shards,
             block_tx,
             engine,
+            statsd_client.clone(),
         );
         let block_validator = ShardValidator::new(
             validator_address.clone(),
