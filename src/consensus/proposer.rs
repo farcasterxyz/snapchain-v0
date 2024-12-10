@@ -173,7 +173,7 @@ impl Proposer for ShardProposer {
         }
         self.statsd_client.gauge_with_shard(
             self.shard_id.shard_id(),
-            "shard.pending_chunks",
+            "proposer.pending_blocks",
             self.proposed_chunks.len() as u64,
         );
     }
@@ -394,12 +394,12 @@ impl Proposer for BlockProposer {
         }
         self.statsd_client.gauge_with_shard(
             self.shard_id.shard_id(),
-            "block.pending_chunks",
+            "proposer.pending_shards",
             self.pending_chunks.len() as u64,
         );
         self.statsd_client.gauge_with_shard(
             self.shard_id.shard_id(),
-            "block.pending_blocks",
+            "proposer.pending_blocks",
             self.proposed_blocks.len() as u64,
         );
     }
