@@ -51,6 +51,14 @@ message GetInfoResponse {
   DbStats db_stats = 5;
 }
 
+message GetInfoByFidRequest {
+  uint32 fid = 1;
+}
+
+message GetInfoByFidResponse {
+    map<uint32, uint64> num_messages_by_message_type = 3;
+}
+
 service HubService {
   rpc SubmitMessage(Message) returns (Message);
   rpc SubmitMessageWithOptions(SubmitMessageRequest) returns (SubmitMessageResponse);
@@ -58,4 +66,5 @@ service HubService {
   rpc GetShardChunks(ShardChunksRequest) returns (ShardChunksResponse);
   rpc Subscribe(SubscribeRequest) returns (stream HubEvent);
   rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
+  rpc GetInfoByFid(GetInfoByFidRequest) returns (GetInfoByFidResponse);
 };
