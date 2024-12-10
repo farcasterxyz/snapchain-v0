@@ -33,6 +33,7 @@ impl TrieKey {
         key.extend_from_slice(&Self::for_fid(event.fid as u32));
         key.push(event.r#type as u8);
         key.extend_from_slice(&event.transaction_hash);
+        key.extend_from_slice(&event.log_index.to_be_bytes());
         key
     }
 
