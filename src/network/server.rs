@@ -326,8 +326,14 @@ impl HubService for MyHubService {
             MessageType::LinkCompactState,
         ];
         let mut num_messages_by_message_type = HashMap::new();
+        let mut num_messages = 0;
         let fid = request.get_ref().fid;
         for (_, shard_store) in self.shard_stores.iter() {
+            num_messages += shard_store.trie.get_count(
+                &shard_store.db,
+                &mut RocksDbTransactionBatch::new(),
+                &TrieKey::for_fid(fid),
+            );
             for message_type in message_types {
                 num_messages_by_message_type.insert(
                     message_type as u32,
@@ -341,6 +347,7 @@ impl HubService for MyHubService {
         }
 
         Ok(Response::new(GetInfoByFidResponse {
+            num_messages,
             num_messages_by_message_type,
         }))
     }
