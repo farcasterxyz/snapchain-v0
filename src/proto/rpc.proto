@@ -56,7 +56,8 @@ message GetInfoByFidRequest {
 }
 
 message GetInfoByFidResponse {
-    map<uint32, uint64> num_messages_by_message_type = 3;
+    uint64 num_messages = 1;
+    map<uint32, uint64> num_messages_by_message_type = 2;
 }
 
 service HubService {
