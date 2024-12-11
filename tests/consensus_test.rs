@@ -371,6 +371,46 @@ async fn test_basic_consensus() {
             i
         );
     }
+
+    // Block contents should be same across all nodes
+    let blocks = network.nodes[0]
+        .block_store
+        .get_blocks(0, None, &PageOptions::default())
+        .unwrap()
+        .blocks;
+    for i in 1..network.nodes.len() {
+        let other_blocks = network.nodes[i]
+            .block_store
+            .get_blocks(0, None, &PageOptions::default())
+            .unwrap()
+            .blocks;
+        assert_eq!(blocks.len(), other_blocks.len());
+        for (block, other_block) in blocks.iter().zip(other_blocks.iter()) {
+            assert_eq!(block.hash, other_block.hash);
+            assert_eq!(block.shard_chunks.len(), other_block.shard_chunks.len());
+            for (chunk, other_chunk) in block
+                .shard_chunks
+                .iter()
+                .zip(other_block.shard_chunks.iter())
+            {
+                assert_eq!(chunk.hash, other_chunk.hash);
+                assert_eq!(chunk.transactions.len(), other_chunk.transactions.len());
+                for (tx, other_tx) in chunk
+                    .transactions
+                    .iter()
+                    .zip(other_chunk.transactions.iter())
+                {
+                    assert_eq!(tx.user_messages.len(), other_tx.user_messages.len());
+                    assert_eq!(tx.user_messages.len(), other_tx.user_messages.len());
+                    for (msg, other_msg) in
+                        tx.user_messages.iter().zip(other_tx.user_messages.iter())
+                    {
+                        assert_eq!(msg.data, other_msg.data);
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn wait_for_blocks(new_node: &NodeForTest, old_node: &NodeForTest) {

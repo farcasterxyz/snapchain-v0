@@ -145,14 +145,14 @@ impl Proposer for ShardProposer {
         if let Some(proto::full_proposal::ProposedValue::Shard(chunk)) =
             full_proposal.proposed_value.clone()
         {
-            self.proposed_chunks
-                .insert(full_proposal.shard_hash(), full_proposal.clone());
             let state = ShardStateChange {
                 shard_id: chunk.header.clone().unwrap().height.unwrap().shard_index,
                 new_state_root: chunk.header.clone().unwrap().shard_root.clone(),
                 transactions: chunk.transactions.clone(),
             };
             return if self.engine.validate_state_change(&state) {
+                self.proposed_chunks
+                    .insert(full_proposal.shard_hash(), full_proposal.clone());
                 Validity::Valid
             } else {
                 error!("Invalid state change for shard: {:?}", state.shard_id);
@@ -239,6 +239,7 @@ pub struct BlockProposer {
     pending_chunks: BTreeMap<u64, Vec<ShardChunk>>,
     shard_decision_rx: mpsc::Receiver<ShardChunk>,
     num_shards: u32,
+    confirmed_height: u64,
     block_tx: Option<mpsc::Sender<Block>>,
     engine: BlockEngine,
     statsd_client: StatsdClientWrapper,
@@ -264,6 +265,7 @@ impl BlockProposer {
             block_tx,
             engine,
             statsd_client,
+            confirmed_height: 0,
         }
     }
 
@@ -286,6 +288,13 @@ impl BlockProposer {
                     if let Ok(chunk) = self.shard_decision_rx.try_recv() {
                         let chunk_height = chunk.header.clone().unwrap().height.unwrap();
                         let chunk_block_number = chunk_height.block_number;
+
+                        if chunk_block_number < self.confirmed_height {
+                            // The node could be lagging behind on a chunk, but we've already decided on the block due to quorum
+                            // Ignore the chunk
+                            continue;
+                        }
+
                         if self.pending_chunks.contains_key(&chunk_block_number) {
                             self.pending_chunks.get_mut(&chunk_block_number).unwrap().push(chunk);
                         } else {
@@ -391,11 +400,10 @@ impl Proposer for BlockProposer {
             self.engine.commit_block(proposal.block().unwrap());
             self.proposed_blocks.remove(&value);
             self.pending_chunks.remove(&height.block_number);
+            self.confirmed_height = height.block_number;
         }
 
-        // Remove any expired heights
-        // TODO: We should also do the same for hashes (in case validation failed) and in ShardProposer
-        // TODO: Understand why this happens in the first place.
+        // Remove any expired heights in case they exist
         let mut expired_heights = vec![];
         for (block_number, _) in self.pending_chunks.iter() {
             // Add a buffer of 100 blocks to avoid removing heights that are still being processed
