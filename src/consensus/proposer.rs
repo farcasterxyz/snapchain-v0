@@ -6,6 +6,7 @@ use crate::proto::{Block, BlockHeader, FullProposal, ShardChunk, ShardHeader};
 use crate::proto::{BlocksRequest, ShardChunksRequest};
 use crate::storage::store::engine::{BlockEngine, ShardEngine, ShardStateChange};
 use crate::storage::store::BlockStorageError;
+use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use malachite_common::{Round, Validity};
 use prost::Message;
 use std::collections::BTreeMap;
@@ -57,6 +58,7 @@ pub struct ShardProposer {
     tx_decision: mpsc::Sender<ShardChunk>,
     engine: ShardEngine,
     propose_value_delay: Duration,
+    statsd_client: StatsdClientWrapper,
 }
 
 impl ShardProposer {
@@ -64,6 +66,7 @@ impl ShardProposer {
         address: Address,
         shard_id: SnapchainShard,
         engine: ShardEngine,
+        statsd_client: StatsdClientWrapper,
         tx_decision: mpsc::Sender<ShardChunk>,
         propose_value_delay: Duration,
     ) -> ShardProposer {
@@ -73,6 +76,7 @@ impl ShardProposer {
             proposed_chunks: BTreeMap::new(),
             tx_decision,
             engine,
+            statsd_client,
             propose_value_delay,
         }
     }
@@ -167,6 +171,11 @@ impl Proposer for ShardProposer {
                 .commit_shard_chunk(proposal.shard_chunk().unwrap());
             self.proposed_chunks.remove(&value);
         }
+        self.statsd_client.gauge_with_shard(
+            self.shard_id.shard_id(),
+            "proposer.pending_blocks",
+            self.proposed_chunks.len() as u64,
+        );
     }
 
     fn get_confirmed_height(&self) -> Height {
@@ -232,6 +241,7 @@ pub struct BlockProposer {
     num_shards: u32,
     block_tx: Option<mpsc::Sender<Block>>,
     engine: BlockEngine,
+    statsd_client: StatsdClientWrapper,
 }
 
 impl BlockProposer {
@@ -242,6 +252,7 @@ impl BlockProposer {
         num_shards: u32,
         block_tx: Option<mpsc::Sender<Block>>,
         engine: BlockEngine,
+        statsd_client: StatsdClientWrapper,
     ) -> BlockProposer {
         BlockProposer {
             shard_id,
@@ -252,6 +263,7 @@ impl BlockProposer {
             num_shards,
             block_tx,
             engine,
+            statsd_client,
         }
     }
 
@@ -380,6 +392,16 @@ impl Proposer for BlockProposer {
             self.proposed_blocks.remove(&value);
             self.pending_chunks.remove(&height.block_number);
         }
+        self.statsd_client.gauge_with_shard(
+            self.shard_id.shard_id(),
+            "proposer.pending_shards",
+            self.pending_chunks.len() as u64,
+        );
+        self.statsd_client.gauge_with_shard(
+            self.shard_id.shard_id(),
+            "proposer.pending_blocks",
+            self.proposed_blocks.len() as u64,
+        );
     }
 
     fn get_confirmed_height(&self) -> Height {
