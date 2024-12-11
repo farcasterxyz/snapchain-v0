@@ -398,7 +398,8 @@ impl Proposer for BlockProposer {
         // TODO: Understand why this happens in the first place.
         let mut expired_heights = vec![];
         for (block_number, _) in self.pending_chunks.iter() {
-            if block_number < &height.block_number {
+            // Add a buffer of 100 blocks to avoid removing heights that are still being processed
+            if block_number + 100 < height.block_number {
                 expired_heights.push(*block_number);
             }
         }
