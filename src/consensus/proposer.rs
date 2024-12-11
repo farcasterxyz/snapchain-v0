@@ -377,7 +377,7 @@ impl Proposer for BlockProposer {
 
     fn add_proposed_value(&mut self, full_proposal: &FullProposal) -> Validity {
         if let Some(proto::full_proposal::ProposedValue::Block(_block)) =
-            full_proposal.proposed_value.clone()
+            &full_proposal.proposed_value
         {
             self.proposed_blocks
                 .insert(full_proposal.shard_hash(), full_proposal.clone());
@@ -392,6 +392,20 @@ impl Proposer for BlockProposer {
             self.proposed_blocks.remove(&value);
             self.pending_chunks.remove(&height.block_number);
         }
+
+        // Remove any expired heights
+        // TODO: We should also do the same for hashes (in case validation failed) and in ShardProposer
+        // TODO: Understand why this happens in the first place.
+        let mut expired_heights = vec![];
+        for (block_number, _) in self.pending_chunks.iter() {
+            if block_number < &height.block_number {
+                expired_heights.push(*block_number);
+            }
+        }
+        for expired_height in expired_heights {
+            self.pending_chunks.remove(&expired_height);
+        }
+
         self.statsd_client.gauge_with_shard(
             self.shard_id.shard_id(),
             "proposer.pending_shards",
