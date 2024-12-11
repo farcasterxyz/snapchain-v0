@@ -11,12 +11,15 @@ use crate::proto;
 use crate::proto::OnChainEvent;
 use crate::proto::{Height, ShardChunk, ShardHeader, Transaction};
 use crate::storage::store::engine::{MempoolMessage, ShardStateChange};
+#[allow(unused_imports)] // Used by cfg(test)
+use crate::storage::trie::merkle_trie::TrieKey;
+#[allow(unused_imports)]
 use crate::utils::factory::{events_factory, username_factory};
 use hex::FromHex;
 
 pub const FID_FOR_TEST: u32 = 1234;
 
-#[allow(dead_code)] // TODO
+#[cfg(test)]
 pub const FID2_FOR_TEST: u32 = 1235;
 
 pub mod limits {
@@ -58,6 +61,7 @@ pub mod limits {
 
 pub struct EngineOptions {
     pub limits: Option<StoreLimits>,
+    pub db_name: Option<String>,
 }
 
 pub fn new_engine_with_options(options: EngineOptions) -> (ShardEngine, tempfile::TempDir) {
@@ -66,7 +70,9 @@ pub fn new_engine_with_options(options: EngineOptions) -> (ShardEngine, tempfile
         true,
     );
     let dir = tempfile::TempDir::new().unwrap();
-    let db_path = dir.path().join("a.db");
+    let db_path = dir
+        .path()
+        .join(options.db_name.unwrap_or("test.db".to_string()));
 
     let db = db::RocksDB::new(db_path.to_str().unwrap());
     db.open().unwrap();
@@ -90,9 +96,12 @@ pub fn new_engine_with_options(options: EngineOptions) -> (ShardEngine, tempfile
     )
 }
 
-#[allow(dead_code)] // TODO
+#[cfg(test)]
 pub fn new_engine() -> (ShardEngine, tempfile::TempDir) {
-    new_engine_with_options(EngineOptions { limits: None })
+    new_engine_with_options(EngineOptions {
+        limits: None,
+        db_name: None,
+    })
 }
 
 pub async fn commit_event(engine: &mut ShardEngine, event: &OnChainEvent) -> ShardChunk {
@@ -105,6 +114,39 @@ pub async fn commit_event(engine: &mut ShardEngine, event: &OnChainEvent) -> Sha
     );
 
     validate_and_commit_state_change(engine, &state_change)
+}
+
+#[cfg(test)]
+pub async fn commit_message(engine: &mut ShardEngine, msg: &proto::Message) -> ShardChunk {
+    let state_change =
+        engine.propose_state_change(1, vec![MempoolMessage::UserMessage(msg.clone())]);
+
+    if state_change.transactions.is_empty() {
+        panic!("Failed to propose message");
+    }
+
+    let chunk = validate_and_commit_state_change(engine, &state_change);
+    assert_eq!(
+        state_change.new_state_root,
+        chunk.header.as_ref().unwrap().shard_root
+    );
+    assert!(engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(msg)));
+    chunk
+}
+
+#[cfg(test)]
+pub fn trie_ctx() -> &'static mut merkle_trie::Context<'static> {
+    Box::leak(Box::new(merkle_trie::Context::new()))
+}
+
+#[cfg(test)]
+pub fn message_exists_in_trie(engine: &mut ShardEngine, msg: &proto::Message) -> bool {
+    engine.trie_key_exists(trie_ctx(), &TrieKey::for_message(msg))
+}
+
+#[cfg(test)]
+pub fn key_exists_in_trie(engine: &mut ShardEngine, key: &Vec<u8>) -> bool {
+    engine.trie_key_exists(trie_ctx(), key)
 }
 
 pub fn default_shard_chunk() -> ShardChunk {
@@ -166,7 +208,7 @@ pub async fn register_user(fid: u32, signer: SigningKey, engine: &mut ShardEngin
     commit_event(engine, &signer_event).await;
 }
 
-#[allow(dead_code)] // This is used by tests
+#[cfg(test)]
 pub async fn register_fname(
     fid: u32,
     username: &String,

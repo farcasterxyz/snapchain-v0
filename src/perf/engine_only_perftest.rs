@@ -33,6 +33,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
             limits: test_helper::limits::unlimited(),
             legacy_limits: test_helper::limits::unlimited(),
         }),
+        db_name: None,
     });
 
     let mut i = 0;

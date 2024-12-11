@@ -1,4 +1,4 @@
-use crate::mempool::routing;
+use crate::mempool::routing::MessageRouter;
 use crate::proto::admin_service_server::AdminService;
 use crate::proto::ValidatorMessage;
 use crate::proto::{self, OnChainEvent};
@@ -63,6 +63,7 @@ impl DbManager {
 pub struct MyAdminService {
     db_manager: DbManager,
     num_shards: u32,
+    message_router: Box<dyn MessageRouter>,
     pub shard_senders: HashMap<u32, Senders>,
 }
 
@@ -82,11 +83,13 @@ impl MyAdminService {
         db_manager: DbManager,
         shard_senders: HashMap<u32, Senders>,
         num_shards: u32,
+        message_router: Box<dyn MessageRouter>,
     ) -> Self {
         Self {
             db_manager,
             shard_senders,
             num_shards,
+            message_router,
         }
     }
 }
@@ -133,7 +136,7 @@ impl AdminService for MyAdminService {
             ));
         }
 
-        let dst_shard = routing::route_message(fid, self.num_shards);
+        let dst_shard = self.message_router.route_message(fid, self.num_shards);
 
         let sender = match self.shard_senders.get(&dst_shard) {
             Some(sender) => sender,
