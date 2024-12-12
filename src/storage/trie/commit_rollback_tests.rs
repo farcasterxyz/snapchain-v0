@@ -32,14 +32,17 @@ mod tests {
         t.initialize(db)?;
 
         let mut txn_batch = RocksDbTransactionBatch::new();
-        t.insert(
-            ctx,
-            db,
-            &mut txn_batch,
-            vec![vec![0x12, 0x34, 0xaa, 0xFF], vec![0x12, 0x35, 0xaa, 0xFF]],
-        )?;
+        t.insert(ctx, db, &mut txn_batch, vec![vec![0x12, 0x34, 0xaa, 0xFF]])?;
+
+        let mut txn_batch = RocksDbTransactionBatch::new();
+        t.insert(ctx, db, &mut txn_batch, vec![vec![0x12, 0x35, 0xaa, 0xFF]])?;
 
         t.insert(ctx, db, &mut txn_batch, vec![vec![0x13, 0x55, 0xaa, 0xFF]])?;
+
+        t.print()?;
+        t.show_hashes();
+        println!("root hash = {}", hex::encode(t.root_hash()?));
+        return Ok(());
 
         t.print()?;
 
@@ -107,7 +110,7 @@ mod tests {
         let ctx = &Context::new();
 
         let dir = TempDir::new().unwrap();
-        let hashes1 = generate_hashes(vec![1], 10_000);
+        let hashes1 = generate_hashes(vec![1], 1);
 
         {
             let db_path = dir.path().join("t1.db");

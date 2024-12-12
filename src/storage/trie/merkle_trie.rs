@@ -163,7 +163,8 @@ impl MerkleTrie {
         if let Some(root) = self.root.as_mut() {
             let mut txn = RocksDbTransactionBatch::new();
             let mut hm = HashMap::new();
-            let results = root.insert(ctx, &mut hm, 0, db, &mut txn, keys, 0)?;
+            let results = root.insert(ctx, &mut hm, db, &mut txn, keys, 0)?;
+            println!("here we go {}", root.child_hashes.len());
 
             txn_batch.merge(txn);
             Ok(results)

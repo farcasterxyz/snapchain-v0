@@ -10,6 +10,7 @@ use prost::Message as _;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::atomic;
+use tracing_subscriber::fmt::format;
 
 // TODO: remove or reduce this and/or rename (make sure it works under all branching factors)
 pub const TIMESTAMP_LENGTH: usize = 10;
@@ -61,7 +62,7 @@ pub struct TrieNode {
     hash: Vec<u8>,
     items: usize,
     children: HashMap<u8, TrieNodeType>,
-    child_hashes: HashMap<u8, Vec<u8>>,
+    pub child_hashes: HashMap<u8, Vec<u8>>,
     key: Option<Vec<u8>>,
 }
 
@@ -190,6 +191,7 @@ impl TrieNode {
     }
 
     pub fn show_hashes(&mut self) {
+        println!("child_hashes.len = {}", self.child_hashes.len());
         let mut entries: Vec<_> = self.children.iter().collect();
         entries.sort_by_key(|(k, _)| *k);
 
@@ -219,7 +221,6 @@ impl TrieNode {
         &mut self,
         ctx: &Context,
         child_hashes: &mut HashMap<u8, Vec<u8>>,
-        branch: u8,
         db: &RocksDB,
         txn: &mut RocksDbTransactionBatch,
         mut keys: Vec<Vec<u8>>,
@@ -246,7 +247,7 @@ impl TrieNode {
                 self.key = Some(key);
                 self.items += 1;
 
-                self.update_hash(ctx, db, &prefix)?;
+                self.update_hash(ctx, db, child_hashes, &prefix)?;
                 self.put_to_txn(txn, &prefix);
 
                 inserted = true;
@@ -315,15 +316,8 @@ impl TrieNode {
             let child_results = {
                 let mut child_hashes = std::mem::take(&mut self.child_hashes);
                 let child = self.get_or_load_child(ctx, db, &prefix, char)?;
-                let results = child.insert(
-                    ctx,
-                    &mut child_hashes,
-                    char,
-                    db,
-                    txn,
-                    keys,
-                    current_index + 1,
-                )?;
+                let results =
+                    child.insert(ctx, &mut child_hashes, db, txn, keys, current_index + 1)?;
                 self.child_hashes = child_hashes;
                 results
             };
@@ -339,7 +333,7 @@ impl TrieNode {
         if successes > 0 {
             self.items += successes;
 
-            self.update_hash(ctx, db, &prefix)?;
+            self.update_hash(ctx, db, child_hashes, &prefix)?;
             self.put_to_txn(txn, &prefix);
         }
 
@@ -365,7 +359,7 @@ impl TrieNode {
                     self.items -= 1;
 
                     self.delete_to_txn(txn, &prefix);
-                    self.update_hash(ctx, db, &prefix)?;
+                    self.update_hash(ctx, db, &mut HashMap::new(), &prefix)?;
 
                     results[i] = true;
                     break;
@@ -435,7 +429,7 @@ impl TrieNode {
             if self.items == 0 {
                 // Delete this node
                 self.delete_to_txn(txn, &prefix);
-                self.update_hash(ctx, db, &prefix)?;
+                self.update_hash(ctx, db, &mut HashMap::new(), &prefix)?;
                 return Ok(results);
             }
 
@@ -454,7 +448,7 @@ impl TrieNode {
                 }
             }
 
-            self.update_hash(ctx, db, &prefix)?;
+            self.update_hash(ctx, db, &mut HashMap::new(), &prefix)?;
             self.put_to_txn(txn, &prefix);
         }
 
@@ -509,7 +503,6 @@ impl TrieNode {
             new_child.insert(
                 ctx,
                 &mut child_hashes,
-                new_child_char,
                 db,
                 txn,
                 vec![key],
@@ -519,7 +512,6 @@ impl TrieNode {
             self.child_hashes.insert(new_child_char, new_child.hash());
         }
 
-        self.update_hash(ctx, db, &prefix)?;
         self.put_to_txn(txn, &prefix);
 
         Ok(())
@@ -565,9 +557,17 @@ impl TrieNode {
         }
     }
 
-    fn update_hash(&mut self, ctx: &Context, db: &RocksDB, prefix: &[u8]) -> Result<(), TrieError> {
+    fn update_hash(
+        &mut self,
+        ctx: &Context,
+        db: &RocksDB,
+        child_hashes_: &mut HashMap<u8, Vec<u8>>,
+        prefix: &[u8],
+    ) -> Result<(), TrieError> {
         if self.is_leaf() {
             self.hash = blake3_20(&self.key.as_ref().unwrap_or(&vec![]));
+            println!("l {} {}", hex::encode(prefix), hex::encode(&self.hash));
+            child_hashes_.insert(prefix[prefix.len() - 1], self.hash.clone());
         } else {
             // Sort the children by their "char" value
             let child_hashes = {
@@ -601,6 +601,16 @@ impl TrieNode {
             }
 
             self.hash = blake3_20(&concat_hashes);
+            println!("i {} {}", hex::encode(prefix), hex::encode(&self.hash));
+            if prefix.len() > 0 {
+                child_hashes_.insert(prefix[prefix.len() - 1], self.hash.clone());
+            } else {
+                let mut child_hashes: String = String::new();
+                for (k, v) in self.child_hashes.iter() {
+                    child_hashes += format!("{k}:{} ", hex::encode(v)).as_str();
+                }
+                println!("len0 {child_hashes}");
+            }
         }
         Ok(())
     }
@@ -726,17 +736,21 @@ impl TrieNode {
 
     pub(crate) fn print(&self, prefix: u8, depth: usize) -> Result<(), TrieError> {
         let indent = "  ".repeat(depth);
-        if depth > 0 {
-            let key = encode_with_spaces(self.key.as_ref().unwrap_or(&vec![]));
+        let key = encode_with_spaces(self.key.as_ref().unwrap_or(&vec![]));
 
-            println!(
-                "{}0x{} [{}]: {}",
-                indent,
-                hex::encode(vec![prefix]),
-                key,
-                hex::encode(self.hash.as_slice())
-            );
+        let mut child_hashes: String = String::new();
+        for (k, v) in self.child_hashes.iter() {
+            child_hashes += format!("{k}:{} ", hex::encode(v)).as_str();
         }
+
+        println!(
+            "{}0x{} [{}]: {} {}",
+            indent,
+            hex::encode(vec![prefix]),
+            key,
+            hex::encode(self.hash.as_slice()),
+            child_hashes
+        );
 
         for (char, child) in self.children.iter() {
             match child {
