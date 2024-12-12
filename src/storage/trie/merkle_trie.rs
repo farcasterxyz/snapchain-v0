@@ -73,6 +73,12 @@ pub struct MerkleTrie {
 }
 
 impl MerkleTrie {
+    pub(crate) fn show_hashes(&mut self) {
+        self.root.as_mut().unwrap().show_hashes();
+    }
+}
+
+impl MerkleTrie {
     pub fn new(branching_factor: u32) -> Result<Self, TrieError> {
         let branch_xform = util::get_transform_functions(branching_factor)
             .ok_or(TrieError::UnknownBranchingFactor)?;
@@ -156,7 +162,8 @@ impl MerkleTrie {
 
         if let Some(root) = self.root.as_mut() {
             let mut txn = RocksDbTransactionBatch::new();
-            let results = root.insert(ctx, db, &mut txn, keys, 0)?;
+            let mut hm = HashMap::new();
+            let results = root.insert(ctx, &mut hm, 0, db, &mut txn, keys, 0)?;
 
             txn_batch.merge(txn);
             Ok(results)
@@ -355,6 +362,13 @@ impl MerkleTrie {
 
     pub fn branching_factor(&self) -> u32 {
         self.branching_factor
+    }
+
+    pub(crate) fn print(&self) -> Result<(), TrieError> {
+        let root = self.root.as_ref().unwrap();
+        root.print(0, 0)?;
+
+        Ok(())
     }
 }
 

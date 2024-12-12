@@ -20,6 +20,33 @@ mod tests {
     }
 
     #[test]
+    fn test_basics() -> Result<(), TrieError> {
+        let ctx = &Context::new();
+
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("a.db");
+        let mut t = MerkleTrie::new(4).unwrap();
+        let db = &RocksDB::new(db_path.to_str().unwrap());
+        db.open().unwrap();
+
+        t.initialize(db)?;
+
+        let mut txn_batch = RocksDbTransactionBatch::new();
+        t.insert(
+            ctx,
+            db,
+            &mut txn_batch,
+            vec![vec![0x12, 0x34, 0xaa, 0xFF], vec![0x12, 0x35, 0xaa, 0xFF]],
+        )?;
+
+        t.insert(ctx, db, &mut txn_batch, vec![vec![0x13, 0x55, 0xaa, 0xFF]])?;
+
+        t.print()?;
+
+        Ok(())
+    }
+
+    #[test]
     fn test_merkle_trie_basic_operations() -> Result<(), TrieError> {
         let ctx = &Context::new();
 
@@ -87,7 +114,7 @@ mod tests {
             let db = &RocksDB::new(db_path.to_str().unwrap());
             db.open().unwrap();
 
-            let mut t1 = MerkleTrie::new(16).unwrap();
+            let mut t1 = MerkleTrie::new(4).unwrap();
             t1.initialize(db)?;
 
             let mut txn_batch = RocksDbTransactionBatch::new();
@@ -98,6 +125,8 @@ mod tests {
                 items,
                 hex::encode(t1.root_hash()?)
             );
+
+            t1.show_hashes();
         }
 
         {
@@ -105,7 +134,7 @@ mod tests {
             let db = &RocksDB::new(db_path.to_str().unwrap());
             db.open().unwrap();
 
-            let mut t2 = MerkleTrie::new(16).unwrap();
+            let mut t2 = MerkleTrie::new(4).unwrap();
             t2.initialize(db)?;
 
             let mut txn_batch = RocksDbTransactionBatch::new();

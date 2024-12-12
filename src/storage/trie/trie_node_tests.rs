@@ -7,6 +7,7 @@ mod tests {
         trie::trie_node::{TrieNode, TrieNodeType, TIMESTAMP_LENGTH},
     };
     use hex::FromHex as _;
+    use std::collections::HashMap;
     use std::{sync::Arc, vec};
 
     fn empty_hash() -> Vec<u8> {
@@ -46,7 +47,7 @@ mod tests {
 
         // Can't insert keylengths < 10
         let key = (0..9).collect::<Vec<_>>();
-        let r = node.insert(ctx, &db, &mut txn, vec![key], 0);
+        let r = node.insert(ctx, &mut HashMap::new(), 0, &db, &mut txn, vec![key], 0);
         assert_eq!(r.is_err(), true);
         if let Err(TrieError::KeyLengthExceeded) = r {
             // ok
@@ -58,7 +59,15 @@ mod tests {
 
         // Add a new key. [0, 1, 2, .... 20]
         let key = (0..=20).collect::<Vec<_>>();
-        let r = node.insert(ctx, &db, &mut txn, vec![key.clone()], 0);
+        let r = node.insert(
+            ctx,
+            &mut HashMap::new(),
+            0,
+            &db,
+            &mut txn,
+            vec![key.clone()],
+            0,
+        );
         assert_eq!(r.unwrap()[0], true);
         assert_eq!(node.items(), 1);
         assert_eq!(node.value(), None);
@@ -92,7 +101,15 @@ mod tests {
 
         // Inserting the same item again it idempotent
         let prev_hash = node.hash();
-        let r = node.insert(ctx, &db, &mut txn, vec![key.clone()], 0);
+        let r = node.insert(
+            ctx,
+            &mut HashMap::new(),
+            0,
+            &db,
+            &mut txn,
+            vec![key.clone()],
+            0,
+        );
         assert_eq!(r.unwrap()[0], false);
         assert_eq!(node.items(), 1);
         assert_eq!(node.hash(), prev_hash);
@@ -116,7 +133,15 @@ mod tests {
         let split_pos = 12;
         key2[split_pos] = 42; // Differs from the original key at the 12th position
         let prev_hash = node.hash();
-        let r = node.insert(ctx, &db, &mut txn, vec![key2.clone()], 0);
+        let r = node.insert(
+            ctx,
+            &mut HashMap::new(),
+            0,
+            &db,
+            &mut txn,
+            vec![key2.clone()],
+            0,
+        );
         assert_eq!(r.unwrap()[0], true);
         assert_eq!(node.items(), 2);
         assert_ne!(node.hash(), prev_hash);
@@ -145,7 +170,15 @@ mod tests {
         let split_pos = 4;
         key3[split_pos] = 84; // Differs from the original key at the 4th position
         let prev_hash = node.hash();
-        let r = node.insert(ctx, &db, &mut txn, vec![key3.clone()], 0);
+        let r = node.insert(
+            ctx,
+            &mut HashMap::new(),
+            0,
+            &db,
+            &mut txn,
+            vec![key3.clone()],
+            0,
+        );
         assert_eq!(r.unwrap()[0], true);
         assert_eq!(node.items(), 3);
         assert_ne!(node.hash(), prev_hash);
@@ -203,10 +236,26 @@ mod tests {
         let mut key2 = key1.clone();
         key2[20] = 42;
 
-        let r = node.insert(ctx, &db, &mut txn, vec![key1.clone()], 0);
+        let r = node.insert(
+            ctx,
+            &mut HashMap::new(),
+            0,
+            &db,
+            &mut txn,
+            vec![key1.clone()],
+            0,
+        );
         assert_eq!(r.unwrap()[0], true);
 
-        let r = node.insert(ctx, &db, &mut txn, vec![key2.clone()], 0);
+        let r = node.insert(
+            ctx,
+            &mut HashMap::new(),
+            0,
+            &db,
+            &mut txn,
+            vec![key2.clone()],
+            0,
+        );
         assert_eq!(r.unwrap()[0], true);
 
         // Check that both exists return true
@@ -251,7 +300,15 @@ mod tests {
 
         // Add a new key. [0, 1, 2, .... 20]
         let key = (0..=20).collect::<Vec<_>>();
-        let r = node.insert(ctx, &db, &mut txn, vec![key.clone()], 0);
+        let r = node.insert(
+            ctx,
+            &mut HashMap::new(),
+            0,
+            &db,
+            &mut txn,
+            vec![key.clone()],
+            0,
+        );
         assert_eq!(r.unwrap()[0], true);
 
         // delete the key
@@ -270,11 +327,27 @@ mod tests {
         let mut key2 = key1.clone();
         key2[split_pos] = 42;
 
-        let r = node.insert(ctx, &db, &mut txn, vec![key1.clone()], 0);
+        let r = node.insert(
+            ctx,
+            &mut HashMap::new(),
+            0,
+            &db,
+            &mut txn,
+            vec![key1.clone()],
+            0,
+        );
         assert_eq!(r.unwrap()[0], true);
         let hash1 = node.hash();
 
-        let r = node.insert(ctx, &db, &mut txn, vec![key2.clone()], 0);
+        let r = node.insert(
+            ctx,
+            &mut HashMap::new(),
+            0,
+            &db,
+            &mut txn,
+            vec![key2.clone()],
+            0,
+        );
         assert_eq!(r.unwrap()[0], true);
         assert_ne!(node.hash(), hash1);
 
@@ -312,7 +385,15 @@ mod tests {
         let mut txn = RocksDbTransactionBatch::new();
         for id in ids.iter() {
             let r = node
-                .insert(ctx, &db, &mut txn, vec![id.clone()], 0)
+                .insert(
+                    ctx,
+                    &mut HashMap::new(),
+                    0,
+                    &db,
+                    &mut txn,
+                    vec![id.clone()],
+                    0,
+                )
                 .unwrap();
             assert_eq!(r[0], true);
         }
@@ -355,7 +436,15 @@ mod tests {
         let mut txn = RocksDbTransactionBatch::new();
         for id in ids.iter() {
             let r = node
-                .insert(ctx, &db, &mut txn, vec![id.clone()], 0)
+                .insert(
+                    ctx,
+                    &mut HashMap::new(),
+                    0,
+                    &db,
+                    &mut txn,
+                    vec![id.clone()],
+                    0,
+                )
                 .unwrap();
             assert_eq!(r[0], true);
         }
@@ -428,7 +517,15 @@ mod tests {
         let mut txn = RocksDbTransactionBatch::new();
         for id in ids.iter() {
             let r = node
-                .insert(ctx, &db, &mut txn, vec![id.clone()], 0)
+                .insert(
+                    ctx,
+                    &mut HashMap::new(),
+                    0,
+                    &db,
+                    &mut txn,
+                    vec![id.clone()],
+                    0,
+                )
                 .unwrap();
             assert_eq!(r[0], true);
         }
@@ -449,7 +546,15 @@ mod tests {
         let mut txn = RocksDbTransactionBatch::new();
         for id in ids.iter().rev() {
             let r = node
-                .insert(ctx, &db, &mut txn, vec![id.clone()], 0)
+                .insert(
+                    ctx,
+                    &mut HashMap::new(),
+                    0,
+                    &db,
+                    &mut txn,
+                    vec![id.clone()],
+                    0,
+                )
                 .unwrap();
             assert_eq!(r[0], true);
         }
@@ -512,7 +617,9 @@ mod tests {
         .collect();
 
         let mut txn = RocksDbTransactionBatch::new();
-        let r = node.insert(ctx, &db, &mut txn, ids.clone(), 0).unwrap();
+        let r = node
+            .insert(ctx, &mut HashMap::new(), 0, &db, &mut txn, ids.clone(), 0)
+            .unwrap();
         assert_eq!(r, vec![true, true, true]);
         db.commit(txn).unwrap();
 
@@ -526,7 +633,9 @@ mod tests {
 
         // Inserting them again returns false
         let mut txn = RocksDbTransactionBatch::new();
-        let r = node.insert(ctx, &db, &mut txn, ids.clone(), 0).unwrap();
+        let r = node
+            .insert(ctx, &mut HashMap::new(), 0, &db, &mut txn, ids.clone(), 0)
+            .unwrap();
         assert_eq!(r, vec![false, false, false]);
 
         // Inserting a subset of the ids returns true for the new ones
@@ -534,7 +643,17 @@ mod tests {
         new_ids.push(Vec::from_hex("0030662167aabbccddeeff").unwrap());
 
         let mut txn = RocksDbTransactionBatch::new();
-        let r = node.insert(ctx, &db, &mut txn, new_ids.clone(), 0).unwrap();
+        let r = node
+            .insert(
+                ctx,
+                &mut HashMap::new(),
+                0,
+                &db,
+                &mut txn,
+                new_ids.clone(),
+                0,
+            )
+            .unwrap();
         assert_eq!(r, vec![false, false, false, true]);
 
         assert_eq!(node.items(), new_ids.len());
@@ -617,7 +736,9 @@ mod tests {
         assert_eq!(node.items(), 0);
 
         let mut txn = RocksDbTransactionBatch::new();
-        let r = node.insert(ctx, &db, &mut txn, keys.clone(), 0).unwrap();
+        let r = node
+            .insert(ctx, &mut HashMap::new(), 0, &db, &mut txn, keys.clone(), 0)
+            .unwrap();
         assert_eq!(r.len(), keys.len());
         assert_eq!(r.iter().all(|x| *x), true);
 
@@ -642,7 +763,17 @@ mod tests {
         // Add the keys again in batches of 100
         for chunk in keys.chunks(100) {
             let mut txn = RocksDbTransactionBatch::new();
-            let r = node.insert(ctx, &db, &mut txn, chunk.to_vec(), 0).unwrap();
+            let r = node
+                .insert(
+                    ctx,
+                    &mut HashMap::new(),
+                    0,
+                    &db,
+                    &mut txn,
+                    chunk.to_vec(),
+                    0,
+                )
+                .unwrap();
             assert_eq!(r.len(), chunk.len());
             assert_eq!(r.iter().all(|x| *x), true);
             db.commit(txn).unwrap();
@@ -660,7 +791,15 @@ mod tests {
         for key in keys.iter() {
             let mut txn = RocksDbTransactionBatch::new();
             let r = node
-                .insert(ctx, &db, &mut txn, vec![key.clone()], 0)
+                .insert(
+                    ctx,
+                    &mut HashMap::new(),
+                    0,
+                    &db,
+                    &mut txn,
+                    vec![key.clone()],
+                    0,
+                )
                 .unwrap();
             assert_eq!(r.len(), 1);
             assert_eq!(r[0], true);
@@ -701,7 +840,9 @@ mod tests {
         assert_eq!(node.items(), 0);
 
         let mut txn = RocksDbTransactionBatch::new();
-        let r = node.insert(ctx, &db, &mut txn, keys.clone(), 0).unwrap();
+        let r = node
+            .insert(ctx, &mut HashMap::new(), 0, &db, &mut txn, keys.clone(), 0)
+            .unwrap();
         assert_eq!(r.len(), keys.len());
         assert_eq!(r.iter().all(|x| *x), true);
 
@@ -720,7 +861,8 @@ mod tests {
         // Create a new TrieNode and insert them again
         let mut node = TrieNode::new();
         let mut txn = RocksDbTransactionBatch::new();
-        node.insert(ctx, &db, &mut txn, keys.clone(), 0).unwrap();
+        node.insert(ctx, &mut HashMap::new(), 0, &db, &mut txn, keys.clone(), 0)
+            .unwrap();
         db.commit(txn).unwrap();
         assert_eq!(node.items(), keys.len());
 
@@ -741,7 +883,8 @@ mod tests {
         // Create a new TrieNode and insert them again
         let mut node = TrieNode::new();
         let mut txn = RocksDbTransactionBatch::new();
-        node.insert(ctx, &db, &mut txn, keys.clone(), 0).unwrap();
+        node.insert(ctx, &mut HashMap::new(), 0, &db, &mut txn, keys.clone(), 0)
+            .unwrap();
         db.commit(txn).unwrap();
         assert_eq!(node.items(), keys.len());
 
@@ -764,7 +907,8 @@ mod tests {
         // Create a new TrieNode and insert them again
         let mut node = TrieNode::new();
         let mut txn = RocksDbTransactionBatch::new();
-        node.insert(ctx, &db, &mut txn, keys.clone(), 0).unwrap();
+        node.insert(ctx, &mut HashMap::new(), 0, &db, &mut txn, keys.clone(), 0)
+            .unwrap();
         db.commit(txn).unwrap();
         assert_eq!(node.items(), keys.len());
 
@@ -783,7 +927,8 @@ mod tests {
         db.clear().unwrap();
         let mut node = TrieNode::new();
         let mut txn = RocksDbTransactionBatch::new();
-        node.insert(ctx, &db, &mut txn, keys.clone(), 0).unwrap();
+        node.insert(ctx, &mut HashMap::new(), 0, &db, &mut txn, keys.clone(), 0)
+            .unwrap();
         db.commit(txn).unwrap();
         assert_eq!(node.items(), keys.len());
 

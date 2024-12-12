@@ -8,6 +8,7 @@ use super::merkle_trie::TrieSnapshot;
 use crate::proto::DbTrieNode;
 use prost::Message as _;
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::sync::atomic;
 
 // TODO: remove or reduce this and/or rename (make sure it works under all branching factors)
@@ -60,6 +61,7 @@ pub struct TrieNode {
     hash: Vec<u8>,
     items: usize,
     children: HashMap<u8, TrieNodeType>,
+    child_hashes: HashMap<u8, Vec<u8>>,
     key: Option<Vec<u8>>,
 }
 
@@ -88,6 +90,7 @@ impl TrieNode {
             hash: vec![],
             items: 0,
             children: HashMap::new(),
+            child_hashes: HashMap::new(),
             key: None,
         }
     }
@@ -109,6 +112,7 @@ impl TrieNode {
             child_chars: node.children.keys().map(|c| *c as u32).collect(),
             items: node.items as u32,
             hash: node.hash.clone(),
+            // TODO: child_hashes
         };
 
         db_trie_node.encode_to_vec()
@@ -129,6 +133,7 @@ impl TrieNode {
             hash: db_trie_node.hash,
             items: db_trie_node.items as usize,
             children,
+            child_hashes: HashMap::new(), // TODO
             key: Some(db_trie_node.key),
         })
     }
@@ -184,6 +189,23 @@ impl TrieNode {
         }
     }
 
+    pub fn show_hashes(&mut self) {
+        let mut entries: Vec<_> = self.children.iter().collect();
+        entries.sort_by_key(|(k, _)| *k);
+
+        for (k, v) in entries {
+            match v {
+                TrieNodeType::Node(n) => {
+                    let ch = n.child_hashes.get(k).unwrap();
+                    println!("n {} {} {}", k, hex::encode(n.hash()), hex::encode(&ch));
+                }
+                TrieNodeType::Serialized(n) => {
+                    panic!("s {} {}", k, hex::encode(n.hash.as_ref().unwrap()));
+                }
+            }
+        }
+    }
+
     /**
      * Inserts a value into the trie. Returns true if the value was inserted, false if it already existed.
      * Recursively traverses the trie by prefix and inserts the value at the end. Updates the hashes for
@@ -196,6 +218,8 @@ impl TrieNode {
     pub fn insert(
         &mut self,
         ctx: &Context,
+        child_hashes: &mut HashMap<u8, Vec<u8>>,
+        branch: u8,
         db: &RocksDB,
         txn: &mut RocksDbTransactionBatch,
         mut keys: Vec<Vec<u8>>,
@@ -288,8 +312,21 @@ impl TrieNode {
             }
 
             // Recurse into a non-leaf node and instruct it to insert the value.
-            let child = self.get_or_load_child(ctx, db, &prefix, char)?;
-            let child_results = child.insert(ctx, db, txn, keys, current_index + 1)?;
+            let child_results = {
+                let mut child_hashes = std::mem::take(&mut self.child_hashes);
+                let child = self.get_or_load_child(ctx, db, &prefix, char)?;
+                let results = child.insert(
+                    ctx,
+                    &mut child_hashes,
+                    char,
+                    db,
+                    txn,
+                    keys,
+                    current_index + 1,
+                )?;
+                self.child_hashes = child_hashes;
+                results
+            };
 
             for (i, result) in is.into_iter().zip(child_results) {
                 results[i] = result;
@@ -364,8 +401,6 @@ impl TrieNode {
                 continue;
             }
 
-            let child = self.get_or_load_child(ctx, db, &prefix, char)?;
-
             // Split the child_keys into the "i"s and the keys
             let mut is = vec![];
             let mut keys = vec![];
@@ -374,8 +409,11 @@ impl TrieNode {
                 keys.push(key);
             }
 
-            let child_results = child.delete(ctx, db, txn, keys, current_index + 1)?;
-            let child_items = child.items;
+            let (child_results, child_items, child_hash) = {
+                let child = self.get_or_load_child(ctx, db, &prefix, char)?;
+                let child_results = child.delete(ctx, db, txn, keys, current_index + 1)?;
+                (child_results, child.items(), child.hash())
+            };
 
             // Delete the child if it's empty. This is required to make sure the hash will be the same
             // as another trie that doesn't have this node in the first place.
@@ -467,7 +505,18 @@ impl TrieNode {
             .insert(new_child_char, TrieNodeType::Node(TrieNode::default()));
 
         if let Some(TrieNodeType::Node(new_child)) = self.children.get_mut(&new_child_char) {
-            new_child.insert(ctx, db, txn, vec![key], current_index + 1)?;
+            let mut child_hashes = std::mem::take(&mut self.child_hashes);
+            new_child.insert(
+                ctx,
+                &mut child_hashes,
+                new_child_char,
+                db,
+                txn,
+                vec![key],
+                current_index + 1,
+            )?;
+            self.child_hashes = child_hashes;
+            self.child_hashes.insert(new_child_char, new_child.hash());
         }
 
         self.update_hash(ctx, db, &prefix)?;
@@ -675,32 +724,37 @@ impl TrieNode {
         })
     }
 
-    // Keeping this around since it is useful for debugging
-    // pub fn print(&self, prefix: u8, depth: usize) -> Result<(), TrieError> {
-    //     let indent = "  ".repeat(depth);
-    //     let key = self
-    //         .key
-    //         .as_ref()
-    //         .map(|k| format!("{:?}", k))
-    //         .unwrap_or("".to_string());
+    pub(crate) fn print(&self, prefix: u8, depth: usize) -> Result<(), TrieError> {
+        let indent = "  ".repeat(depth);
+        if depth > 0 {
+            let key = encode_with_spaces(self.key.as_ref().unwrap_or(&vec![]));
 
-    //     println!(
-    //         "{}{}{:?}: {}",
-    //         indent,
-    //         prefix,
-    //         key,
-    //         hex::encode(self.hash.as_slice())
-    //     );
+            println!(
+                "{}0x{} [{}]: {}",
+                indent,
+                hex::encode(vec![prefix]),
+                key,
+                hex::encode(self.hash.as_slice())
+            );
+        }
 
-    //     for (char, child) in self.children.iter() {
-    //         match child {
-    //             TrieNodeType::Node(child_node) => child_node.print(*char, depth + 1)?,
-    //             TrieNodeType::Serialized(_) => {
-    //                 println!("{}  {} (serialized):", indent, *char as char);
-    //             }
-    //         }
-    //     }
+        for (char, child) in self.children.iter() {
+            match child {
+                TrieNodeType::Node(child_node) => child_node.print(*char, depth + 1)?,
+                TrieNodeType::Serialized(_) => {
+                    println!("{}  {} (serialized):", indent, *char as char);
+                }
+            }
+        }
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
+}
+
+fn encode_with_spaces(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{:02x}", byte)) // Convert each byte to a two-character hex string
+        .collect::<Vec<_>>() // Collect as a vector of strings
+        .join(" ") // Join them with spaces
 }
