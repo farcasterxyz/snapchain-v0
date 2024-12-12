@@ -589,49 +589,51 @@ impl TrieNode {
             if prefix.len() > 0 {
                 child_hashes_.insert(prefix[prefix.len() - 1], self.hash.clone());
             }
-            // println!("l {} {}", hex::encode(prefix), hex::encode(&self.hash));
-        } else {
-            // Sort the children by their "char" value
-            let child_hashes = {
-                let mut sorted_children: Vec<_> = self.children.iter_mut().collect();
-                sorted_children.sort_by_key(|(char, _)| *char);
+            return Ok(());
+        }
 
-                sorted_children
-                    .iter()
-                    .map(|(char, child)| match child {
-                        TrieNodeType::Node(node) => (**char, node.hash.clone()),
-                        TrieNodeType::Serialized(serialized) => {
-                            if serialized.hash.is_some() {
-                                (**char, serialized.hash.as_ref().unwrap().clone())
-                            } else {
-                                (**char, vec![])
-                            }
+        // println!("l {} {}", hex::encode(prefix), hex::encode(&self.hash));
+        // Sort the children by their "char" value
+        let child_hashes: Vec<(u8, Vec<u8>)> = {
+            let mut sorted_children: Vec<_> = self.children.iter_mut().collect();
+            sorted_children.sort_by_key(|(char, _)| *char);
+
+            sorted_children
+                .iter()
+                .map(|(char, child)| match child {
+                    TrieNodeType::Node(node) => (**char, node.hash.clone()),
+                    TrieNodeType::Serialized(serialized) => {
+                        if serialized.hash.is_some() {
+                            (**char, serialized.hash.as_ref().unwrap().clone())
+                        } else {
+                            (**char, vec![])
                         }
-                    })
-                    .collect::<Vec<_>>()
-            };
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
 
-            // If any of the child hashes are none, we load the child from the db
-            let mut concat_hashes = vec![];
-            for (char, hash) in child_hashes.iter() {
-                if hash.is_empty() {
-                    let child = self.get_or_load_child(ctx, db, prefix, *char)?;
-                    concat_hashes.extend_from_slice(child.hash.as_slice());
-                } else {
-                    concat_hashes.extend_from_slice(hash.as_slice());
-                }
-            }
-
-            self.hash = blake3_20(&concat_hashes);
-            // println!("i {} {}", hex::encode(prefix), hex::encode(&self.hash));
-            if prefix.len() > 0 {
-                child_hashes_.insert(prefix[prefix.len() - 1], self.hash.clone());
+        // If any of the child hashes are none, we load the child from the db
+        let mut concat_hashes = vec![];
+        for (char, hash) in child_hashes.iter() {
+            if hash.is_empty() {
+                let child = self.get_or_load_child(ctx, db, prefix, *char)?;
+                concat_hashes.extend_from_slice(child.hash.as_slice());
             } else {
-                // println!("len0 {}", child_hashes_to_string(self.child_hashes.iter()));
+                concat_hashes.extend_from_slice(hash.as_slice());
             }
+        }
+
+        self.hash = blake3_20(&concat_hashes);
+        // println!("i {} {}", hex::encode(prefix), hex::encode(&self.hash));
+        if prefix.len() > 0 {
+            child_hashes_.insert(prefix[prefix.len() - 1], self.hash.clone());
+        } else {
+            // println!("len0 {}", child_hashes_to_string(self.child_hashes.iter()));
         }
         Ok(())
     }
+
     fn excluded_hash(
         &mut self,
         ctx: &Context,
