@@ -9,9 +9,7 @@ use crate::proto::DbTrieNode;
 use prost::Message as _;
 use std::collections::hash_map::Iter;
 use std::collections::HashMap;
-use std::hash::Hash;
 use std::sync::atomic;
-use tracing_subscriber::fmt::format;
 
 // TODO: remove or reduce this and/or rename (make sure it works under all branching factors)
 pub const TIMESTAMP_LENGTH: usize = 10;

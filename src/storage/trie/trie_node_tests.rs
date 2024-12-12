@@ -6,7 +6,6 @@ mod tests {
         db::{RocksDB, RocksDbTransactionBatch},
         trie::trie_node::{TrieNode, TrieNodeType, TIMESTAMP_LENGTH},
     };
-    use alloy::eips::HashOrNumber::Hash;
     use hex::FromHex as _;
     use std::collections::HashMap;
     use std::{sync::Arc, vec};
