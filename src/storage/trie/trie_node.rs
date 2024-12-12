@@ -578,8 +578,10 @@ impl TrieNode {
     ) -> Result<(), TrieError> {
         if self.is_leaf() {
             self.hash = blake3_20(&self.key.as_ref().unwrap_or(&vec![]));
+            if prefix.len() > 0 {
+                child_hashes_.insert(prefix[prefix.len() - 1], self.hash.clone());
+            }
             // println!("l {} {}", hex::encode(prefix), hex::encode(&self.hash));
-            child_hashes_.insert(prefix[prefix.len() - 1], self.hash.clone());
         } else {
             // Sort the children by their "char" value
             let child_hashes = {
