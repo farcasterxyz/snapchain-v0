@@ -592,7 +592,6 @@ impl TrieNode {
             return Ok(());
         }
 
-        // println!("l {} {}", hex::encode(prefix), hex::encode(&self.hash));
         // Sort the children by their "char" value
         let child_hashes: Vec<(u8, Vec<u8>)> = {
             let mut sorted_children: Vec<_> = self.children.iter_mut().collect();
@@ -625,11 +624,8 @@ impl TrieNode {
         }
 
         self.hash = blake3_20(&concat_hashes);
-        // println!("i {} {}", hex::encode(prefix), hex::encode(&self.hash));
         if prefix.len() > 0 {
             child_hashes_.insert(prefix[prefix.len() - 1], self.hash.clone());
-        } else {
-            // println!("len0 {}", child_hashes_to_string(self.child_hashes.iter()));
         }
         Ok(())
     }
