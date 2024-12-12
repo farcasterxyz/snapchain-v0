@@ -7,6 +7,7 @@ use super::errors::TrieError;
 use super::merkle_trie::TrieSnapshot;
 use crate::proto::DbTrieNode;
 use prost::Message as _;
+use std::collections::hash_map::Iter;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::atomic;
@@ -191,14 +192,19 @@ impl TrieNode {
     }
 
     pub fn show_hashes(&mut self) {
-        println!("child_hashes.len = {}", self.child_hashes.len());
-        let mut entries: Vec<_> = self.children.iter().collect();
-        entries.sort_by_key(|(k, _)| *k);
+        println!(
+            "child_hashes = {}",
+            child_hashes_to_string(self.child_hashes.iter())
+        );
 
-        for (k, v) in entries {
+        let mut keys: Vec<u8> = self.child_hashes.keys().cloned().collect();
+        keys.sort();
+
+        for k in keys {
+            let v = self.children.get(&k).unwrap();
             match v {
                 TrieNodeType::Node(n) => {
-                    let ch = n.child_hashes.get(k).cloned().unwrap_or(vec![]);
+                    let ch = self.child_hashes.get(&k).cloned().unwrap_or(vec![]);
                     println!("n {} {} {}", k, hex::encode(n.hash()), hex::encode(&ch));
                 }
                 TrieNodeType::Serialized(n) => {
@@ -566,7 +572,7 @@ impl TrieNode {
     ) -> Result<(), TrieError> {
         if self.is_leaf() {
             self.hash = blake3_20(&self.key.as_ref().unwrap_or(&vec![]));
-            println!("l {} {}", hex::encode(prefix), hex::encode(&self.hash));
+            // println!("l {} {}", hex::encode(prefix), hex::encode(&self.hash));
             child_hashes_.insert(prefix[prefix.len() - 1], self.hash.clone());
         } else {
             // Sort the children by their "char" value
@@ -601,15 +607,11 @@ impl TrieNode {
             }
 
             self.hash = blake3_20(&concat_hashes);
-            println!("i {} {}", hex::encode(prefix), hex::encode(&self.hash));
+            // println!("i {} {}", hex::encode(prefix), hex::encode(&self.hash));
             if prefix.len() > 0 {
                 child_hashes_.insert(prefix[prefix.len() - 1], self.hash.clone());
             } else {
-                let mut child_hashes: String = String::new();
-                for (k, v) in self.child_hashes.iter() {
-                    child_hashes += format!("{k}:{} ", hex::encode(v)).as_str();
-                }
-                println!("len0 {child_hashes}");
+                // println!("len0 {}", child_hashes_to_string(self.child_hashes.iter()));
             }
         }
         Ok(())
@@ -763,6 +765,14 @@ impl TrieNode {
 
         Ok(())
     }
+}
+
+fn child_hashes_to_string(p0: Iter<u8, Vec<u8>>) -> String {
+    let mut child_hashes: String = String::new();
+    for (k, v) in p0 {
+        child_hashes += format!("{k}:{} ", hex::encode(v)).as_str();
+    }
+    child_hashes
 }
 
 fn encode_with_spaces(bytes: &[u8]) -> String {

@@ -110,7 +110,7 @@ mod tests {
         let ctx = &Context::new();
 
         let dir = TempDir::new().unwrap();
-        let hashes1 = generate_hashes(vec![1], 1);
+        let hashes1 = generate_hashes(vec![1], 10_000);
 
         {
             let db_path = dir.path().join("t1.db");
