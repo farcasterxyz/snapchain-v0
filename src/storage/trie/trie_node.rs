@@ -349,6 +349,7 @@ impl TrieNode {
     pub fn delete(
         &mut self,
         ctx: &Context,
+        child_hashes: &mut HashMap<u8, Vec<u8>>,
         db: &RocksDB,
         txn: &mut RocksDbTransactionBatch,
         keys: Vec<Vec<u8>>,
@@ -365,7 +366,7 @@ impl TrieNode {
                     self.items -= 1;
 
                     self.delete_to_txn(txn, &prefix);
-                    self.update_hash(ctx, db, &mut HashMap::new(), &prefix)?;
+                    self.update_hash(ctx, db, child_hashes, &prefix)?;
 
                     results[i] = true;
                     break;
@@ -409,16 +410,21 @@ impl TrieNode {
                 keys.push(key);
             }
 
-            let (child_results, child_items, child_hash) = {
+            let (child_results, child_items) = {
+                let mut child_hashes = std::mem::take(&mut self.child_hashes);
                 let child = self.get_or_load_child(ctx, db, &prefix, char)?;
-                let child_results = child.delete(ctx, db, txn, keys, current_index + 1)?;
-                (child_results, child.items(), child.hash())
+                let child_results =
+                    child.delete(ctx, &mut child_hashes, db, txn, keys, current_index + 1)?;
+                let child_items = child.items();
+                self.child_hashes = child_hashes;
+                (child_results, child_items)
             };
 
             // Delete the child if it's empty. This is required to make sure the hash will be the same
             // as another trie that doesn't have this node in the first place.
             if child_items == 0 {
                 self.children.remove(&char);
+                self.child_hashes.remove(&char);
             }
 
             for (i, result) in is.into_iter().zip(child_results) {
@@ -435,7 +441,7 @@ impl TrieNode {
             if self.items == 0 {
                 // Delete this node
                 self.delete_to_txn(txn, &prefix);
-                self.update_hash(ctx, db, &mut HashMap::new(), &prefix)?;
+                self.update_hash(ctx, db, child_hashes, &prefix)?;
                 return Ok(results);
             }
 
@@ -454,7 +460,7 @@ impl TrieNode {
                 }
             }
 
-            self.update_hash(ctx, db, &mut HashMap::new(), &prefix)?;
+            self.update_hash(ctx, db, child_hashes, &prefix)?;
             self.put_to_txn(txn, &prefix);
         }
 

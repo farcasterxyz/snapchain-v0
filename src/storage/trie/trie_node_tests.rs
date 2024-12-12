@@ -6,6 +6,7 @@ mod tests {
         db::{RocksDB, RocksDbTransactionBatch},
         trie::trie_node::{TrieNode, TrieNodeType, TIMESTAMP_LENGTH},
     };
+    use alloy::eips::HashOrNumber::Hash;
     use hex::FromHex as _;
     use std::collections::HashMap;
     use std::{sync::Arc, vec};
@@ -260,11 +261,25 @@ mod tests {
         assert_eq!(r, true);
 
         // Make sure both delete Ok
-        let r = node.delete(ctx, &db, &mut txn, vec![key1.clone()], 0);
+        let r = node.delete(
+            ctx,
+            &mut HashMap::new(),
+            &db,
+            &mut txn,
+            vec![key1.clone()],
+            0,
+        );
         assert_eq!(r.unwrap()[0], true);
         assert_eq!(node.items(), 1);
 
-        let r = node.delete(ctx, &db, &mut txn, vec![key2.clone()], 0);
+        let r = node.delete(
+            ctx,
+            &mut HashMap::new(),
+            &db,
+            &mut txn,
+            vec![key2.clone()],
+            0,
+        );
         assert_eq!(r.unwrap()[0], true);
         assert_eq!(node.items(), 0);
         assert_eq!(node.hash(), empty_hash());
@@ -305,7 +320,14 @@ mod tests {
         assert_eq!(r.unwrap()[0], true);
 
         // delete the key
-        let r = node.delete(ctx, &db, &mut txn, vec![key.clone()], 0);
+        let r = node.delete(
+            ctx,
+            &mut HashMap::new(),
+            &db,
+            &mut txn,
+            vec![key.clone()],
+            0,
+        );
         assert_eq!(r.unwrap()[0], true);
         assert_eq!(node.items(), 0);
         assert_eq!(node.hash(), empty_hash());
@@ -343,7 +365,14 @@ mod tests {
         assert_ne!(node.hash(), hash1);
 
         // Delete the second key
-        let r = node.delete(ctx, &db, &mut txn, vec![key2.clone()], 0);
+        let r = node.delete(
+            ctx,
+            &mut HashMap::new(),
+            &db,
+            &mut txn,
+            vec![key2.clone()],
+            0,
+        );
         assert_eq!(r.unwrap()[0], true);
 
         // The first key should still exist
@@ -358,7 +387,14 @@ mod tests {
         assert_eq!(node.hash(), hash1);
 
         // Delete the first key
-        let r = node.delete(ctx, &db, &mut txn, vec![key1.clone()], 0);
+        let r = node.delete(
+            ctx,
+            &mut HashMap::new(),
+            &db,
+            &mut txn,
+            vec![key1.clone()],
+            0,
+        );
         assert_eq!(r.unwrap()[0], true);
         assert_eq!(node.items(), 0);
 
@@ -383,7 +419,14 @@ mod tests {
 
         // Remove the first id
         let r = node
-            .delete(ctx, &db, &mut txn, vec![ids[0].clone()], 0)
+            .delete(
+                ctx,
+                &mut HashMap::new(),
+                &db,
+                &mut txn,
+                vec![ids[0].clone()],
+                0,
+            )
             .unwrap();
         assert_eq!(r[0], true);
 
@@ -402,7 +445,14 @@ mod tests {
         // Delete both ids
 
         let r = node
-            .delete(ctx, &db, &mut txn, vec![ids[1].clone(), ids[2].clone()], 0)
+            .delete(
+                ctx,
+                &mut HashMap::new(),
+                &db,
+                &mut txn,
+                vec![ids[1].clone(), ids[2].clone()],
+                0,
+            )
             .unwrap();
         assert_eq!(r, [true, true]);
 
@@ -425,7 +475,14 @@ mod tests {
         }
 
         // Remove just the first ID
-        let r = node.delete(ctx, &db, &mut txn, vec![ids[0].clone()], 0);
+        let r = node.delete(
+            ctx,
+            &mut HashMap::new(),
+            &db,
+            &mut txn,
+            vec![ids[0].clone()],
+            0,
+        );
         assert_eq!(r.unwrap()[0], true);
 
         // The other 2 ids should still exist
@@ -451,7 +508,7 @@ mod tests {
         // delete the other 2 ids
         for id in ids.iter().skip(1) {
             let r = node
-                .delete(ctx, &db, &mut txn, vec![id.clone()], 0)
+                .delete(ctx, &mut HashMap::new(), &db, &mut txn, vec![id.clone()], 0)
                 .unwrap();
             assert_eq!(r, [true]);
         }
@@ -503,7 +560,7 @@ mod tests {
         let mut txn = RocksDbTransactionBatch::new();
         for id in ids.iter() {
             let r = node
-                .delete(ctx, &db, &mut txn, vec![id.clone()], 0)
+                .delete(ctx, &mut HashMap::new(), &db, &mut txn, vec![id.clone()], 0)
                 .unwrap();
             assert_eq!(r, [true]);
         }
@@ -618,7 +675,14 @@ mod tests {
         // Deleting a single value works
         let mut txn = RocksDbTransactionBatch::new();
         let r = node
-            .delete(ctx, &db, &mut txn, vec![new_ids[0].clone()], 0)
+            .delete(
+                ctx,
+                &mut HashMap::new(),
+                &db,
+                &mut txn,
+                vec![new_ids[0].clone()],
+                0,
+            )
             .unwrap();
         assert_eq!(r, [true]);
 
@@ -628,13 +692,22 @@ mod tests {
         // Deleting it again returns false
         let mut txn = RocksDbTransactionBatch::new();
         let r = node
-            .delete(ctx, &db, &mut txn, vec![new_ids[0].clone()], 0)
+            .delete(
+                ctx,
+                &mut HashMap::new(),
+                &db,
+                &mut txn,
+                vec![new_ids[0].clone()],
+                0,
+            )
             .unwrap();
         assert_eq!(r, [false]);
 
         // Deleting all the values works, even if one of the values is already deleted
         let mut txn = RocksDbTransactionBatch::new();
-        let r = node.delete(ctx, &db, &mut txn, ids.clone(), 0).unwrap();
+        let r = node
+            .delete(ctx, &mut HashMap::new(), &db, &mut txn, ids.clone(), 0)
+            .unwrap();
         assert_eq!(r, [false, true, true]);
 
         // Make sure that all the values are no longer there
@@ -647,7 +720,9 @@ mod tests {
 
         // Deleting all new_ids returns true only for the last one
         let mut txn = RocksDbTransactionBatch::new();
-        let r = node.delete(ctx, &db, &mut txn, new_ids.clone(), 0).unwrap();
+        let r = node
+            .delete(ctx, &mut HashMap::new(), &db, &mut txn, new_ids.clone(), 0)
+            .unwrap();
         assert_eq!(r, [false, false, false, true]);
 
         // Make sure that the last value is no longer there
@@ -794,7 +869,9 @@ mod tests {
 
         // Deleting them all at once should work
         let mut txn = RocksDbTransactionBatch::new();
-        let r = node.delete(ctx, &db, &mut txn, keys.clone(), 0).unwrap();
+        let r = node
+            .delete(ctx, &mut HashMap::new(), &db, &mut txn, keys.clone(), 0)
+            .unwrap();
         assert_eq!(r.len(), keys.len());
         assert_eq!(r.iter().all(|x| *x), true);
         db.commit(txn).unwrap();
@@ -812,7 +889,9 @@ mod tests {
         let mut hashes = vec![];
         for (i, chunk) in keys.chunks(100).enumerate() {
             let mut txn = RocksDbTransactionBatch::new();
-            let r = node.delete(ctx, &db, &mut txn, chunk.to_vec(), 0).unwrap();
+            let r = node
+                .delete(ctx, &mut HashMap::new(), &db, &mut txn, chunk.to_vec(), 0)
+                .unwrap();
             assert_eq!(r.len(), chunk.len());
             assert_eq!(r.iter().all(|x| *x), true);
             db.commit(txn).unwrap();
@@ -834,7 +913,14 @@ mod tests {
         for (i, key) in keys.iter().enumerate() {
             let mut txn = RocksDbTransactionBatch::new();
             let r = node
-                .delete(ctx, &db, &mut txn, vec![key.clone()], 0)
+                .delete(
+                    ctx,
+                    &mut HashMap::new(),
+                    &db,
+                    &mut txn,
+                    vec![key.clone()],
+                    0,
+                )
                 .unwrap();
             assert_eq!(r, [true]);
             db.commit(txn).unwrap();
@@ -857,7 +943,14 @@ mod tests {
         // Deleting the first half of the keys should work
         let mut txn = RocksDbTransactionBatch::new();
         let r = node
-            .delete(ctx, &db, &mut txn, keys[0..500].to_vec(), 0)
+            .delete(
+                ctx,
+                &mut HashMap::new(),
+                &db,
+                &mut txn,
+                keys[0..500].to_vec(),
+                0,
+            )
             .unwrap();
         assert_eq!(r.len(), 500);
         assert_eq!(r.iter().all(|x| *x), true);
@@ -877,7 +970,9 @@ mod tests {
         // Deleting the first half, but in reverse order, should work and the hashes should match
         let mut txn = RocksDbTransactionBatch::new();
         let keys_reversed = keys[0..500].iter().rev().cloned().collect();
-        let r = node.delete(ctx, &db, &mut txn, keys_reversed, 0).unwrap();
+        let r = node
+            .delete(ctx, &mut HashMap::new(), &db, &mut txn, keys_reversed, 0)
+            .unwrap();
         assert_eq!(r.len(), 500);
         assert_eq!(r.iter().all(|x| *x), true);
         db.commit(txn).unwrap();

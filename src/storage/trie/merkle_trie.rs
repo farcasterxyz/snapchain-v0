@@ -194,7 +194,7 @@ impl MerkleTrie {
 
         if let Some(root) = self.root.as_mut() {
             let mut txn = RocksDbTransactionBatch::new();
-            let results = root.delete(ctx, db, &mut txn, keys, 0)?;
+            let results = root.delete(ctx, &mut HashMap::new(), db, &mut txn, keys, 0)?;
 
             txn_batch.merge(txn);
             Ok(results)
