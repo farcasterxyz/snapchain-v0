@@ -11,7 +11,7 @@ Before you begin, ensure you have the following installed:
 
 ## Installation
 
-1. First clone the malachite repo and checkout the correct commit:
+1. First clone the malachite repo and check out the correct commit:
    ```
    git clone git@github.com:informalsystems/malachite.git
    cd malachite
