@@ -2,19 +2,19 @@ use crate::core::error::HubError;
 use crate::mempool::routing;
 use crate::proto;
 use crate::proto::hub_service_server::HubService;
-use crate::proto::Block;
-use crate::proto::DbStats;
 use crate::proto::GetInfoByFidRequest;
 use crate::proto::GetInfoByFidResponse;
 use crate::proto::GetInfoRequest;
 use crate::proto::GetInfoResponse;
 use crate::proto::HubEvent;
 use crate::proto::MessageType;
+use crate::proto::{Block, CastId, DbStats};
 use crate::proto::{BlocksRequest, ShardChunksRequest, ShardChunksResponse, SubscribeRequest};
 use crate::storage::constants::OnChainEventPostfix;
 use crate::storage::constants::RootPrefix;
 use crate::storage::db::PageOptions;
 use crate::storage::db::RocksDbTransactionBatch;
+use crate::storage::store::account::CastStore;
 use crate::storage::store::engine::{MempoolMessage, Senders, ShardEngine};
 use crate::storage::store::stores::{StoreLimits, Stores};
 use crate::storage::store::BlockStore;
@@ -32,6 +32,7 @@ pub struct MyHubService {
     shard_stores: HashMap<u32, Stores>,
     shard_senders: HashMap<u32, Senders>,
     num_shards: u32,
+    message_router: Box<dyn routing::MessageRouter>,
     statsd_client: StatsdClientWrapper,
 }
 
@@ -42,12 +43,14 @@ impl MyHubService {
         shard_senders: HashMap<u32, Senders>,
         statsd_client: StatsdClientWrapper,
         num_shards: u32,
+        message_router: Box<dyn routing::MessageRouter>,
     ) -> Self {
         Self {
             block_store,
             shard_senders,
             shard_stores,
             statsd_client,
+            message_router,
             num_shards,
         }
     }
@@ -64,7 +67,7 @@ impl MyHubService {
             ));
         }
 
-        let dst_shard = routing::route_message(fid, self.num_shards);
+        let dst_shard = self.message_router.route_message(fid, self.num_shards);
 
         let sender = match self.shard_senders.get(&dst_shard) {
             Some(sender) => sender,
@@ -446,5 +449,26 @@ impl HubService for MyHubService {
         });
 
         Ok(Response::new(ReceiverStream::new(client_rx)))
+    }
+
+    async fn get_cast(&self, request: Request<CastId>) -> Result<Response<proto::Message>, Status> {
+        let cast_id = request.into_inner();
+        let shard_id = self
+            .message_router
+            .route_message(cast_id.fid as u32, self.num_shards);
+        let stores = match self.shard_stores.get(&shard_id) {
+            Some(store) => store,
+            None => {
+                return Err(Status::invalid_argument(
+                    "no shard store for fid".to_string(),
+                ))
+            }
+        };
+        let result = CastStore::get_cast_add(&stores.cast_store, cast_id.fid as u32, cast_id.hash);
+        match result {
+            Ok(Some(message)) => Ok(Response::new(message)),
+            Ok(None) => Err(Status::not_found("cast not found")),
+            Err(err) => Err(Status::internal(err.to_string())),
+        }
     }
 }

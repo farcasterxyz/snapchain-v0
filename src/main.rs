@@ -1,5 +1,17 @@
 use malachite_metrics::{Metrics, SharedRegistry};
+use snapchain::consensus::consensus::SystemMessage;
+use snapchain::core::types::proto;
+use snapchain::mempool::routing;
+use snapchain::network::admin_server::{DbManager, MyAdminService};
+use snapchain::network::gossip::GossipEvent;
+use snapchain::network::gossip::SnapchainGossip;
+use snapchain::network::server::MyHubService;
+use snapchain::node::snapchain_node::SnapchainNode;
+use snapchain::proto::admin_service_server::AdminServiceServer;
+use snapchain::proto::hub_service_server::HubServiceServer;
+use snapchain::storage::db::RocksDB;
 use snapchain::storage::store::BlockStore;
+use snapchain::utils::statsd_wrapper::StatsdClientWrapper;
 use std::error::Error;
 use std::net;
 use std::net::SocketAddr;
@@ -12,18 +24,6 @@ use tokio::{select, time};
 use tonic::transport::Server;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
-
-use snapchain::consensus::consensus::SystemMessage;
-use snapchain::core::types::proto;
-use snapchain::network::admin_server::{DbManager, MyAdminService};
-use snapchain::network::gossip::GossipEvent;
-use snapchain::network::gossip::SnapchainGossip;
-use snapchain::network::server::MyHubService;
-use snapchain::node::snapchain_node::SnapchainNode;
-use snapchain::proto::admin_service_server::AdminServiceServer;
-use snapchain::proto::hub_service_server::HubServiceServer;
-use snapchain::storage::db::RocksDB;
-use snapchain::utils::statsd_wrapper::StatsdClientWrapper;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -159,6 +159,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         db_manager,
         node.shard_senders.clone(),
         app_config.consensus.num_shards,
+        Box::new(routing::ShardRouter {}),
     );
 
     let rpc_shard_stores = node.shard_stores.clone();
@@ -172,6 +173,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             rpc_shard_senders,
             statsd_client.clone(),
             app_config.consensus.num_shards,
+            Box::new(routing::ShardRouter {}),
         );
 
         let resp = Server::builder()

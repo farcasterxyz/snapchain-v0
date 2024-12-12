@@ -1035,12 +1035,7 @@ impl ShardEngine {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn trie_key_exists(
-        &mut self,
-        ctx: &merkle_trie::Context,
-        sync_id: &Vec<u8>,
-    ) -> bool {
+    pub fn trie_key_exists(&mut self, ctx: &merkle_trie::Context, sync_id: &Vec<u8>) -> bool {
         self.stores
             .trie
             .exists(ctx, &self.db, sync_id.as_ref())

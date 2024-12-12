@@ -3,69 +3,72 @@ syntax = "proto3";
 import "message.proto";
 import "blocks.proto";
 import "hub_event.proto";
-
-message BlocksRequest {
-  uint32 shard_id = 1;
-  uint64 start_block_number = 2;
-  optional uint64 stop_block_number = 3;
-}
-
-message ShardChunksRequest {
-  uint32 shard_id = 1;
-  uint64 start_block_number = 2;
-  optional uint64 stop_block_number = 3;
-}
-
-message ShardChunksResponse {
-  repeated ShardChunk shard_chunks = 1;
-}
-
-message SubscribeRequest {
-  repeated HubEventType event_types = 1;
-  optional uint64 from_id = 2;
-  optional uint64 fid_partitions = 3;
-  optional uint64 fid_partition_index = 4;
-  optional uint32 shard_index = 5;
-}
-
-message SubmitMessageRequest {
-  Message message = 1;
-  optional bool bypass_validation = 99;
-}
-
-message SubmitMessageResponse {
-  Message message = 1;
-}
-
-message DbStats {
-  uint64 num_messages = 1;
-  uint64 num_fid_registrations = 2;
-  uint64 approx_size = 4;
-}
-
-message GetInfoRequest {
-}
-
-// Response Types for the Sync RPC Methods
-message GetInfoResponse {
-  DbStats db_stats = 5;
-}
-
-message GetInfoByFidRequest {
-  uint32 fid = 1;
-}
-
-message GetInfoByFidResponse {
-    uint64 num_messages = 1;
-    map<uint32, uint64> num_messages_by_message_type = 2;
-}
+import "username_proof.proto";
+import "onchain_event.proto";
+import "request_response.proto";
 
 service HubService {
+  // Write API
   rpc SubmitMessage(Message) returns (Message);
   rpc SubmitMessageWithOptions(SubmitMessageRequest) returns (SubmitMessageResponse);
+//  rpc SubmitBulkMessages(SubmitBulkMessagesRequest) returns (SubmitBulkMessagesResponse);
+
+
+  // Block API
   rpc GetBlocks(BlocksRequest) returns (stream Block);
   rpc GetShardChunks(ShardChunksRequest) returns (ShardChunksResponse);
-  rpc Subscribe(SubscribeRequest) returns (stream HubEvent);
+
   rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
   rpc GetInfoByFid(GetInfoByFidRequest) returns (GetInfoByFidResponse);
+//  rpc GetFids(FidsRequest) returns (FidsResponse);
+
+  // Events
+  rpc Subscribe(SubscribeRequest) returns (stream HubEvent);
+//  rpc GetEvent(EventRequest) returns (HubEvent);
+
+
+  // Casts
+  rpc GetCast(CastId) returns (Message);
+//  rpc GetCastsByFid(FidRequest) returns (MessagesResponse);
+//  rpc GetCastsByParent(CastsByParentRequest) returns (MessagesResponse);
+//  rpc GetCastsByMention(FidRequest) returns (MessagesResponse);
+//
+//  // Reactions
+//  rpc GetReaction(ReactionRequest) returns (Message);
+//  rpc GetReactionsByFid(ReactionsByFidRequest) returns (MessagesResponse);
+//  rpc GetReactionsByCast(ReactionsByTargetRequest) returns (MessagesResponse); // To be deprecated
+//  rpc GetReactionsByTarget(ReactionsByTargetRequest) returns (MessagesResponse);
+//
+//  // User Data
+//  rpc GetUserData(UserDataRequest) returns (Message);
+//  rpc GetUserDataByFid(FidRequest) returns (MessagesResponse);
+//
+//  // Username Proof
+//  rpc GetUsernameProof(UsernameProofRequest) returns (UserNameProof);
+//  rpc GetUserNameProofsByFid(FidRequest) returns (UsernameProofsResponse);
+//
+//  // Verifications
+//  rpc GetVerification(VerificationRequest) returns (Message);
+//  rpc GetVerificationsByFid(FidRequest) returns (MessagesResponse);
+//
+//  // OnChain Events
+//  rpc GetOnChainSigner(SignerRequest) returns (OnChainEvent);
+//  rpc GetOnChainSignersByFid(FidRequest) returns (OnChainEventResponse);
+//  rpc GetOnChainEvents(OnChainEventRequest) returns (OnChainEventResponse);
+//  rpc GetIdRegistryOnChainEvent(FidRequest) returns (OnChainEvent);
+//  rpc GetIdRegistryOnChainEventByAddress(IdRegistryEventByAddressRequest) returns (OnChainEvent);
+//  rpc GetCurrentStorageLimitsByFid(FidRequest) returns (StorageLimitsResponse);
+//
+//  // Links
+//  rpc GetLink(LinkRequest) returns (Message);
+//  rpc GetLinksByFid(LinksByFidRequest) returns (MessagesResponse);
+//  rpc GetLinksByTarget(LinksByTargetRequest) returns (MessagesResponse);
+//
+//  // Bulk Methods
+//  rpc GetAllCastMessagesByFid(FidTimestampRequest) returns (MessagesResponse);
+//  rpc GetAllReactionMessagesByFid(FidTimestampRequest) returns (MessagesResponse);
+//  rpc GetAllVerificationMessagesByFid(FidTimestampRequest) returns (MessagesResponse);
+//  rpc GetAllUserDataMessagesByFid(FidTimestampRequest) returns (MessagesResponse);
+//  rpc GetAllLinkMessagesByFid(FidTimestampRequest) returns (MessagesResponse);
+//  rpc GetLinkCompactStateMessageByFid(FidRequest) returns (MessagesResponse);
 };
