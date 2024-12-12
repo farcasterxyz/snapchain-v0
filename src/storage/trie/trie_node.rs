@@ -114,7 +114,11 @@ impl TrieNode {
             child_chars: node.children.keys().map(|c| *c as u32).collect(),
             items: node.items as u32,
             hash: node.hash.clone(),
-            // TODO: child_hashes
+            child_hashes: node
+                .child_hashes
+                .iter()
+                .map(|(&k, v)| (k as u32, v.clone()))
+                .collect(),
         };
 
         db_trie_node.encode_to_vec()
@@ -131,11 +135,17 @@ impl TrieNode {
             );
         }
 
+        let child_hashes = db_trie_node
+            .child_hashes
+            .into_iter()
+            .map(|(k, v)| (k as u8, v))
+            .collect();
+
         Ok(TrieNode {
             hash: db_trie_node.hash,
             items: db_trie_node.items as usize,
             children,
-            child_hashes: HashMap::new(), // TODO
+            child_hashes,
             key: Some(db_trie_node.key),
         })
     }

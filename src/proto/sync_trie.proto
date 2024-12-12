@@ -5,5 +5,6 @@ message DbTrieNode {
   repeated uint32 childChars = 2;
   uint32 items = 3;
   bytes hash = 4;
+  map<uint32, bytes> childHashes = 5;
 }
 
