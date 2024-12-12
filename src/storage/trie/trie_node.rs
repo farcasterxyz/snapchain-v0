@@ -196,7 +196,7 @@ impl TrieNode {
         for (k, v) in entries {
             match v {
                 TrieNodeType::Node(n) => {
-                    let ch = n.child_hashes.get(k).unwrap();
+                    let ch = n.child_hashes.get(k).cloned().unwrap_or(vec![]);
                     println!("n {} {} {}", k, hex::encode(n.hash()), hex::encode(&ch));
                 }
                 TrieNodeType::Serialized(n) => {
