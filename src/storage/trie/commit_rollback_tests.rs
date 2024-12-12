@@ -4,6 +4,9 @@ mod tests {
     use crate::storage::trie::errors::TrieError;
     use crate::storage::trie::merkle_trie::{Context, MerkleTrie};
     use hex;
+    use rand::prelude::*;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
     use tempfile::TempDir;
 
     fn generate_hashes(seed: Vec<u8>, chain_size: usize) -> Vec<Vec<u8>> {
@@ -42,10 +45,6 @@ mod tests {
         t.print()?;
         t.show_hashes();
         println!("root hash = {}", hex::encode(t.root_hash()?));
-        return Ok(());
-
-        t.print()?;
-
         Ok(())
     }
 
@@ -110,7 +109,7 @@ mod tests {
         let ctx = &Context::new();
 
         let dir = TempDir::new().unwrap();
-        let hashes1 = generate_hashes(vec![1], 10_000);
+        let mut hashes1 = generate_hashes(vec![1], 10_000);
 
         {
             let db_path = dir.path().join("t1.db");
@@ -128,6 +127,14 @@ mod tests {
                 items,
                 hex::encode(t1.root_hash()?)
             );
+
+            t1.show_hashes();
+
+            let mut rng = StdRng::seed_from_u64(42);
+            hashes1.shuffle(&mut rng);
+
+            let to_delete = hashes1[0..1000].to_vec();
+            t1.delete(ctx, db, &mut txn_batch, to_delete)?;
 
             t1.show_hashes();
         }
