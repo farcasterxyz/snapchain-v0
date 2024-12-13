@@ -1,7 +1,7 @@
 use crate::mempool::routing::MessageRouter;
 use crate::proto::admin_service_server::AdminService;
-use crate::proto::ValidatorMessage;
-use crate::proto::{self, OnChainEvent};
+use crate::proto::{self, FnameTransfer, OnChainEvent};
+use crate::proto::{UserNameProof, ValidatorMessage};
 use crate::storage::store::engine::{MempoolMessage, Senders};
 use rocksdb;
 use std::collections::HashMap;
@@ -158,6 +158,53 @@ impl AdminService for MyAdminService {
         match result {
             Ok(()) => {
                 let response = Response::new(onchain_event);
+                Ok(response)
+            }
+            Err(err) => Err(Status::from_error(Box::new(err))),
+        }
+    }
+
+    async fn submit_user_name_proof(
+        &self,
+        request: Request<UserNameProof>,
+    ) -> Result<Response<UserNameProof>, Status> {
+        info!("Received call to [submit_user_name_proof] RPC");
+
+        let username_proof = request.into_inner();
+
+        let fid = username_proof.fid;
+        if fid == 0 {
+            return Err(Status::invalid_argument(
+                "no fid or invalid fid".to_string(),
+            ));
+        }
+
+        let dst_shard = self.message_router.route_message(fid, self.num_shards);
+
+        let sender = match self.shard_senders.get(&dst_shard) {
+            Some(sender) => sender,
+            None => {
+                return Err(Status::invalid_argument(
+                    "no shard sender for fid".to_string(),
+                ))
+            }
+        };
+
+        let result = sender
+            .messages_tx
+            .send(MempoolMessage::ValidatorMessage(ValidatorMessage {
+                on_chain_event: None,
+                fname_transfer: Some(FnameTransfer {
+                    id: username_proof.fid,
+                    from_fid: 0, // Assume the username is being transfer from the "root" fid to the one in the username proof
+                    proof: Some(username_proof.clone()),
+                }),
+            }))
+            .await;
+
+        match result {
+            Ok(()) => {
+                let response = Response::new(username_proof);
                 Ok(response)
             }
             Err(err) => Err(Status::from_error(Box::new(err))),
