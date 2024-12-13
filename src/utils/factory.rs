@@ -270,13 +270,13 @@ pub mod messages_factory {
 
         pub fn create_link_add(
             fid: u64,
-            link_type: String,
+            link_type: &str,
             target_fid: u64,
             timestamp: Option<u32>,
             private_key: Option<&SigningKey>,
         ) -> message::Message {
             let link_body = LinkBody {
-                r#type: link_type,
+                r#type: link_type.to_string(),
                 display_timestamp: None,
                 target: Some(Target::TargetFid(target_fid)),
             };
@@ -291,13 +291,13 @@ pub mod messages_factory {
 
         pub fn create_link_remove(
             fid: u64,
-            link_type: String,
+            link_type: &str,
             target_fid: u64,
             timestamp: Option<u32>,
             private_key: Option<&SigningKey>,
         ) -> crate::proto::Message {
             let link_body = LinkBody {
-                r#type: link_type,
+                r#type: link_type.to_string(),
                 display_timestamp: None,
                 target: Some(Target::TargetFid(target_fid)),
             };
@@ -312,13 +312,13 @@ pub mod messages_factory {
 
         pub fn create_link_compact_state(
             fid: u64,
-            link_type: String,
+            link_type: &str,
             target_fid: u64,
             timestamp: Option<u32>,
             private_key: Option<&SigningKey>,
         ) -> crate::proto::Message {
             let link_compact_state_body = LinkCompactStateBody {
-                r#type: link_type,
+                r#type: link_type.to_string(),
                 target_fids: vec![target_fid],
             };
 

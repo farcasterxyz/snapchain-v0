@@ -3,16 +3,15 @@ use crate::core::error::HubError;
 use crate::mempool::routing;
 use crate::proto;
 use crate::proto::hub_service_server::HubService;
-use crate::proto::GetInfoRequest;
 use crate::proto::GetInfoResponse;
 use crate::proto::HubEvent;
-use crate::proto::MessageType;
 use crate::proto::{Block, CastId, DbStats};
 use crate::proto::{BlocksRequest, ShardChunksRequest, ShardChunksResponse, SubscribeRequest};
-use crate::proto::{FidRequest, FidTimestampRequest, GetInfoByFidRequest};
+use crate::proto::{FidRequest, FidTimestampRequest};
+use crate::proto::{GetInfoRequest, StorageLimitsResponse};
 use crate::proto::{
-    GetInfoByFidResponse, LinkRequest, LinksByFidRequest, Message, MessagesResponse,
-    ReactionRequest, ReactionsByFidRequest, UserDataRequest, VerificationRequest,
+    LinkRequest, LinksByFidRequest, Message, MessagesResponse, ReactionRequest,
+    ReactionsByFidRequest, UserDataRequest, VerificationRequest,
 };
 use crate::storage::constants::OnChainEventPostfix;
 use crate::storage::constants::RootPrefix;
@@ -23,9 +22,8 @@ use crate::storage::store::account::{
     CastStore, LinkStore, ReactionStore, UserDataStore, VerificationStore,
 };
 use crate::storage::store::engine::{MempoolMessage, Senders, ShardEngine};
-use crate::storage::store::stores::{StoreLimits, Stores};
+use crate::storage::store::stores::Stores;
 use crate::storage::store::BlockStore;
-use crate::storage::trie::merkle_trie::TrieKey;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use hex::ToHex;
 use std::collections::HashMap;
@@ -100,7 +98,7 @@ impl MyHubService {
                 stores.db.clone(),
                 stores.trie.clone(),
                 1,
-                StoreLimits::default(),
+                stores.store_limits.clone(),
                 self.statsd_client.clone(),
                 100,
                 200,
@@ -325,51 +323,6 @@ impl HubService for MyHubService {
                 num_messages,
                 approx_size,
             }),
-        }))
-    }
-
-    async fn get_info_by_fid(
-        &self,
-        request: Request<GetInfoByFidRequest>,
-    ) -> Result<Response<GetInfoByFidResponse>, Status> {
-        let message_types = [
-            MessageType::CastAdd,
-            MessageType::CastRemove,
-            MessageType::ReactionAdd,
-            MessageType::ReactionRemove,
-            MessageType::LinkAdd,
-            MessageType::LinkRemove,
-            MessageType::VerificationAddEthAddress,
-            MessageType::VerificationRemove,
-            MessageType::UserDataAdd,
-            MessageType::UsernameProof,
-            MessageType::FrameAction,
-            MessageType::LinkCompactState,
-        ];
-        let mut num_messages_by_message_type = HashMap::new();
-        let mut num_messages = 0;
-        let fid = request.get_ref().fid as u64;
-        for (_, shard_store) in self.shard_stores.iter() {
-            num_messages += shard_store.trie.get_count(
-                &shard_store.db,
-                &mut RocksDbTransactionBatch::new(),
-                &TrieKey::for_fid(fid),
-            );
-            for message_type in message_types {
-                num_messages_by_message_type.insert(
-                    message_type as u32,
-                    shard_store.trie.get_count(
-                        &shard_store.db,
-                        &mut RocksDbTransactionBatch::new(),
-                        &TrieKey::for_message_type(fid, message_type as u8),
-                    ),
-                );
-            }
-        }
-
-        Ok(Response::new(GetInfoByFidResponse {
-            num_messages,
-            num_messages_by_message_type,
         }))
     }
 
@@ -690,5 +643,17 @@ impl HubService for MyHubService {
         let options = request.page_options();
         LinkStore::get_link_compact_state_message_by_fid(&stores.link_store, request.fid, &options)
             .as_response()
+    }
+
+    async fn get_current_storage_limits_by_fid(
+        &self,
+        request: Request<FidRequest>,
+    ) -> Result<Response<StorageLimitsResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let limits = stores
+            .get_storage_limits(request.fid)
+            .map_err(|err| Status::internal(err.to_string()))?;
+        Ok(Response::new(limits))
     }
 }

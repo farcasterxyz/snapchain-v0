@@ -289,7 +289,7 @@ mod tests {
 
         let link_add = messages_factory::links::create_link_add(
             FID_FOR_TEST,
-            "follow".to_string(),
+            "follow",
             target_fid,
             Some(timestamp),
             None,
@@ -302,7 +302,7 @@ mod tests {
 
         let link_remove = messages_factory::links::create_link_remove(
             FID_FOR_TEST,
-            "follow".to_string(),
+            "follow",
             target_fid,
             Some(timestamp + 1),
             None,
@@ -315,7 +315,7 @@ mod tests {
 
         let link_compact_state = messages_factory::links::create_link_compact_state(
             FID_FOR_TEST,
-            "follow".to_string(),
+            "follow",
             target_fid,
             Some(timestamp + 1),
             None,

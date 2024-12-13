@@ -3,8 +3,10 @@ use super::account::{
     VerificationStoreDef,
 };
 use crate::core::error::HubError;
-use crate::proto::HubEvent;
 use crate::proto::MessageType;
+use crate::proto::{
+    HubEvent, StorageLimit, StorageLimitsResponse, StorageUnitDetails, StorageUnitType, StoreType,
+};
 use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
 use crate::storage::store::account::{
     CastStore, CastStoreDef, IntoU8, LinkStore, OnchainEventStorageError, OnchainEventStore, Store,
@@ -46,7 +48,7 @@ pub struct Stores {
     pub store_limits: StoreLimits,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Limits {
     pub casts: u32,
     pub links: u32,
@@ -79,35 +81,71 @@ impl Limits {
         }
     }
 
+    #[cfg(test)]
     fn for_message_type(&self, message_type: MessageType) -> u32 {
+        self.for_store_type(Limits::message_type_to_store_type(message_type))
+    }
+
+    fn message_type_to_store_type(message_type: MessageType) -> StoreType {
         match message_type {
-            MessageType::CastAdd => self.casts,
-            MessageType::CastRemove => self.casts,
-            MessageType::ReactionAdd => self.reactions,
-            MessageType::ReactionRemove => self.reactions,
-            MessageType::LinkAdd => self.links,
-            MessageType::LinkRemove => self.links,
-            MessageType::LinkCompactState => self.links,
-            MessageType::VerificationAddEthAddress => self.verifications,
-            MessageType::VerificationRemove => self.verifications,
-            MessageType::UserDataAdd => self.user_data,
-            MessageType::UsernameProof => self.user_name_proofs,
-            MessageType::FrameAction => 0,
-            MessageType::None => 0,
+            MessageType::CastAdd => StoreType::Casts,
+            MessageType::CastRemove => StoreType::Casts,
+            MessageType::ReactionAdd => StoreType::Reactions,
+            MessageType::ReactionRemove => StoreType::Reactions,
+            MessageType::LinkAdd => StoreType::Links,
+            MessageType::LinkRemove => StoreType::Links,
+            MessageType::LinkCompactState => StoreType::Links,
+            MessageType::VerificationAddEthAddress => StoreType::Verifications,
+            MessageType::VerificationRemove => StoreType::Verifications,
+            MessageType::UserDataAdd => StoreType::UserData,
+            MessageType::UsernameProof => StoreType::UsernameProofs,
+            MessageType::FrameAction => StoreType::None,
+            MessageType::None => StoreType::None,
+        }
+    }
+
+    fn store_type_to_message_types(store_type: StoreType) -> Vec<MessageType> {
+        match store_type {
+            StoreType::Casts => vec![MessageType::CastAdd, MessageType::CastRemove],
+            StoreType::Links => vec![
+                MessageType::LinkAdd,
+                MessageType::LinkRemove,
+                MessageType::LinkCompactState,
+            ],
+            StoreType::Reactions => vec![MessageType::ReactionAdd, MessageType::ReactionRemove],
+            StoreType::UserData => vec![MessageType::UserDataAdd],
+            StoreType::Verifications => vec![
+                MessageType::VerificationAddEthAddress,
+                MessageType::VerificationRemove,
+            ],
+            StoreType::UsernameProofs => vec![MessageType::UsernameProof],
+            StoreType::None => vec![],
+        }
+    }
+
+    fn for_store_type(&self, store_type: StoreType) -> u32 {
+        match store_type {
+            StoreType::Casts => self.casts,
+            StoreType::Links => self.links,
+            StoreType::Reactions => self.reactions,
+            StoreType::UserData => self.user_data,
+            StoreType::Verifications => self.verifications,
+            StoreType::UsernameProofs => self.user_name_proofs,
+            StoreType::None => 0,
         }
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StoreLimits {
     pub limits: Limits,
     pub legacy_limits: Limits,
 }
 
 impl StoreLimits {
-    pub fn max_messages(&self, units: u32, legacy_units: u32, message_type: MessageType) -> u32 {
-        units * self.limits.for_message_type(message_type)
-            + legacy_units * self.legacy_limits.for_message_type(message_type)
+    pub fn max_messages(&self, units: u32, legacy_units: u32, store_type: StoreType) -> u32 {
+        units * self.limits.for_store_type(store_type)
+            + legacy_units * self.legacy_limits.for_store_type(store_type)
     }
 }
 
@@ -158,20 +196,84 @@ impl Stores {
         message_type: MessageType,
         txn_batch: &mut RocksDbTransactionBatch,
     ) -> Result<(u32, u32), StoresError> {
-        let message_count = self.trie.get_count(
-            &self.db,
-            txn_batch,
-            &TrieKey::for_message_type(fid, message_type.into_u8()),
-        ) as u32;
+        let store_type = Limits::message_type_to_store_type(message_type);
+        let message_count = self.get_usage_by_store_type(fid, store_type, txn_batch);
         let slot = self
             .onchain_event_store
             .get_storage_slot_for_fid(fid)
             .map_err(|e| StoresError::OnchainEventError(e))?;
         let max_messages =
             self.store_limits
-                .max_messages(slot.units, slot.legacy_units, message_type);
+                .max_messages(slot.units, slot.legacy_units, store_type);
 
         Ok((message_count, max_messages))
+    }
+
+    // Usage is defined at the store level, but the trie accounts for message by type, this function maps between the two
+    fn get_usage_by_store_type(
+        &self,
+        fid: u64,
+        store_type: StoreType,
+        txn_batch: &mut RocksDbTransactionBatch,
+    ) -> u32 {
+        let mut total_count = 0;
+        for each_message_type in Limits::store_type_to_message_types(store_type) {
+            let count = self.trie.get_count(
+                &self.db,
+                txn_batch,
+                &TrieKey::for_message_type(fid, each_message_type.into_u8()),
+            ) as u32;
+            total_count += count;
+        }
+        total_count
+    }
+
+    pub fn get_storage_limits(&self, fid: u64) -> Result<StorageLimitsResponse, StoresError> {
+        let slot = self
+            .onchain_event_store
+            .get_storage_slot_for_fid(fid)
+            .map_err(|e| StoresError::OnchainEventError(e))?;
+
+        let txn_batch = &mut RocksDbTransactionBatch::new();
+        let mut limits = vec![];
+        for store_type in vec![
+            StoreType::Casts,
+            StoreType::Links,
+            StoreType::Reactions,
+            StoreType::UserData,
+            StoreType::Verifications,
+            StoreType::UsernameProofs,
+        ] {
+            let used = self.get_usage_by_store_type(fid, store_type, txn_batch);
+            let max_messages =
+                self.store_limits
+                    .max_messages(slot.units, slot.legacy_units, store_type);
+            let limit = StorageLimit {
+                store_type: store_type.try_into().unwrap(),
+                name: store_type.as_str_name().to_string(),
+                limit: max_messages as u64,
+                used: used as u64,
+                earliest_timestamp: 0, // Deprecate?
+                earliest_hash: vec![], // Deprecate?
+            };
+            limits.push(limit);
+        }
+
+        let response = StorageLimitsResponse {
+            limits,
+            units: slot.units + slot.legacy_units,
+            unit_details: vec![
+                StorageUnitDetails {
+                    unit_type: StorageUnitType::UnitTypeLegacy as i32,
+                    unit_size: slot.legacy_units,
+                },
+                StorageUnitDetails {
+                    unit_type: StorageUnitType::UnitType2024 as i32,
+                    unit_size: slot.units,
+                },
+            ],
+        };
+        Ok(response)
     }
 
     pub fn revoke_messages(
@@ -270,19 +372,19 @@ mod tests {
         let legacy_limits = &store_limits.legacy_limits;
         let limits = &store_limits.limits;
         assert_eq!(
-            store_limits.max_messages(1, 0, MessageType::CastAdd),
+            store_limits.max_messages(1, 0, StoreType::Casts),
             limits.casts * 1
         );
         assert_eq!(
-            store_limits.max_messages(0, 1, MessageType::CastAdd),
+            store_limits.max_messages(0, 1, StoreType::Casts),
             legacy_limits.casts * 1
         );
 
         assert_eq!(
-            store_limits.max_messages(3, 2, MessageType::ReactionRemove),
+            store_limits.max_messages(3, 2, StoreType::Links),
             (limits.links * 3) + (legacy_limits.links * 2)
         );
 
-        assert_eq!(store_limits.max_messages(0, 0, MessageType::LinkAdd), 0);
+        assert_eq!(store_limits.max_messages(0, 0, StoreType::Links), 0);
     }
 }

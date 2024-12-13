@@ -54,15 +54,6 @@ message GetInfoResponse {
   DbStats db_stats = 5;
 }
 
-message GetInfoByFidRequest {
-  uint32 fid = 1;
-}
-
-message GetInfoByFidResponse {
-  uint64 num_messages = 1;
-  map<uint32, uint64> num_messages_by_message_type = 2;
-}
-
 message EventRequest {
   uint64 id = 1;
 }

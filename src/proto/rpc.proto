@@ -19,7 +19,6 @@ service HubService {
   rpc GetShardChunks(ShardChunksRequest) returns (ShardChunksResponse);
 
   rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
-  rpc GetInfoByFid(GetInfoByFidRequest) returns (GetInfoByFidResponse);
 //  rpc GetFids(FidsRequest) returns (FidsResponse);
 
   // Events
@@ -57,7 +56,7 @@ service HubService {
 //  rpc GetOnChainEvents(OnChainEventRequest) returns (OnChainEventResponse);
 //  rpc GetIdRegistryOnChainEvent(FidRequest) returns (OnChainEvent);
 //  rpc GetIdRegistryOnChainEventByAddress(IdRegistryEventByAddressRequest) returns (OnChainEvent);
-//  rpc GetCurrentStorageLimitsByFid(FidRequest) returns (StorageLimitsResponse);
+  rpc GetCurrentStorageLimitsByFid(FidRequest) returns (StorageLimitsResponse);
 //
 //  // Links
   rpc GetLink(LinkRequest) returns (Message);
