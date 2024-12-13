@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 import "onchain_event.proto";
+import "username_proof.proto";
 
 message TerminateRequest {
   bool destroy_database = 1;
@@ -12,4 +13,5 @@ message TerminateResponse {
 service AdminService {
   rpc Terminate(TerminateRequest) returns (TerminateResponse);
   rpc SubmitOnChainEvent(OnChainEvent) returns (OnChainEvent);
+  rpc SubmitUserNameProof(UserNameProof) returns (UserNameProof);
 }
