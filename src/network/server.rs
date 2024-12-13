@@ -1,8 +1,8 @@
+use super::rpc_extensions::{AsMessagesResponse, AsSingleMessageResponse};
 use crate::core::error::HubError;
 use crate::mempool::routing;
 use crate::proto;
 use crate::proto::hub_service_server::HubService;
-use crate::proto::GetInfoByFidResponse;
 use crate::proto::GetInfoRequest;
 use crate::proto::GetInfoResponse;
 use crate::proto::HubEvent;
@@ -10,12 +10,18 @@ use crate::proto::MessageType;
 use crate::proto::{Block, CastId, DbStats};
 use crate::proto::{BlocksRequest, ShardChunksRequest, ShardChunksResponse, SubscribeRequest};
 use crate::proto::{FidRequest, FidTimestampRequest, GetInfoByFidRequest};
+use crate::proto::{
+    GetInfoByFidResponse, LinkRequest, LinksByFidRequest, Message, MessagesResponse,
+    ReactionRequest, ReactionsByFidRequest, UserDataRequest, VerificationRequest,
+};
 use crate::storage::constants::OnChainEventPostfix;
 use crate::storage::constants::RootPrefix;
 use crate::storage::db::PageOptions;
 use crate::storage::db::RocksDbTransactionBatch;
 use crate::storage::store::account::message_bytes_decode;
-use crate::storage::store::account::{CastStore, MessagesPage};
+use crate::storage::store::account::{
+    CastStore, LinkStore, ReactionStore, UserDataStore, VerificationStore,
+};
 use crate::storage::store::engine::{MempoolMessage, Senders, ShardEngine};
 use crate::storage::store::stores::{StoreLimits, Stores};
 use crate::storage::store::BlockStore;
@@ -27,79 +33,6 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use tracing::{error, info};
-
-// Extension traits to maps GRPC structs to internal structs
-trait AsMessagesResponse {
-    fn as_response(&self) -> Result<Response<proto::MessagesResponse>, Status>;
-}
-
-impl AsMessagesResponse for Result<MessagesPage, HubError> {
-    fn as_response(&self) -> Result<Response<proto::MessagesResponse>, Status> {
-        match self {
-            Ok(page) => Ok(Response::new(proto::MessagesResponse {
-                messages: page.messages.clone(),
-                next_page_token: page.next_page_token.clone(),
-            })),
-            Err(err) => Err(Status::internal(err.to_string())),
-        }
-    }
-}
-
-trait AsSingleMessageResponse {
-    fn as_response(&self) -> Result<Response<proto::Message>, Status>;
-}
-
-impl AsSingleMessageResponse for Result<Option<proto::Message>, HubError> {
-    fn as_response(&self) -> Result<Response<proto::Message>, Status> {
-        match self {
-            Ok(Some(message)) => Ok(Response::new(message.clone())),
-            Ok(None) => Err(Status::not_found("cast not found")),
-            Err(err) => Err(Status::internal(err.to_string())),
-        }
-    }
-}
-
-impl FidRequest {
-    pub fn page_options(&self) -> PageOptions {
-        let page_size = match self.page_size {
-            Some(size) => Some(size as usize),
-            None => None,
-        };
-        let reverse = self.reverse.unwrap_or(false);
-        PageOptions {
-            page_size,
-            page_token: self.page_token.clone(),
-            reverse,
-        }
-    }
-}
-
-impl FidTimestampRequest {
-    pub fn page_options(&self) -> PageOptions {
-        let page_size = match self.page_size {
-            Some(size) => Some(size as usize),
-            None => None,
-        };
-        let reverse = self.reverse.unwrap_or(false);
-        PageOptions {
-            page_size,
-            page_token: self.page_token.clone(),
-            reverse,
-        }
-    }
-
-    pub fn timestamps(&self) -> (Option<u32>, Option<u32>) {
-        let start_timestamp = match self.start_timestamp {
-            Some(ts) => Some(ts as u32),
-            None => None,
-        };
-        let stop_timestamp = match self.stop_timestamp {
-            Some(ts) => Some(ts as u32),
-            None => None,
-        };
-        (start_timestamp, stop_timestamp)
-    }
-}
 
 pub struct MyHubService {
     block_store: BlockStore,
@@ -562,6 +495,200 @@ impl HubService for MyHubService {
         stores
             .cast_store
             .get_all_messages_by_fid(request.fid, start_ts, stop_ts, &request.page_options())
+            .as_response()
+    }
+
+    async fn get_reaction(
+        &self,
+        request: Request<ReactionRequest>,
+    ) -> Result<Response<Message>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let target = match request.target {
+            Some(proto::reaction_request::Target::TargetCastId(cast_id)) => {
+                Some(proto::reaction_body::Target::TargetCastId(cast_id))
+            }
+            Some(proto::reaction_request::Target::TargetUrl(url)) => {
+                Some(proto::reaction_body::Target::TargetUrl(url))
+            }
+            None => None,
+        };
+        ReactionStore::get_reaction_add(
+            &stores.reaction_store,
+            request.fid,
+            request.reaction_type,
+            target,
+        )
+        .as_response()
+    }
+
+    async fn get_reactions_by_fid(
+        &self,
+        request: Request<ReactionsByFidRequest>,
+    ) -> Result<Response<MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let options = request.page_options();
+        ReactionStore::get_reaction_adds_by_fid(
+            &stores.reaction_store,
+            request.fid,
+            request.reaction_type.unwrap_or(0),
+            &options,
+        )
+        .as_response()
+    }
+
+    async fn get_all_reaction_messages_by_fid(
+        &self,
+        request: Request<FidTimestampRequest>,
+    ) -> Result<Response<proto::MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let (start_ts, stop_ts) = request.timestamps();
+        stores
+            .reaction_store
+            .get_all_messages_by_fid(request.fid, start_ts, stop_ts, &request.page_options())
+            .as_response()
+    }
+
+    async fn get_link(&self, request: Request<LinkRequest>) -> Result<Response<Message>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let target = match request.target {
+            Some(proto::link_request::Target::TargetFid(fid)) => {
+                Some(proto::link_body::Target::TargetFid(fid))
+            }
+            None => None,
+        };
+        LinkStore::get_link_add(&stores.link_store, request.fid, request.link_type, target)
+            .as_response()
+    }
+
+    async fn get_links_by_fid(
+        &self,
+        request: Request<LinksByFidRequest>,
+    ) -> Result<Response<MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let options = request.page_options();
+        LinkStore::get_link_adds_by_fid(
+            &stores.link_store,
+            request.fid,
+            request.link_type.unwrap_or("".to_string()),
+            &options,
+        )
+        .as_response()
+    }
+
+    async fn get_all_link_messages_by_fid(
+        &self,
+        request: Request<FidTimestampRequest>,
+    ) -> Result<Response<MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let (start_ts, stop_ts) = request.timestamps();
+        stores
+            .link_store
+            .get_all_messages_by_fid(request.fid, start_ts, stop_ts, &request.page_options())
+            .as_response()
+    }
+
+    async fn get_user_data(
+        &self,
+        request: Request<UserDataRequest>,
+    ) -> Result<Response<Message>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let user_data_type = proto::UserDataType::try_from(request.user_data_type)
+            .map_err(|_| Status::invalid_argument("Invalid user data type"))?;
+        UserDataStore::get_user_data_by_fid_and_type(
+            &stores.user_data_store,
+            request.fid,
+            user_data_type,
+        )
+        .as_response()
+    }
+
+    async fn get_user_data_by_fid(
+        &self,
+        request: Request<FidRequest>,
+    ) -> Result<Response<MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let options = request.page_options();
+        UserDataStore::get_user_data_adds_by_fid(
+            &stores.user_data_store,
+            request.fid,
+            &options,
+            None,
+            None,
+        )
+        .as_response()
+    }
+
+    async fn get_all_user_data_messages_by_fid(
+        &self,
+        request: Request<FidTimestampRequest>,
+    ) -> Result<Response<MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let (start_ts, stop_ts) = request.timestamps();
+        stores
+            .user_data_store
+            .get_all_messages_by_fid(request.fid, start_ts, stop_ts, &request.page_options())
+            .as_response()
+    }
+
+    async fn get_verification(
+        &self,
+        request: Request<VerificationRequest>,
+    ) -> Result<Response<Message>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        VerificationStore::get_verification_add(
+            &stores.verification_store,
+            request.fid,
+            &request.address,
+        )
+        .as_response()
+    }
+
+    async fn get_verifications_by_fid(
+        &self,
+        request: Request<FidRequest>,
+    ) -> Result<Response<MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let options = request.page_options();
+        VerificationStore::get_verification_adds_by_fid(
+            &stores.verification_store,
+            request.fid,
+            &options,
+        )
+        .as_response()
+    }
+
+    async fn get_all_verification_messages_by_fid(
+        &self,
+        request: Request<FidTimestampRequest>,
+    ) -> Result<Response<MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let (start_ts, stop_ts) = request.timestamps();
+        stores
+            .verification_store
+            .get_all_messages_by_fid(request.fid, start_ts, stop_ts, &request.page_options())
+            .as_response()
+    }
+
+    async fn get_link_compact_state_message_by_fid(
+        &self,
+        request: Request<FidRequest>,
+    ) -> Result<Response<MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let options = request.page_options();
+        LinkStore::get_link_compact_state_message_by_fid(&stores.link_store, request.fid, &options)
             .as_response()
     }
 }
