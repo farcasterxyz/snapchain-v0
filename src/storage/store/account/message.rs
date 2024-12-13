@@ -254,17 +254,18 @@ pub fn message_encode(message: &MessageProto) -> Vec<u8> {
     }
 }
 
+pub fn message_bytes_decode(msg: &mut MessageProto) {
+    if msg.data.is_none() && msg.data_bytes.is_some() && msg.data_bytes.as_ref().unwrap().len() > 0
+    {
+        if let Ok(msg_data) = MessageData::decode(msg.data_bytes.as_ref().unwrap().as_slice()) {
+            msg.data = Some(msg_data);
+        }
+    }
+}
+
 pub fn message_decode(bytes: &[u8]) -> Result<MessageProto, RocksdbError> {
     if let Ok(mut msg) = MessageProto::decode(bytes) {
-        if msg.data.is_none()
-            && msg.data_bytes.is_some()
-            && msg.data_bytes.as_ref().unwrap().len() > 0
-        {
-            if let Ok(msg_data) = MessageData::decode(msg.data_bytes.as_ref().unwrap().as_slice()) {
-                msg.data = Some(msg_data);
-            }
-        }
-
+        message_bytes_decode(&mut msg);
         Ok(msg)
     } else {
         Err(RocksdbError::DecodeError)
