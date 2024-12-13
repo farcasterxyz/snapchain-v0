@@ -1,6 +1,6 @@
 use super::PAGE_SIZE_MAX;
 use crate::core::error::HubError;
-use crate::core::types::Fid;
+use crate::core::types::FidOnDisk;
 use crate::storage::constants::{RootPrefix, UserPostfix};
 use crate::storage::db::{PageOptions, RocksdbError};
 use crate::storage::util::increment_vec_u8;
@@ -106,12 +106,12 @@ pub fn unpack_ts_hash(ts_hash: &[u8; TS_HASH_LENGTH]) -> (u32, [u8; HASH_LENGTH]
 
 pub fn make_fid_key(fid: u64) -> Vec<u8> {
     // Downcast to u32, since on disk, we only assume 4 bytes for the fid to save space
-    (fid as Fid).to_be_bytes().to_vec()
+    (fid as FidOnDisk).to_be_bytes().to_vec()
 }
 
 pub fn read_fid_key(key: &[u8], offset: usize) -> u64 {
-    let mut fid_bytes = [0u8; 4];
-    fid_bytes.copy_from_slice(&key[offset..offset + 4]);
+    let mut fid_bytes = [0u8; FID_BYTES];
+    fid_bytes.copy_from_slice(&key[offset..offset + FID_BYTES]);
     // Upcast to u64 so we are always dealing with the same type everywhere
     u32::from_be_bytes(fid_bytes) as u64
 }
