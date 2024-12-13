@@ -2,6 +2,7 @@ use tracing::warn;
 
 use super::{
     get_many_messages_as_bytes, get_message, make_fid_key, make_message_primary_key, make_user_key,
+    read_fid_key, read_ts_hash,
     store::{Store, StoreDef},
     MessagesPage, StoreEventHandler, PAGE_SIZE_MAX, TS_HASH_LENGTH,
 };
@@ -20,7 +21,7 @@ use crate::{
     proto::{Message, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
-use std::{borrow::Borrow, convert::TryInto, sync::Arc};
+use std::{borrow::Borrow, sync::Arc};
 
 /**
  * LinkStore persists Link Messages in RocksDB using a two-phase CRDT set to guarantee
@@ -162,13 +163,10 @@ impl LinkStore {
                     let ts_hash_offset = start_prefix.len();
                     let fid_offset: usize = ts_hash_offset + TS_HASH_LENGTH;
 
-                    let fid =
-                        u32::from_be_bytes(key[fid_offset..fid_offset + 4].try_into().unwrap());
-                    let ts_hash = key[ts_hash_offset..ts_hash_offset + TS_HASH_LENGTH]
-                        .try_into()
-                        .unwrap();
+                    let fid = read_fid_key(key, fid_offset);
+                    let ts_hash = read_ts_hash(key, ts_hash_offset);
                     let message_primary_key =
-                        make_message_primary_key(fid as u64, store.postfix(), Some(&ts_hash));
+                        make_message_primary_key(fid, store.postfix(), Some(&ts_hash));
 
                     message_keys.push(message_primary_key.to_vec());
                     if message_keys.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {

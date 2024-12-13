@@ -109,10 +109,17 @@ pub fn make_fid_key(fid: u64) -> Vec<u8> {
     (fid as Fid).to_be_bytes().to_vec()
 }
 
-pub fn read_fid_key(key: &[u8]) -> u64 {
+pub fn read_fid_key(key: &[u8], offset: usize) -> u64 {
     let mut fid_bytes = [0u8; 4];
-    fid_bytes.copy_from_slice(&key[0..4]);
+    fid_bytes.copy_from_slice(&key[offset..offset + 4]);
+    // Upcast to u64 so we are always dealing with the same type everywhere
     u32::from_be_bytes(fid_bytes) as u64
+}
+
+pub fn read_ts_hash(key: &[u8], offset: usize) -> [u8; TS_HASH_LENGTH] {
+    let mut ts_hash = [0u8; TS_HASH_LENGTH];
+    ts_hash.copy_from_slice(&key[offset..offset + TS_HASH_LENGTH]);
+    ts_hash
 }
 
 pub fn make_user_key(fid: u64) -> Vec<u8> {

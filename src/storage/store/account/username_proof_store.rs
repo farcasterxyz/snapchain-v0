@@ -209,7 +209,7 @@ impl StoreDef for UsernameProofStoreDef {
 
         let fid_result = db.get(by_name_key.as_slice());
         if let Ok(Some(fid_bytes)) = fid_result {
-            let fid = read_fid_key(&fid_bytes);
+            let fid = read_fid_key(&fid_bytes, 0);
             if fid > 0 {
                 let existing_add_key = Self::make_username_proof_by_fid_key(fid, name);
                 if let Ok(existing_message_ts_hash) = db.get(existing_add_key.as_slice()) {
@@ -407,7 +407,7 @@ impl UsernameProofStore {
             });
         }
 
-        let fid = read_fid_key(&fid_result.unwrap());
+        let fid = read_fid_key(&fid_result.unwrap(), 0);
         let partial_message = Message {
             data: Some(proto::MessageData {
                 fid,

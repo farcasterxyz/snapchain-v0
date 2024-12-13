@@ -366,7 +366,7 @@ impl VerificationStore {
                     };
 
                     if existing_fid_res.is_ok() {
-                        let existing_fid = read_fid_key(&existing_fid_res.unwrap());
+                        let existing_fid = read_fid_key(&existing_fid_res.unwrap(), 0);
                         let existing_message =
                             match Self::get_verification_add(store, existing_fid, address) {
                                 Ok(Some(message)) => message,
