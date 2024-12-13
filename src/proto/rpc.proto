@@ -29,7 +29,7 @@ service HubService {
 
   // Casts
   rpc GetCast(CastId) returns (Message);
-//  rpc GetCastsByFid(FidRequest) returns (MessagesResponse);
+  rpc GetCastsByFid(FidRequest) returns (MessagesResponse);
 //  rpc GetCastsByParent(CastsByParentRequest) returns (MessagesResponse);
 //  rpc GetCastsByMention(FidRequest) returns (MessagesResponse);
 //
@@ -65,7 +65,7 @@ service HubService {
 //  rpc GetLinksByTarget(LinksByTargetRequest) returns (MessagesResponse);
 //
 //  // Bulk Methods
-//  rpc GetAllCastMessagesByFid(FidTimestampRequest) returns (MessagesResponse);
+  rpc GetAllCastMessagesByFid(FidTimestampRequest) returns (MessagesResponse);
 //  rpc GetAllReactionMessagesByFid(FidTimestampRequest) returns (MessagesResponse);
 //  rpc GetAllVerificationMessagesByFid(FidTimestampRequest) returns (MessagesResponse);
 //  rpc GetAllUserDataMessagesByFid(FidTimestampRequest) returns (MessagesResponse);

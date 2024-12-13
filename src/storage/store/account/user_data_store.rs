@@ -1,5 +1,5 @@
 use super::{
-    is_message_in_time_range, make_user_key, message_decode,
+    is_message_in_time_range, make_user_key,
     name_registry_events::{
         delete_username_proof_transaction, get_fname_proof_by_fid, get_username_proof,
         put_username_proof_transaction,
@@ -219,9 +219,9 @@ impl UserDataStore {
             }),
         );
 
-        if result.is_ok() && result.as_ref().unwrap().messages_bytes.len() == 1 {
-            let user_data_message = &result?.messages_bytes[0];
-            Ok(message_decode(user_data_message)?)
+        if result.is_ok() && result.as_ref().unwrap().messages.len() == 1 {
+            let user_data_message = &result?.messages[0];
+            Ok(user_data_message.clone())
         } else {
             Err(HubError {
                 code: "not_found".to_string(),

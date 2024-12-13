@@ -19,7 +19,7 @@ pub const TRUE_VALUE: u8 = 1;
 
 /** A page of messages returned from various APIs */
 pub struct MessagesPage {
-    pub messages_bytes: Vec<Vec<u8>>,
+    pub messages: Vec<MessageProto>,
     pub next_page_token: Option<Vec<u8>>,
 }
 
@@ -164,7 +164,7 @@ pub fn get_message(
     // println!("get_message key: {:?}", key);
 
     match db.get(&key)? {
-        Some(bytes) => match message_decode(bytes.as_slice()) {
+        Some(bytes) => match message_decode(&bytes) {
             Ok(message) => Ok(Some(message)),
             Err(e) => Err(e.into()),
         },
@@ -176,15 +176,18 @@ pub fn get_message(
  * Note that if a message is not found, that corresponding entry in the result will be None.
  * This is different from the behaviour of get_message, which returns an error.
  */
-pub fn get_many_messages_as_bytes(
+pub fn get_many_messages(
     db: &RocksDB,
     primary_keys: Vec<Vec<u8>>,
-) -> Result<Vec<Vec<u8>>, HubError> {
+) -> Result<Vec<MessageProto>, HubError> {
     let mut messages = Vec::new();
 
     for key in primary_keys {
         if let Ok(Some(value)) = db.get(&key) {
-            messages.push(value);
+            match message_decode(&value) {
+                Ok(message) => messages.push(message),
+                Err(e) => Err(HubError::from(e))?,
+            }
         } else {
             return Err(HubError::not_found(
                 format!("could not get message with key: {:?}", key).as_str(),
@@ -204,7 +207,7 @@ pub fn get_messages_page_by_prefix<F>(
 where
     F: Fn(&MessageProto) -> bool,
 {
-    let mut messages_bytes = Vec::new();
+    let mut messages = Vec::new();
     let mut last_key = vec![];
 
     db.for_each_iterator_by_prefix(
@@ -215,9 +218,9 @@ where
             match message_decode(value) {
                 Ok(message) => {
                     if filter(&message) {
-                        messages_bytes.push(value.to_vec());
+                        messages.push(message);
 
-                        if messages_bytes.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
+                        if messages.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
                             last_key = key.to_vec();
                             return Ok(true); // Stop iterating
                         }
@@ -237,7 +240,7 @@ where
     };
 
     Ok(MessagesPage {
-        messages_bytes,
+        messages,
         next_page_token,
     })
 }

@@ -2,7 +2,6 @@ use crate::core::error::HubError;
 use crate::mempool::routing;
 use crate::proto;
 use crate::proto::hub_service_server::HubService;
-use crate::proto::GetInfoByFidRequest;
 use crate::proto::GetInfoByFidResponse;
 use crate::proto::GetInfoRequest;
 use crate::proto::GetInfoResponse;
@@ -10,12 +9,13 @@ use crate::proto::HubEvent;
 use crate::proto::MessageType;
 use crate::proto::{Block, CastId, DbStats};
 use crate::proto::{BlocksRequest, ShardChunksRequest, ShardChunksResponse, SubscribeRequest};
+use crate::proto::{FidRequest, FidTimestampRequest, GetInfoByFidRequest};
 use crate::storage::constants::OnChainEventPostfix;
 use crate::storage::constants::RootPrefix;
 use crate::storage::db::PageOptions;
 use crate::storage::db::RocksDbTransactionBatch;
 use crate::storage::store::account::message_bytes_decode;
-use crate::storage::store::account::CastStore;
+use crate::storage::store::account::{CastStore, MessagesPage};
 use crate::storage::store::engine::{MempoolMessage, Senders, ShardEngine};
 use crate::storage::store::stores::{StoreLimits, Stores};
 use crate::storage::store::BlockStore;
@@ -27,6 +27,79 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use tracing::{error, info};
+
+// Extension traits to maps GRPC structs to internal structs
+trait AsMessagesResponse {
+    fn as_response(&self) -> Result<Response<proto::MessagesResponse>, Status>;
+}
+
+impl AsMessagesResponse for Result<MessagesPage, HubError> {
+    fn as_response(&self) -> Result<Response<proto::MessagesResponse>, Status> {
+        match self {
+            Ok(page) => Ok(Response::new(proto::MessagesResponse {
+                messages: page.messages.clone(),
+                next_page_token: page.next_page_token.clone(),
+            })),
+            Err(err) => Err(Status::internal(err.to_string())),
+        }
+    }
+}
+
+trait AsSingleMessageResponse {
+    fn as_response(&self) -> Result<Response<proto::Message>, Status>;
+}
+
+impl AsSingleMessageResponse for Result<Option<proto::Message>, HubError> {
+    fn as_response(&self) -> Result<Response<proto::Message>, Status> {
+        match self {
+            Ok(Some(message)) => Ok(Response::new(message.clone())),
+            Ok(None) => Err(Status::not_found("cast not found")),
+            Err(err) => Err(Status::internal(err.to_string())),
+        }
+    }
+}
+
+impl FidRequest {
+    pub fn page_options(&self) -> PageOptions {
+        let page_size = match self.page_size {
+            Some(size) => Some(size as usize),
+            None => None,
+        };
+        let reverse = self.reverse.unwrap_or(false);
+        PageOptions {
+            page_size,
+            page_token: self.page_token.clone(),
+            reverse,
+        }
+    }
+}
+
+impl FidTimestampRequest {
+    pub fn page_options(&self) -> PageOptions {
+        let page_size = match self.page_size {
+            Some(size) => Some(size as usize),
+            None => None,
+        };
+        let reverse = self.reverse.unwrap_or(false);
+        PageOptions {
+            page_size,
+            page_token: self.page_token.clone(),
+            reverse,
+        }
+    }
+
+    pub fn timestamps(&self) -> (Option<u32>, Option<u32>) {
+        let start_timestamp = match self.start_timestamp {
+            Some(ts) => Some(ts as u32),
+            None => None,
+        };
+        let stop_timestamp = match self.stop_timestamp {
+            Some(ts) => Some(ts as u32),
+            None => None,
+        };
+        (start_timestamp, stop_timestamp)
+    }
+}
 
 pub struct MyHubService {
     block_store: BlockStore,
@@ -130,6 +203,16 @@ impl MyHubService {
         }
 
         Ok(message)
+    }
+
+    fn get_stores_for(&self, fid: u64) -> Result<&Stores, Status> {
+        let shard_id = self.message_router.route_message(fid, self.num_shards);
+        match self.shard_stores.get(&shard_id) {
+            Some(store) => Ok(store),
+            None => Err(Status::invalid_argument(
+                "no shard store for fid".to_string(),
+            )),
+        }
     }
 }
 
@@ -455,22 +538,30 @@ impl HubService for MyHubService {
 
     async fn get_cast(&self, request: Request<CastId>) -> Result<Response<proto::Message>, Status> {
         let cast_id = request.into_inner();
-        let shard_id = self
-            .message_router
-            .route_message(cast_id.fid, self.num_shards);
-        let stores = match self.shard_stores.get(&shard_id) {
-            Some(store) => store,
-            None => {
-                return Err(Status::invalid_argument(
-                    "no shard store for fid".to_string(),
-                ))
-            }
-        };
-        let result = CastStore::get_cast_add(&stores.cast_store, cast_id.fid, cast_id.hash);
-        match result {
-            Ok(Some(message)) => Ok(Response::new(message)),
-            Ok(None) => Err(Status::not_found("cast not found")),
-            Err(err) => Err(Status::internal(err.to_string())),
-        }
+        let stores = self.get_stores_for(cast_id.fid)?;
+        CastStore::get_cast_add(&stores.cast_store, cast_id.fid, cast_id.hash).as_response()
+    }
+
+    async fn get_casts_by_fid(
+        &self,
+        request: Request<FidRequest>,
+    ) -> Result<Response<proto::MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let options = request.page_options();
+        CastStore::get_cast_adds_by_fid(&stores.cast_store, request.fid, &options).as_response()
+    }
+
+    async fn get_all_cast_messages_by_fid(
+        &self,
+        request: Request<FidTimestampRequest>,
+    ) -> Result<Response<proto::MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let (start_ts, stop_ts) = request.timestamps();
+        stores
+            .cast_store
+            .get_all_messages_by_fid(request.fid, start_ts, stop_ts, &request.page_options())
+            .as_response()
     }
 }
