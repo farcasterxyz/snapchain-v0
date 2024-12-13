@@ -52,6 +52,19 @@ pub mod limits {
         }
     }
 
+    // Slightly different, but still low limits for legacy units
+    #[cfg(test)]
+    pub fn legacy() -> Limits {
+        Limits {
+            casts: 10,
+            links: 10,
+            reactions: 5,
+            user_data: 5,
+            user_name_proofs: 5,
+            verifications: 5,
+        }
+    }
+
     pub fn unlimited() -> Limits {
         Limits {
             casts: u32::MAX,
@@ -60,6 +73,14 @@ pub mod limits {
             user_data: u32::MAX,
             user_name_proofs: u32::MAX,
             verifications: u32::MAX,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn test_store_limits() -> crate::storage::store::stores::StoreLimits {
+        crate::storage::store::stores::StoreLimits {
+            limits: test(),
+            legacy_limits: legacy(),
         }
     }
 }

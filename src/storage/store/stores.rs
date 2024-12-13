@@ -48,7 +48,7 @@ pub struct Stores {
     pub store_limits: StoreLimits,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Limits {
     pub casts: u32,
     pub links: u32,
@@ -136,7 +136,7 @@ impl Limits {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StoreLimits {
     pub limits: Limits,
     pub legacy_limits: Limits,

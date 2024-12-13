@@ -12,7 +12,7 @@ mod tests {
     use crate::proto::{FidRequest, SubscribeRequest};
     use crate::storage::db::{self, RocksDB, RocksDbTransactionBatch};
     use crate::storage::store::engine::{Senders, ShardEngine};
-    use crate::storage::store::stores::{StoreLimits, Stores};
+    use crate::storage::store::stores::Stores;
     use crate::storage::store::{test_helper, BlockStore};
     use crate::storage::trie::merkle_trie;
     use crate::utils::factory::{events_factory, messages_factory};
@@ -21,7 +21,6 @@ mod tests {
     use tempfile;
     use tokio::sync::{broadcast, mpsc};
     use tonic::Request;
-    use tracing::warn;
 
     const SHARD1_FID: u64 = 121;
     const SHARD2_FID: u64 = 122;
@@ -110,12 +109,13 @@ mod tests {
             true,
         );
 
+        let limits = test_helper::limits::test_store_limits();
         let (engine1, _) = test_helper::new_engine_with_options(test_helper::EngineOptions {
-            limits: None,
+            limits: Some(limits.clone()),
             db_name: Some("db1.db".to_string()),
         });
         let (engine2, _) = test_helper::new_engine_with_options(test_helper::EngineOptions {
-            limits: None,
+            limits: Some(limits.clone()),
             db_name: Some("db2.db".to_string()),
         });
         let db1 = engine1.db.clone();
@@ -126,14 +126,14 @@ mod tests {
         let shard1_stores = Stores::new(
             db1,
             merkle_trie::MerkleTrie::new(16).unwrap(),
-            StoreLimits::default(),
+            limits.clone(),
         );
         let shard1_senders = Senders::new(msgs_tx.clone());
 
         let shard2_stores = Stores::new(
             db2,
             merkle_trie::MerkleTrie::new(16).unwrap(),
-            StoreLimits::default(),
+            limits.clone(),
         );
         let shard2_senders = Senders::new(msgs_tx.clone());
         let stores = HashMap::from([(1, shard1_stores), (2, shard2_stores)]);
@@ -345,7 +345,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_storage_limits() {
-        test_helper::enable_logging();
         // Works with no storage
         let (_, _, [mut engine1, _], service) = make_server();
 
@@ -364,6 +363,7 @@ mod tests {
         assert_eq!(response.get_ref().unit_details[1].unit_size, 0);
 
         test_helper::register_user(SHARD1_FID, test_helper::default_signer(), &mut engine1).await;
+        // register_user will give the user a single unit of storage, let add one more legacy unit and a 2024 unit for a total of 1 legacy and 2 2024 units
         test_helper::commit_event(
             &mut engine1,
             &events_factory::create_rent_event(SHARD1_FID, Some(1), None, false),
@@ -371,17 +371,24 @@ mod tests {
         .await;
         test_helper::commit_event(
             &mut engine1,
-            &events_factory::create_rent_event(SHARD1_FID, None, Some(2), false),
+            &events_factory::create_rent_event(SHARD1_FID, None, Some(1), false),
         )
         .await;
-        test_helper::commit_message(
-            &mut engine1,
-            &messages_factory::casts::create_cast_add(SHARD1_FID, "test", None, None),
-        )
-        .await;
+        let cast_add = &messages_factory::casts::create_cast_add(SHARD1_FID, "test", None, None);
+        test_helper::commit_message(&mut engine1, cast_add).await;
         test_helper::commit_message(
             &mut engine1,
             &messages_factory::casts::create_cast_add(SHARD1_FID, "test2", None, None),
+        )
+        .await;
+        test_helper::commit_message(
+            &mut engine1,
+            &messages_factory::casts::create_cast_remove(
+                SHARD1_FID,
+                &cast_add.hash,
+                Some(cast_add.data.as_ref().unwrap().timestamp + 10),
+                None,
+            ),
         )
         .await;
         test_helper::commit_message(
@@ -395,13 +402,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.get_ref().units, 3);
-        assert_eq!(response.get_ref().limits.len(), 6);
-        // for limit in response.get_ref().limits.iter() {
-        //     assert_eq!(limit.limit, 0);
-        //     assert_eq!(limit.used, 0);
-        // }
         assert_eq!(response.get_ref().unit_details.len(), 2);
         assert_eq!(response.get_ref().unit_details[0].unit_size, 1);
+        assert_eq!(
+            response.get_ref().unit_details[0].unit_type,
+            proto::StorageUnitType::UnitTypeLegacy as i32
+        );
+        assert_eq!(
+            response.get_ref().unit_details[1].unit_type,
+            proto::StorageUnitType::UnitType2024 as i32
+        );
         assert_eq!(response.get_ref().unit_details[1].unit_size, 2);
+
+        let casts_limit = response
+            .get_ref()
+            .limits
+            .iter()
+            .filter(|limit| limit.store_type() == proto::StoreType::Casts)
+            .collect::<Vec<_>>()[0];
+        let configured_limits = engine1.get_stores().store_limits;
+        assert_eq!(
+            casts_limit.limit as u32,
+            (configured_limits.limits.casts * 2) + (configured_limits.legacy_limits.casts)
+        );
+        assert_eq!(casts_limit.used, 2); // Cast remove counts as 1
+        assert_eq!(casts_limit.name, "STORE_TYPE_CASTS");
+
+        let links_limit = response
+            .get_ref()
+            .limits
+            .iter()
+            .filter(|limit| limit.store_type() == proto::StoreType::Links)
+            .collect::<Vec<_>>()[0];
+        assert_eq!(links_limit.used, 1);
     }
 }

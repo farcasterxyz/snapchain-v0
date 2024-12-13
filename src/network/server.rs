@@ -22,7 +22,7 @@ use crate::storage::store::account::{
     CastStore, LinkStore, ReactionStore, UserDataStore, VerificationStore,
 };
 use crate::storage::store::engine::{MempoolMessage, Senders, ShardEngine};
-use crate::storage::store::stores::{StoreLimits, Stores};
+use crate::storage::store::stores::Stores;
 use crate::storage::store::BlockStore;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use hex::ToHex;
@@ -98,7 +98,7 @@ impl MyHubService {
                 stores.db.clone(),
                 stores.trie.clone(),
                 1,
-                StoreLimits::default(),
+                stores.store_limits.clone(),
                 self.statsd_client.clone(),
                 100,
                 200,
