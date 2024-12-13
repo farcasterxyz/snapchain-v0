@@ -34,12 +34,12 @@ pub async fn send_on_chain_event(
     Ok(response.into_inner())
 }
 
-pub fn compose_rent_event(fid: u32) -> OnChainEvent {
+pub fn compose_rent_event(fid: u64) -> OnChainEvent {
     factory::events_factory::create_rent_event(fid, None, Some(10), false)
 }
 
 pub fn compose_message(
-    fid: u32,
+    fid: u64,
     text: &str,
     timestamp: Option<u32>,
     private_key: Option<&SigningKey>,

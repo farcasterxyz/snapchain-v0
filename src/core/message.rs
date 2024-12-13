@@ -6,9 +6,9 @@ impl proto::Message {
         self.data.is_some() && self.data.as_ref().unwrap().r#type == message_type as i32
     }
 
-    pub fn fid(&self) -> u32 {
+    pub fn fid(&self) -> u64 {
         if self.data.is_some() {
-            self.data.as_ref().unwrap().fid as u32
+            self.data.as_ref().unwrap().fid
         } else {
             0
         }
@@ -28,14 +28,14 @@ impl proto::Message {
 }
 
 impl proto::ValidatorMessage {
-    pub fn fid(&self) -> u32 {
+    pub fn fid(&self) -> u64 {
         if let Some(fname) = &self.fname_transfer {
             if let Some(proof) = &fname.proof {
-                return proof.fid as u32;
+                return proof.fid;
             }
         }
         if let Some(event) = &self.on_chain_event {
-            return event.fid as u32;
+            return event.fid;
         }
         0
     }

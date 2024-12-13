@@ -1,5 +1,6 @@
 use super::PAGE_SIZE_MAX;
 use crate::core::error::HubError;
+use crate::core::types::FidOnDisk;
 use crate::storage::constants::{RootPrefix, UserPostfix};
 use crate::storage::db::{PageOptions, RocksdbError};
 use crate::storage::util::increment_vec_u8;
@@ -103,17 +104,25 @@ pub fn unpack_ts_hash(ts_hash: &[u8; TS_HASH_LENGTH]) -> (u32, [u8; HASH_LENGTH]
     (timestamp, hash)
 }
 
-pub fn make_fid_key(fid: u32) -> Vec<u8> {
-    fid.to_be_bytes().to_vec()
+pub fn make_fid_key(fid: u64) -> Vec<u8> {
+    // Downcast to u32, since on disk, we only assume 4 bytes for the fid to save space
+    (fid as FidOnDisk).to_be_bytes().to_vec()
 }
 
-pub fn read_fid_key(key: &[u8]) -> u32 {
-    let mut fid_bytes = [0u8; 4];
-    fid_bytes.copy_from_slice(&key[0..4]);
-    u32::from_be_bytes(fid_bytes)
+pub fn read_fid_key(key: &[u8], offset: usize) -> u64 {
+    let mut fid_bytes = [0u8; FID_BYTES];
+    fid_bytes.copy_from_slice(&key[offset..offset + FID_BYTES]);
+    // Upcast to u64 so we are always dealing with the same type everywhere
+    u32::from_be_bytes(fid_bytes) as u64
 }
 
-pub fn make_user_key(fid: u32) -> Vec<u8> {
+pub fn read_ts_hash(key: &[u8], offset: usize) -> [u8; TS_HASH_LENGTH] {
+    let mut ts_hash = [0u8; TS_HASH_LENGTH];
+    ts_hash.copy_from_slice(&key[offset..offset + TS_HASH_LENGTH]);
+    ts_hash
+}
+
+pub fn make_user_key(fid: u64) -> Vec<u8> {
     let mut key = Vec::with_capacity(1 + 4);
     key.push(RootPrefix::User as u8);
 
@@ -123,7 +132,7 @@ pub fn make_user_key(fid: u32) -> Vec<u8> {
 }
 
 pub fn make_message_primary_key(
-    fid: u32,
+    fid: u64,
     set: u8,
     ts_hash: Option<&[u8; TS_HASH_LENGTH]>,
 ) -> Vec<u8> {
@@ -139,7 +148,7 @@ pub fn make_message_primary_key(
 
 pub fn make_cast_id_key(cast_id: &CastId) -> Vec<u8> {
     let mut key = Vec::with_capacity(4 + HASH_LENGTH);
-    key.extend_from_slice(&make_fid_key(cast_id.fid as u32));
+    key.extend_from_slice(&make_fid_key(cast_id.fid));
     key.extend_from_slice(&cast_id.hash);
 
     key
@@ -147,7 +156,7 @@ pub fn make_cast_id_key(cast_id: &CastId) -> Vec<u8> {
 
 pub fn get_message(
     db: &RocksDB,
-    fid: u32,
+    fid: u64,
     set: u8,
     ts_hash: &[u8; TS_HASH_LENGTH],
 ) -> Result<Option<MessageProto>, HubError> {
@@ -269,7 +278,7 @@ pub fn put_message_transaction(
     let ts_hash = make_ts_hash(message.data.as_ref().unwrap().timestamp, &message.hash)?;
 
     let primary_key = make_message_primary_key(
-        message.data.as_ref().unwrap().fid as u32,
+        message.data.as_ref().unwrap().fid,
         type_to_set_postfix(MessageType::try_from(message.data.as_ref().unwrap().r#type).unwrap())
             as u8,
         Some(&ts_hash),
@@ -286,7 +295,7 @@ pub fn delete_message_transaction(
     let ts_hash = make_ts_hash(message.data.as_ref().unwrap().timestamp, &message.hash)?;
 
     let primary_key = make_message_primary_key(
-        message.data.as_ref().unwrap().fid as u32,
+        message.data.as_ref().unwrap().fid,
         type_to_set_postfix(MessageType::try_from(message.data.as_ref().unwrap().r#type).unwrap())
             as u8,
         Some(&ts_hash),

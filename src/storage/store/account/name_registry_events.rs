@@ -18,7 +18,7 @@ pub fn make_fname_username_proof_key(name: &[u8]) -> Vec<u8> {
     key
 }
 
-pub fn make_fname_username_proof_by_fid_key(fid: u32) -> Vec<u8> {
+pub fn make_fname_username_proof_by_fid_key(fid: u64) -> Vec<u8> {
     let mut key = Vec::with_capacity(1 + 4);
 
     key.push(RootPrefix::FNameUserNameProofByFid as u8);
@@ -42,7 +42,7 @@ pub fn get_username_proof(db: &RocksDB, name: &[u8]) -> Result<Option<UserNamePr
     }
 }
 
-pub fn get_fname_proof_by_fid(db: &RocksDB, fid: u32) -> Result<Option<UserNameProof>, HubError> {
+pub fn get_fname_proof_by_fid(db: &RocksDB, fid: u64) -> Result<Option<UserNameProof>, HubError> {
     let secondary_key = make_fname_username_proof_by_fid_key(fid);
     let primary_key = db.get(&secondary_key)?;
     if primary_key.is_none() {
@@ -72,14 +72,14 @@ pub fn put_username_proof_transaction(
     let primary_key = make_fname_username_proof_key(&username_proof.name);
     txn.put(primary_key.clone(), buf);
 
-    let secondary_key = make_fname_username_proof_by_fid_key(username_proof.fid as u32);
+    let secondary_key = make_fname_username_proof_by_fid_key(username_proof.fid);
     txn.put(secondary_key, primary_key);
 }
 
 pub fn delete_username_proof_transaction(
     txn: &mut RocksDbTransactionBatch,
     username_proof: &UserNameProof,
-    existing_fid: Option<u32>,
+    existing_fid: Option<u64>,
 ) {
     let buf = username_proof.encode_to_vec();
 

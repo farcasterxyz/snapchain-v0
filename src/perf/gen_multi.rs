@@ -8,7 +8,7 @@ use rand::Rng;
 use std::collections::HashSet;
 
 pub struct MultiUser {
-    initialized_fids: HashSet<u32>,
+    initialized_fids: HashSet<u64>,
     private_key: SigningKey,
     thread_id: u32,
 }
@@ -27,7 +27,7 @@ impl MessageGenerator for MultiUser {
     fn next(&mut self, seq: u64) -> Vec<NextMessage> {
         let mut rng = rand::thread_rng();
 
-        let fid: u32 = rng.gen_range(1..=5000) + 1_000_000 * self.thread_id;
+        let fid: u64 = rng.gen_range(1..=5000) + 1_000_000 * self.thread_id as u64;
         let mut messages = Vec::new();
 
         // If the FID has not been initialized, return initial messages

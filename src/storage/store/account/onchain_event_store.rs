@@ -64,7 +64,7 @@ fn make_onchain_event_type_prefix(onchain_event_type: OnChainEventType) -> Vec<u
 
 fn make_onchain_event_primary_key(onchain_event: &OnChainEvent) -> Vec<u8> {
     let mut primary_key = make_onchain_event_type_prefix(onchain_event.r#type());
-    primary_key.extend(make_fid_key(onchain_event.fid as u32));
+    primary_key.extend(make_fid_key(onchain_event.fid));
     primary_key.extend(make_block_number_key(onchain_event.block_number));
     primary_key.extend(make_log_index_key(onchain_event.log_index));
 
@@ -93,7 +93,7 @@ pub fn signer_body(onchain_event: OnChainEvent) -> Option<SignerEventBody> {
     }
 }
 
-fn make_id_register_by_fid_key(fid: u32) -> Vec<u8> {
+fn make_id_register_by_fid_key(fid: u64) -> Vec<u8> {
     let mut id_register_by_fid_key = vec![
         RootPrefix::OnChainEvent as u8,
         OnChainEventPostfix::IdRegisterByFid as u8,
@@ -102,7 +102,7 @@ fn make_id_register_by_fid_key(fid: u32) -> Vec<u8> {
     id_register_by_fid_key
 }
 
-fn make_signer_onchain_event_by_signer_key(fid: u32, key: Vec<u8>) -> Vec<u8> {
+fn make_signer_onchain_event_by_signer_key(fid: u64, key: Vec<u8>) -> Vec<u8> {
     let mut signer_key = vec![
         RootPrefix::OnChainEvent as u8,
         OnChainEventPostfix::SignerByFid as u8,
@@ -122,7 +122,7 @@ fn build_secondary_indices_for_id_register(
         // change recovery events are not indexed (id and custody address are the same)
         return Ok(());
     }
-    let id_register_by_fid_key = make_id_register_by_fid_key(onchain_event.fid as u32);
+    let id_register_by_fid_key = make_id_register_by_fid_key(onchain_event.fid);
     match get_event_by_secondary_key(db, id_register_by_fid_key.clone())? {
         Some(existing_event) => {
             if existing_event.block_number > onchain_event.block_number {
@@ -142,10 +142,8 @@ fn build_secondary_indices_for_signer(
     onchain_event: &OnChainEvent,
     signer_event_body: &SignerEventBody,
 ) -> Result<(), OnchainEventStorageError> {
-    let signer_key = make_signer_onchain_event_by_signer_key(
-        onchain_event.fid as u32,
-        signer_event_body.key.clone(),
-    );
+    let signer_key =
+        make_signer_onchain_event_by_signer_key(onchain_event.fid, signer_event_body.key.clone());
     match get_event_by_secondary_key(db, signer_key.clone())? {
         Some(existing_event) => {
             if existing_event.block_number > onchain_event.block_number {
@@ -173,7 +171,7 @@ fn build_secondary_indices_for_signer(
                     reverse: false,
                 },
                 OnChainEventType::EventTypeSigner,
-                onchain_event.fid as u32,
+                onchain_event.fid,
             )?;
 
             let onchain_event = events_page.onchain_events.into_iter().find(|event| {
@@ -256,7 +254,7 @@ pub fn get_onchain_events(
     db: &RocksDB,
     page_options: &PageOptions,
     event_type: OnChainEventType,
-    fid: u32,
+    fid: u64,
 ) -> Result<OnchainEventsPage, OnchainEventStorageError> {
     let mut start_prefix = make_onchain_event_type_prefix(event_type);
     start_prefix.extend(make_fid_key(fid));
@@ -399,7 +397,7 @@ impl OnchainEventStore {
     pub fn get_onchain_events(
         &self,
         event_type: OnChainEventType,
-        fid: u32,
+        fid: u64,
     ) -> Result<Vec<OnChainEvent>, OnchainEventStorageError> {
         let mut onchain_events = vec![];
         let mut next_page_token = None;
@@ -427,14 +425,14 @@ impl OnchainEventStore {
 
     pub fn get_id_register_event_by_fid(
         &self,
-        fid: u32,
+        fid: u64,
     ) -> Result<Option<OnChainEvent>, OnchainEventStorageError> {
         get_event_by_secondary_key(&self.db, make_id_register_by_fid_key(fid))
     }
 
     pub fn get_active_signer(
         &self,
-        fid: u32,
+        fid: u64,
         signer: Vec<u8>,
     ) -> Result<Option<OnChainEvent>, OnchainEventStorageError> {
         let signer_key = make_signer_onchain_event_by_signer_key(fid, signer);
@@ -443,7 +441,7 @@ impl OnchainEventStore {
 
     pub fn get_storage_slot_for_fid(
         &self,
-        fid: u32,
+        fid: u64,
     ) -> Result<StorageSlot, OnchainEventStorageError> {
         let rent_events = self.get_onchain_events(OnChainEventType::EventTypeStorageRent, fid)?;
         let mut storage_slot = StorageSlot::new(0, 0, 0);

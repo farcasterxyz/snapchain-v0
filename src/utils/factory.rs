@@ -35,7 +35,7 @@ pub mod events_factory {
     use super::*;
     use crate::proto;
 
-    pub fn create_onchain_event(fid: u32) -> OnChainEvent {
+    pub fn create_onchain_event(fid: u64) -> OnChainEvent {
         OnChainEvent {
             r#type: OnChainEventType::EventTypeIdRegister as i32,
             chain_id: 10,
@@ -44,7 +44,7 @@ pub mod events_factory {
             block_timestamp: 0,
             transaction_hash: rand::random::<[u8; 32]>().to_vec(),
             log_index: 0,
-            fid: fid as u64,
+            fid,
             tx_index: 0,
             version: 1,
             body: None,
@@ -52,7 +52,7 @@ pub mod events_factory {
     }
 
     pub fn create_rent_event(
-        fid: u32,
+        fid: u64,
         legacy_units: Option<u32>,
         units: Option<u32>,
         expired: bool,
@@ -96,7 +96,7 @@ pub mod events_factory {
             block_timestamp: timestamp as u64,
             transaction_hash: rand::random::<[u8; 32]>().to_vec(),
             log_index: 0,
-            fid: fid as u64,
+            fid,
             tx_index: 0,
             version: 1,
             body: Some(proto::on_chain_event::Body::StorageRentEventBody(
@@ -106,7 +106,7 @@ pub mod events_factory {
     }
 
     pub fn create_signer_event(
-        fid: u32,
+        fid: u64,
         signer: SigningKey,
         event_type: proto::SignerEventType,
     ) -> OnChainEvent {
@@ -125,7 +125,7 @@ pub mod events_factory {
             block_timestamp: time::current_timestamp_with_offset(-10) as u64,
             transaction_hash: rand::random::<[u8; 32]>().to_vec(),
             log_index: 0,
-            fid: fid as u64,
+            fid,
             tx_index: 0,
             version: 1,
             body: Some(proto::on_chain_event::Body::SignerEventBody(
@@ -135,7 +135,7 @@ pub mod events_factory {
     }
 
     pub fn create_id_register_event(
-        fid: u32,
+        fid: u64,
         event_type: proto::IdRegisterEventType,
     ) -> OnChainEvent {
         let id_register_event_body = proto::IdRegisterEventBody {
@@ -152,7 +152,7 @@ pub mod events_factory {
             block_timestamp: time::current_timestamp_with_offset(-10) as u64,
             transaction_hash: rand::random::<[u8; 32]>().to_vec(),
             log_index: 0,
-            fid: fid as u64,
+            fid,
             tx_index: 0,
             version: 1,
             body: Some(proto::on_chain_event::Body::IdRegisterEventBody(
@@ -174,7 +174,7 @@ pub mod messages_factory {
     }
 
     pub fn create_message_with_data(
-        fid: u32,
+        fid: u64,
         msg_type: MessageType,
         body: message::message_data::Body,
         timestamp: Option<u32>,
@@ -194,7 +194,7 @@ pub mod messages_factory {
         let timestamp = timestamp.unwrap_or_else(|| farcaster_time());
 
         let msg_data = MessageData {
-            fid: fid as u64,
+            fid,
             r#type: msg_type as i32,
             timestamp,
             network: network as i32,
@@ -221,7 +221,7 @@ pub mod messages_factory {
         use crate::proto::CastRemoveBody;
 
         pub fn create_cast_add(
-            fid: u32,
+            fid: u64,
             text: &str,
             timestamp: Option<u32>,
             private_key: Option<&SigningKey>,
@@ -245,7 +245,7 @@ pub mod messages_factory {
         }
 
         pub fn create_cast_remove(
-            fid: u32,
+            fid: u64,
             target_hash: &Vec<u8>,
             timestamp: Option<u32>,
             private_key: Option<&SigningKey>,
@@ -269,16 +269,16 @@ pub mod messages_factory {
         use super::*;
 
         pub fn create_link_add(
-            fid: u32,
+            fid: u64,
             link_type: String,
-            target_fid: u32,
+            target_fid: u64,
             timestamp: Option<u32>,
             private_key: Option<&SigningKey>,
         ) -> message::Message {
             let link_body = LinkBody {
                 r#type: link_type,
                 display_timestamp: None,
-                target: Some(Target::TargetFid(target_fid as u64)),
+                target: Some(Target::TargetFid(target_fid)),
             };
             create_message_with_data(
                 fid,
@@ -290,16 +290,16 @@ pub mod messages_factory {
         }
 
         pub fn create_link_remove(
-            fid: u32,
+            fid: u64,
             link_type: String,
-            target_fid: u32,
+            target_fid: u64,
             timestamp: Option<u32>,
             private_key: Option<&SigningKey>,
         ) -> crate::proto::Message {
             let link_body = LinkBody {
                 r#type: link_type,
                 display_timestamp: None,
-                target: Some(Target::TargetFid(target_fid as u64)),
+                target: Some(Target::TargetFid(target_fid)),
             };
             create_message_with_data(
                 fid,
@@ -311,15 +311,15 @@ pub mod messages_factory {
         }
 
         pub fn create_link_compact_state(
-            fid: u32,
+            fid: u64,
             link_type: String,
-            target_fid: u32,
+            target_fid: u64,
             timestamp: Option<u32>,
             private_key: Option<&SigningKey>,
         ) -> crate::proto::Message {
             let link_compact_state_body = LinkCompactStateBody {
                 r#type: link_type,
-                target_fids: vec![target_fid as u64],
+                target_fids: vec![target_fid],
             };
 
             create_message_with_data(
@@ -338,7 +338,7 @@ pub mod messages_factory {
         use super::*;
 
         pub fn create_reaction_add(
-            fid: u32,
+            fid: u64,
             reaction_type: ReactionType,
             target_url: String,
             timestamp: Option<u32>,
@@ -358,7 +358,7 @@ pub mod messages_factory {
         }
 
         pub fn create_reaction_remove(
-            fid: u32,
+            fid: u64,
             reaction_type: ReactionType,
             target_url: String,
             timestamp: Option<u32>,
@@ -383,7 +383,7 @@ pub mod messages_factory {
         use super::*;
 
         pub fn create_user_data_add(
-            fid: u32,
+            fid: u64,
             user_data_type: UserDataType,
             value: &String,
             timestamp: Option<u32>,
@@ -409,7 +409,7 @@ pub mod messages_factory {
         use super::*;
 
         pub fn create_verification_add(
-            fid: u32,
+            fid: u64,
             verification_type: u32,
             address: String,
             claim_signature: String,
@@ -435,7 +435,7 @@ pub mod messages_factory {
         }
 
         pub fn create_verification_remove(
-            fid: u32,
+            fid: u64,
             address: String,
             timestamp: Option<u32>,
             private_key: Option<&SigningKey>,
@@ -477,7 +477,7 @@ pub mod messages_factory {
             };
 
             create_message_with_data(
-                fid as u32,
+                fid,
                 MessageType::UsernameProof,
                 message::message_data::Body::UsernameProofBody(proof),
                 Some(timestamp as u32),
@@ -509,16 +509,16 @@ pub mod username_factory {
     }
 
     pub fn create_transfer(
-        fid: u32,
+        fid: u64,
         name: &String,
         timestamp: Option<u64>,
-        from_fid: Option<u32>,
+        from_fid: Option<u64>,
     ) -> FnameTransfer {
         FnameTransfer {
             id: rand::random::<u64>(),
-            from_fid: from_fid.unwrap_or_else(|| 0) as u64,
+            from_fid: from_fid.unwrap_or_else(|| 0),
             proof: Some(create_username_proof(
-                fid as u64,
+                fid,
                 crate::proto::UserNameType::UsernameTypeFname,
                 name,
                 timestamp,

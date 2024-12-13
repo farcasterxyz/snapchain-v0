@@ -154,7 +154,7 @@ impl Stores {
 
     pub fn get_usage(
         &self,
-        fid: u32,
+        fid: u64,
         message_type: MessageType,
         txn_batch: &mut RocksDbTransactionBatch,
     ) -> Result<(u32, u32), StoresError> {
@@ -176,7 +176,7 @@ impl Stores {
 
     pub fn revoke_messages(
         &self,
-        fid: u32,
+        fid: u64,
         key: &Vec<u8>,
         txn_batch: &mut RocksDbTransactionBatch,
     ) -> Result<Vec<HubEvent>, StoresError> {

@@ -1,6 +1,6 @@
 use super::{
     get_many_messages_as_bytes, make_cast_id_key, make_fid_key, make_message_primary_key,
-    make_user_key,
+    make_user_key, read_fid_key, read_ts_hash,
     store::{Store, StoreDef},
     MessagesPage, StoreEventHandler, PAGE_SIZE_MAX, TS_HASH_LENGTH,
 };
@@ -18,7 +18,7 @@ use crate::{
     proto::{Message, MessageType},
     storage::db::{RocksDB, RocksDbTransactionBatch},
 };
-use std::{borrow::Borrow, convert::TryInto, sync::Arc};
+use std::{borrow::Borrow, sync::Arc};
 
 #[derive(Clone)]
 pub struct ReactionStoreDef {
@@ -120,7 +120,7 @@ impl StoreDef for ReactionStoreDef {
         };
 
         Self::make_reaction_adds_key(
-            message.data.as_ref().unwrap().fid as u32,
+            message.data.as_ref().unwrap().fid,
             reaction_body.r#type,
             reaction_body.target.as_ref(),
         )
@@ -138,7 +138,7 @@ impl StoreDef for ReactionStoreDef {
         };
 
         Self::make_reaction_removes_key(
-            message.data.as_ref().unwrap().fid as u32,
+            message.data.as_ref().unwrap().fid,
             reaction_body.r#type,
             reaction_body.target.as_ref(),
         )
@@ -151,7 +151,7 @@ impl StoreDef for ReactionStoreDef {
         })
     }
 
-    fn make_compact_state_prefix(&self, _fid: u32) -> Result<Vec<u8>, HubError> {
+    fn make_compact_state_prefix(&self, _fid: u64) -> Result<Vec<u8>, HubError> {
         Err(HubError {
             code: "bad_request.invalid_param".to_string(),
             message: "Reaction Store doesn't support compact state".to_string(),
@@ -184,7 +184,7 @@ impl ReactionStoreDef {
 
         let by_target_key = ReactionStoreDef::make_reactions_by_target_key(
             target,
-            message.data.as_ref().unwrap().fid as u32,
+            message.data.as_ref().unwrap().fid,
             Some(ts_hash),
         );
 
@@ -193,7 +193,7 @@ impl ReactionStoreDef {
 
     pub fn make_reactions_by_target_key(
         target: &Target,
-        fid: u32,
+        fid: u64,
         ts_hash: Option<&[u8; TS_HASH_LENGTH]>,
     ) -> Vec<u8> {
         let mut key = Vec::with_capacity(1 + 28 + 24 + 4);
@@ -218,7 +218,7 @@ impl ReactionStoreDef {
     }
 
     pub fn make_reaction_adds_key(
-        fid: u32,
+        fid: u64,
         r#type: i32,
         target: Option<&Target>,
     ) -> Result<Vec<u8>, HubError> {
@@ -244,7 +244,7 @@ impl ReactionStoreDef {
     }
 
     pub fn make_reaction_removes_key(
-        fid: u32,
+        fid: u64,
         r#type: i32,
         target: Option<&Target>,
     ) -> Result<Vec<u8>, HubError> {
@@ -287,13 +287,13 @@ impl ReactionStore {
 
     pub fn get_reaction_add(
         store: &Store<ReactionStoreDef>,
-        fid: u32,
+        fid: u64,
         r#type: i32,
         target: Option<Target>,
     ) -> Result<Option<Message>, HubError> {
         let partial_message = Message {
             data: Some(MessageData {
-                fid: fid as u64,
+                fid,
                 r#type: MessageType::ReactionAdd.into(),
                 body: Some(Body::ReactionBody(ReactionBody {
                     r#type,
@@ -309,13 +309,13 @@ impl ReactionStore {
 
     pub fn get_reaction_remove(
         store: &Store<ReactionStoreDef>,
-        fid: u32,
+        fid: u64,
         r#type: i32,
         target: Option<Target>,
     ) -> Result<Option<Message>, HubError> {
         let partial_message = Message {
             data: Some(MessageData {
-                fid: fid as u64,
+                fid,
                 r#type: MessageType::ReactionRemove.into(),
                 body: Some(Body::ReactionBody(ReactionBody {
                     r#type,
@@ -334,7 +334,7 @@ impl ReactionStore {
 
     pub fn get_reaction_adds_by_fid(
         store: &Store<ReactionStoreDef>,
-        fid: u32,
+        fid: u64,
         reaction_type: i32,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
@@ -357,7 +357,7 @@ impl ReactionStore {
 
     pub fn get_reaction_removes_by_fid(
         store: &Store<ReactionStoreDef>,
-        fid: u32,
+        fid: u64,
         reaction_type: i32,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
@@ -400,11 +400,8 @@ impl ReactionStore {
                     let ts_hash_offset = start_prefix.len();
                     let fid_offset = ts_hash_offset + TS_HASH_LENGTH;
 
-                    let fid =
-                        u32::from_be_bytes(key[fid_offset..fid_offset + 4].try_into().unwrap());
-                    let ts_hash = key[ts_hash_offset..ts_hash_offset + TS_HASH_LENGTH]
-                        .try_into()
-                        .unwrap();
+                    let fid = read_fid_key(key, fid_offset);
+                    let ts_hash = read_ts_hash(key, ts_hash_offset);
                     let message_primary_key =
                         make_message_primary_key(fid, store.postfix(), Some(&ts_hash));
 

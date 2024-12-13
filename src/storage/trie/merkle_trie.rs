@@ -2,7 +2,7 @@ use super::super::db::{RocksDB, RocksDbTransactionBatch};
 use super::errors::TrieError;
 use super::trie_node::{TrieNode, TIMESTAMP_LENGTH};
 use crate::proto;
-use crate::storage::store::account::IntoU8;
+use crate::storage::store::account::{make_fid_key, IntoU8};
 use crate::storage::trie::{trie_node, util};
 use std::collections::HashMap;
 use tracing::info;
@@ -19,7 +19,7 @@ impl TrieKey {
         key
     }
 
-    pub fn for_message_type(fid: u32, msg_type: u8) -> Vec<u8> {
+    pub fn for_message_type(fid: u64, msg_type: u8) -> Vec<u8> {
         let mut key = Vec::new();
         key.extend_from_slice(&Self::for_fid(fid));
         // Left shift msg_ype by 3 bits so we don't collide with onchain event types.
@@ -30,14 +30,14 @@ impl TrieKey {
 
     pub fn for_onchain_event(event: &proto::OnChainEvent) -> Vec<u8> {
         let mut key = Vec::new();
-        key.extend_from_slice(&Self::for_fid(event.fid as u32));
+        key.extend_from_slice(&Self::for_fid(event.fid));
         key.push(event.r#type as u8);
         key.extend_from_slice(&event.transaction_hash);
         key.extend_from_slice(&event.log_index.to_be_bytes());
         key
     }
 
-    pub fn for_fname(fid: u32, name: &String) -> Vec<u8> {
+    pub fn for_fname(fid: u64, name: &String) -> Vec<u8> {
         let mut key = Vec::new();
         key.extend_from_slice(&Self::for_fid(fid));
         key.push(8); // 1-7 is for onchain events, use 8 for fnames, and everything else for messages
@@ -45,10 +45,8 @@ impl TrieKey {
         key
     }
 
-    pub fn for_fid(fid: u32) -> Vec<u8> {
-        let mut key = Vec::with_capacity(4);
-        key.extend_from_slice(&fid.to_be_bytes());
-        key
+    pub fn for_fid(fid: u64) -> Vec<u8> {
+        make_fid_key(fid)
     }
 }
 

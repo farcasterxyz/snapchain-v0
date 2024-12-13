@@ -94,7 +94,7 @@ pub enum MempoolMessage {
 }
 
 impl MempoolMessage {
-    pub fn fid(&self) -> u32 {
+    pub fn fid(&self) -> u64 {
         match self {
             MempoolMessage::UserMessage(msg) => msg.fid(),
             MempoolMessage::ValidatorMessage(msg) => msg.fid(),
@@ -453,7 +453,7 @@ impl ShardEngine {
                 // If the name was transfered from an existing fid, we need to make sure to revoke any existing username UserDataAdd
                 if fname_transfer.from_fid > 0 {
                     let existing_username = self.get_user_data_by_fid_and_type(
-                        fname_transfer.from_fid as u32,
+                        fname_transfer.from_fid,
                         proto::UserDataType::Username,
                     );
                     if existing_username.is_ok() {
@@ -484,7 +484,7 @@ impl ShardEngine {
         for key in revoked_signers {
             let result = self
                 .stores
-                .revoke_messages(snapchain_txn.fid as u32, &key, txn_batch);
+                .revoke_messages(snapchain_txn.fid, &key, txn_batch);
             match result {
                 Ok(revoke_events) => {
                     for event in revoke_events {
@@ -540,7 +540,7 @@ impl ShardEngine {
         }
 
         for msg_type in message_types {
-            let fid = snapchain_txn.fid as u32;
+            let fid = snapchain_txn.fid;
             let result = self.prune_messages(fid, msg_type, txn_batch);
             match result {
                 Ok(pruned_events) => {
@@ -561,11 +561,10 @@ impl ShardEngine {
             }
         }
 
-        let account_root = self.stores.trie.get_hash(
-            &self.db,
-            txn_batch,
-            &TrieKey::for_fid(snapchain_txn.fid as u32),
-        );
+        let account_root =
+            self.stores
+                .trie
+                .get_hash(&self.db, txn_batch, &TrieKey::for_fid(snapchain_txn.fid));
         info!(
             fid = snapchain_txn.fid,
             num_user_messages = total_user_messages,
@@ -641,7 +640,7 @@ impl ShardEngine {
 
     fn prune_messages(
         &mut self,
-        fid: u32,
+        fid: u64,
         msg_type: MessageType,
         txn_batch: &mut RocksDbTransactionBatch,
     ) -> Result<Vec<HubEvent>, EngineError> {
@@ -771,7 +770,7 @@ impl ShardEngine {
                             ctx,
                             &self.db,
                             txn_batch,
-                            vec![TrieKey::for_fname(proof.fid as u32, &name)],
+                            vec![TrieKey::for_fname(proof.fid, &name)],
                         )?;
                     }
                 }
@@ -782,7 +781,7 @@ impl ShardEngine {
                             ctx,
                             &self.db,
                             txn_batch,
-                            vec![TrieKey::for_fname(proof.fid as u32, &name)],
+                            vec![TrieKey::for_fname(proof.fid, &name)],
                         )?;
                     }
                 }
@@ -810,21 +809,21 @@ impl ShardEngine {
         // Check that the user has a custody address
         self.stores
             .onchain_event_store
-            .get_id_register_event_by_fid(message_data.fid as u32)
+            .get_id_register_event_by_fid(message_data.fid)
             .map_err(|_| MessageValidationError::MissingFid)?
             .ok_or(MessageValidationError::MissingFid)?;
 
         // Check that signer is valid
         self.stores
             .onchain_event_store
-            .get_active_signer(message_data.fid as u32, message.signer.clone())
+            .get_active_signer(message_data.fid, message.signer.clone())
             .map_err(|_| MessageValidationError::MissingSigner)?
             .ok_or(MessageValidationError::MissingSigner)?;
 
         match &message_data.body {
             Some(proto::message_data::Body::UserDataBody(user_data)) => {
                 if user_data.r#type == proto::UserDataType::Username as i32 {
-                    self.validate_username(message_data.fid as u32, &user_data.value)?;
+                    self.validate_username(message_data.fid, &user_data.value)?;
                 }
             }
             Some(proto::message_data::Body::UsernameProofBody(_)) => {
@@ -842,7 +841,7 @@ impl ShardEngine {
         Ok(())
     }
 
-    fn validate_username(&self, fid: u32, fname: &str) -> Result<(), MessageValidationError> {
+    fn validate_username(&self, fid: u64, fname: &str) -> Result<(), MessageValidationError> {
         if fname.is_empty() {
             // Setting an empty username is allowed, no need to validate the proof
             return Ok(());
@@ -861,7 +860,7 @@ impl ShardEngine {
                 })?;
             match proof {
                 Some(proof) => {
-                    if proof.fid as u32 != fid {
+                    if proof.fid != fid {
                         return Err(MessageValidationError::MissingFname);
                     }
                 }
@@ -1062,11 +1061,11 @@ impl ShardEngine {
         }
     }
 
-    pub fn get_casts_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
+    pub fn get_casts_by_fid(&self, fid: u64) -> Result<MessagesPage, HubError> {
         CastStore::get_cast_adds_by_fid(&self.stores.cast_store, fid, &PageOptions::default())
     }
 
-    pub fn get_links_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
+    pub fn get_links_by_fid(&self, fid: u64) -> Result<MessagesPage, HubError> {
         self.stores
             .link_store
             .get_adds_by_fid::<fn(&Message) -> bool>(fid, &PageOptions::default(), None)
@@ -1074,20 +1073,20 @@ impl ShardEngine {
 
     pub fn get_link_compact_state_messages_by_fid(
         &self,
-        fid: u32,
+        fid: u64,
     ) -> Result<MessagesPage, HubError> {
         self.stores
             .link_store
             .get_compact_state_messages_by_fid(fid, &PageOptions::default())
     }
 
-    pub fn get_reactions_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
+    pub fn get_reactions_by_fid(&self, fid: u64) -> Result<MessagesPage, HubError> {
         self.stores
             .reaction_store
             .get_adds_by_fid::<fn(&Message) -> bool>(fid, &PageOptions::default(), None)
     }
 
-    pub fn get_user_data_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
+    pub fn get_user_data_by_fid(&self, fid: u64) -> Result<MessagesPage, HubError> {
         self.stores
             .user_data_store
             .get_adds_by_fid::<fn(&Message) -> bool>(fid, &PageOptions::default(), None)
@@ -1095,7 +1094,7 @@ impl ShardEngine {
 
     pub fn get_user_data_by_fid_and_type(
         &self,
-        fid: u32,
+        fid: u64,
         user_data_type: proto::UserDataType,
     ) -> Result<Message, HubError> {
         UserDataStore::get_user_data_by_fid_and_type(
@@ -1105,13 +1104,13 @@ impl ShardEngine {
         )
     }
 
-    pub fn get_verifications_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
+    pub fn get_verifications_by_fid(&self, fid: u64) -> Result<MessagesPage, HubError> {
         self.stores
             .verification_store
             .get_adds_by_fid::<fn(&Message) -> bool>(fid, &PageOptions::default(), None)
     }
 
-    pub fn get_username_proofs_by_fid(&self, fid: u32) -> Result<MessagesPage, HubError> {
+    pub fn get_username_proofs_by_fid(&self, fid: u64) -> Result<MessagesPage, HubError> {
         self.stores
             .username_proof_store
             .get_adds_by_fid::<fn(&Message) -> bool>(fid, &PageOptions::default(), None)
@@ -1124,7 +1123,7 @@ impl ShardEngine {
     pub fn get_onchain_events(
         &self,
         event_type: OnChainEventType,
-        fid: u32,
+        fid: u64,
     ) -> Result<Vec<OnChainEvent>, OnchainEventStorageError> {
         self.stores
             .onchain_event_store

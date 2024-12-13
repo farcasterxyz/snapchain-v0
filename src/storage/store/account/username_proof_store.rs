@@ -58,7 +58,7 @@ impl StoreDef for UsernameProofStoreDef {
         };
 
         Ok(Self::make_username_proof_by_fid_key(
-            message.data.as_ref().unwrap().fid as u32,
+            message.data.as_ref().unwrap().fid,
             name,
         ))
     }
@@ -89,7 +89,7 @@ impl StoreDef for UsernameProofStoreDef {
         })
     }
 
-    fn make_compact_state_prefix(&self, _fid: u32) -> Result<Vec<u8>, HubError> {
+    fn make_compact_state_prefix(&self, _fid: u64) -> Result<Vec<u8>, HubError> {
         Err(HubError {
             code: "bad_request.invalid_param".to_string(),
             message: "Username Proof Store doesn't support compact state".to_string(),
@@ -128,7 +128,7 @@ impl StoreDef for UsernameProofStoreDef {
             let by_name_key = Self::make_username_proof_by_name_key(&body.name);
             txn.put(
                 by_name_key,
-                make_fid_key(message.data.as_ref().unwrap().fid as u32),
+                make_fid_key(message.data.as_ref().unwrap().fid),
             );
             Ok(())
         } else {
@@ -209,7 +209,7 @@ impl StoreDef for UsernameProofStoreDef {
 
         let fid_result = db.get(by_name_key.as_slice());
         if let Ok(Some(fid_bytes)) = fid_result {
-            let fid = read_fid_key(&fid_bytes);
+            let fid = read_fid_key(&fid_bytes, 0);
             if fid > 0 {
                 let existing_add_key = Self::make_username_proof_by_fid_key(fid, name);
                 if let Ok(existing_message_ts_hash) = db.get(existing_add_key.as_slice()) {
@@ -354,7 +354,7 @@ impl UsernameProofStoreDef {
         key
     }
 
-    fn make_username_proof_by_fid_key(fid: u32, name: &Vec<u8>) -> Vec<u8> {
+    fn make_username_proof_by_fid_key(fid: u64, name: &Vec<u8>) -> Vec<u8> {
         let mut key = Vec::with_capacity(1 + 4 + 1 + name.len());
 
         key.extend_from_slice(&make_user_key(fid));
@@ -407,10 +407,10 @@ impl UsernameProofStore {
             });
         }
 
-        let fid = read_fid_key(&fid_result.unwrap());
+        let fid = read_fid_key(&fid_result.unwrap(), 0);
         let partial_message = Message {
             data: Some(proto::MessageData {
-                fid: fid as u64,
+                fid,
                 body: Some(Body::UsernameProofBody(proto::UserNameProof {
                     name: name.clone(),
                     ..Default::default()
@@ -425,7 +425,7 @@ impl UsernameProofStore {
 
     pub fn get_username_proofs_by_fid(
         store: &Store<UsernameProofStoreDef>,
-        fid: u32,
+        fid: u64,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
         store.get_adds_by_fid::<fn(&Message) -> bool>(fid, page_options, None)
@@ -434,11 +434,11 @@ impl UsernameProofStore {
     pub fn get_username_proof_by_fid_and_name(
         store: &Store<UsernameProofStoreDef>,
         name: &Vec<u8>,
-        fid: u32,
+        fid: u64,
     ) -> Result<Option<Message>, HubError> {
         let partial_message = Message {
             data: Some(proto::MessageData {
-                fid: fid as u64,
+                fid,
                 body: Some(Body::UsernameProofBody(proto::UserNameProof {
                     name: name.clone(),
                     ..Default::default()

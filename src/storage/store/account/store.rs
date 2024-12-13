@@ -89,7 +89,7 @@ pub trait StoreDef: Send + Sync {
     fn make_add_key(&self, message: &Message) -> Result<Vec<u8>, HubError>;
     fn make_remove_key(&self, message: &Message) -> Result<Vec<u8>, HubError>;
     fn make_compact_state_add_key(&self, message: &Message) -> Result<Vec<u8>, HubError>;
-    fn make_compact_state_prefix(&self, fid: u32) -> Result<Vec<u8>, HubError>;
+    fn make_compact_state_prefix(&self, fid: u64) -> Result<Vec<u8>, HubError>;
 
     fn get_prune_size_limit(&self) -> u32;
 
@@ -148,7 +148,7 @@ pub trait StoreDef: Send + Sync {
                 // Remove message and delete it as part of the RocksDB transaction
                 let maybe_existing_remove = get_message(
                     &db,
-                    message.data.as_ref().unwrap().fid as u32,
+                    message.data.as_ref().unwrap().fid,
                     self.postfix(),
                     &vec_to_u8_24(&remove_ts_hash)?,
                 )?;
@@ -193,7 +193,7 @@ pub trait StoreDef: Send + Sync {
             // Add message and delete it as part of the RocksDB transaction
             let maybe_existing_add = get_message(
                 &db,
-                message.data.as_ref().unwrap().fid as u32,
+                message.data.as_ref().unwrap().fid,
                 self.postfix(),
                 &vec_to_u8_24(&add_ts_hash)?,
             )?;
@@ -342,7 +342,7 @@ impl<T: StoreDef + Clone> Store<T> {
 
         get_message(
             &self.db,
-            partial_message.data.as_ref().unwrap().fid as u32,
+            partial_message.data.as_ref().unwrap().fid,
             self.store_def.postfix(),
             &vec_to_u8_24(&message_ts_hash)?,
         )
@@ -373,7 +373,7 @@ impl<T: StoreDef + Clone> Store<T> {
 
         get_message(
             &self.db,
-            partial_message.data.as_ref().unwrap().fid as u32,
+            partial_message.data.as_ref().unwrap().fid,
             self.store_def.postfix(),
             &vec_to_u8_24(&message_ts_hash)?,
         )
@@ -381,7 +381,7 @@ impl<T: StoreDef + Clone> Store<T> {
 
     pub fn get_adds_by_fid<F>(
         &self,
-        fid: u32,
+        fid: u64,
         page_options: &PageOptions,
         filter: Option<F>,
     ) -> Result<MessagesPage, HubError>
@@ -400,7 +400,7 @@ impl<T: StoreDef + Clone> Store<T> {
 
     pub fn get_removes_by_fid<F>(
         &self,
-        fid: u32,
+        fid: u64,
         page_options: &PageOptions,
         filter: Option<F>,
     ) -> Result<MessagesPage, HubError>
@@ -624,11 +624,11 @@ impl<T: StoreDef + Clone> Store<T> {
     fn read_compact_state_details(
         &self,
         message: &Message,
-    ) -> Result<(u32, u32, Vec<u64>), HubError> {
+    ) -> Result<(u64, u32, Vec<u64>), HubError> {
         if let Some(data) = &message.data {
             if let Some(Body::LinkCompactStateBody(link_compact_body)) = &data.body {
                 Ok((
-                    data.fid as u32,
+                    data.fid,
                     data.timestamp,
                     link_compact_body.target_fids.clone(),
                 ))
@@ -850,7 +850,7 @@ impl<T: StoreDef + Clone> Store<T> {
 
     pub fn prune_messages(
         &self,
-        fid: u32,
+        fid: u64,
         current_count: u32,
         max_count: u32,
         txn: &mut RocksDbTransactionBatch,
@@ -911,7 +911,7 @@ impl<T: StoreDef + Clone> Store<T> {
 
     pub fn revoke_messages_by_signer(
         &self,
-        fid: u32,
+        fid: u64,
         key: &Vec<u8>,
         txn: &mut RocksDbTransactionBatch,
     ) -> Result<Vec<HubEvent>, HubError> {
@@ -951,7 +951,7 @@ impl<T: StoreDef + Clone> Store<T> {
 
     pub fn get_all_messages_by_fid(
         &self,
-        fid: u32,
+        fid: u64,
         start_time: Option<u32>,
         stop_time: Option<u32>,
         page_options: &PageOptions,
@@ -969,7 +969,7 @@ impl<T: StoreDef + Clone> Store<T> {
 
     pub fn get_compact_state_messages_by_fid(
         &self,
-        fid: u32,
+        fid: u64,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
         if !self.store_def.compact_state_type_supported() {

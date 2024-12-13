@@ -20,6 +20,10 @@ pub use proto::ShardHash;
 
 pub const FARCASTER_EPOCH: u64 = 1609459200; // January 1, 2021 UTC
 
+// Fid must be a 32 bit unsigned integer for storage in RocksDB and the trie.
+// However, protobuf uses 64 bit unsigned integers. So, map to the fid at the lowest level
+pub type FidOnDisk = u32;
+
 pub trait ShardId
 where
     Self: Sized + Clone + Send + Sync + 'static,

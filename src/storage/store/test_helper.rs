@@ -17,10 +17,10 @@ use crate::storage::trie::merkle_trie::TrieKey;
 use crate::utils::factory::{events_factory, username_factory};
 use hex::FromHex;
 
-pub const FID_FOR_TEST: u32 = 1234;
+pub const FID_FOR_TEST: u64 = 1234;
 
 #[cfg(test)]
-pub const FID2_FOR_TEST: u32 = 1235;
+pub const FID2_FOR_TEST: u64 = 1235;
 
 pub mod limits {
     use crate::storage::store::stores::Limits;
@@ -194,11 +194,11 @@ pub fn validate_and_commit_state_change(
     chunk
 }
 
-pub fn default_storage_event(fid: u32) -> OnChainEvent {
+pub fn default_storage_event(fid: u64) -> OnChainEvent {
     events_factory::create_rent_event(fid, None, Some(1), false)
 }
 
-pub async fn register_user(fid: u32, signer: SigningKey, engine: &mut ShardEngine) {
+pub async fn register_user(fid: u64, signer: SigningKey, engine: &mut ShardEngine) {
     commit_event(engine, &default_storage_event(fid)).await;
     let id_register_event =
         events_factory::create_id_register_event(fid, proto::IdRegisterEventType::Register);
@@ -210,7 +210,7 @@ pub async fn register_user(fid: u32, signer: SigningKey, engine: &mut ShardEngin
 
 #[cfg(test)]
 pub async fn register_fname(
-    fid: u32,
+    fid: u64,
     username: &String,
     timestamp: Option<u64>,
     engine: &mut ShardEngine,

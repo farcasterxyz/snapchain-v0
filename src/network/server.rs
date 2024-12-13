@@ -330,7 +330,7 @@ impl HubService for MyHubService {
         ];
         let mut num_messages_by_message_type = HashMap::new();
         let mut num_messages = 0;
-        let fid = request.get_ref().fid;
+        let fid = request.get_ref().fid as u64;
         for (_, shard_store) in self.shard_stores.iter() {
             num_messages += shard_store.trie.get_count(
                 &shard_store.db,
@@ -455,7 +455,7 @@ impl HubService for MyHubService {
         let cast_id = request.into_inner();
         let shard_id = self
             .message_router
-            .route_message(cast_id.fid as u32, self.num_shards);
+            .route_message(cast_id.fid, self.num_shards);
         let stores = match self.shard_stores.get(&shard_id) {
             Some(store) => store,
             None => {
@@ -464,7 +464,7 @@ impl HubService for MyHubService {
                 ))
             }
         };
-        let result = CastStore::get_cast_add(&stores.cast_store, cast_id.fid as u32, cast_id.hash);
+        let result = CastStore::get_cast_add(&stores.cast_store, cast_id.fid, cast_id.hash);
         match result {
             Ok(Some(message)) => Ok(Response::new(message)),
             Ok(None) => Err(Status::not_found("cast not found")),
