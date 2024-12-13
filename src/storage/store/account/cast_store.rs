@@ -184,7 +184,7 @@ impl StoreDef for CastStoreDef {
             }
         };
         Ok(Self::make_cast_adds_key(
-            message.data.as_ref().unwrap().fid as u32,
+            message.data.as_ref().unwrap().fid,
             hash,
         ))
     }
@@ -204,7 +204,7 @@ impl StoreDef for CastStoreDef {
         };
 
         Ok(Self::make_cast_removes_key(
-            message.data.as_ref().unwrap().fid as u32,
+            message.data.as_ref().unwrap().fid,
             hash,
         ))
     }
@@ -216,7 +216,7 @@ impl StoreDef for CastStoreDef {
         })
     }
 
-    fn make_compact_state_prefix(&self, _fid: u32) -> Result<Vec<u8>, HubError> {
+    fn make_compact_state_prefix(&self, _fid: u64) -> Result<Vec<u8>, HubError> {
         Err(HubError {
             code: "bad_request.invalid_param".to_string(),
             message: "Cast Store doesn't support compact state".to_string(),
@@ -250,7 +250,7 @@ impl CastStoreDef {
 
         let by_parent_key = Self::make_cast_by_parent_key(
             parent,
-            message.data.as_ref().unwrap().fid as u32,
+            message.data.as_ref().unwrap().fid,
             Some(ts_hash),
         );
 
@@ -260,7 +260,7 @@ impl CastStoreDef {
     // Generates unique keys used to store or fetch CastAdd messages in the byParentKey index
     pub fn make_cast_by_parent_key(
         parent: &Parent,
-        fid: u32,
+        fid: u64,
         ts_hash: Option<&[u8; TS_HASH_LENGTH]>,
     ) -> Vec<u8> {
         let mut key = Vec::with_capacity(1 + 28 + 24 + 4);
@@ -305,8 +305,8 @@ impl CastStoreDef {
         let mut result = Vec::with_capacity(cast_body.mentions.len());
         for &mention in cast_body.mentions.iter() {
             let mention_key = Self::make_cast_by_mention_key(
-                mention as u32,
-                message.data.as_ref().unwrap().fid as u32,
+                mention,
+                message.data.as_ref().unwrap().fid,
                 Some(ts_hash),
             );
             result.push(mention_key);
@@ -315,7 +315,7 @@ impl CastStoreDef {
     }
 
     // Generates unique keys used to store or fetch CastAdd messages in the adds set index
-    pub fn make_cast_adds_key(fid: u32, hash: &Vec<u8>) -> Vec<u8> {
+    pub fn make_cast_adds_key(fid: u64, hash: &Vec<u8>) -> Vec<u8> {
         let mut key = Vec::with_capacity(5 + 1 + 20);
 
         key.extend_from_slice(&make_user_key(fid));
@@ -329,8 +329,8 @@ impl CastStoreDef {
 
     // Generates unique keys used to store or fetch CastAdd messages in the byMention key index
     pub fn make_cast_by_mention_key(
-        mention: u32,
-        fid: u32,
+        mention: u64,
+        fid: u64,
         ts_hash: Option<&[u8; TS_HASH_LENGTH]>,
     ) -> Vec<u8> {
         let mut key = Vec::with_capacity(1 + 4 + 24 + 4);
@@ -346,7 +346,7 @@ impl CastStoreDef {
     }
 
     // Generates unique keys used to store or fetch CastRemove messages in the removes set index
-    pub fn make_cast_removes_key(fid: u32, hash: &Vec<u8>) -> Vec<u8> {
+    pub fn make_cast_removes_key(fid: u64, hash: &Vec<u8>) -> Vec<u8> {
         let mut key = Vec::with_capacity(5 + 1 + 20);
 
         key.extend_from_slice(&make_user_key(fid));
@@ -372,12 +372,12 @@ impl CastStore {
 
     pub fn get_cast_add(
         store: &Store<CastStoreDef>,
-        fid: u32,
+        fid: u64,
         hash: Vec<u8>,
     ) -> Result<Option<Message>, HubError> {
         let partial_message = Message {
             data: Some(message::MessageData {
-                fid: fid as u64,
+                fid,
                 r#type: MessageType::CastAdd.into(),
                 body: Some(message::message_data::Body::CastAddBody(
                     message::CastAddBody {
@@ -395,12 +395,12 @@ impl CastStore {
 
     pub fn get_cast_remove(
         store: &Store<CastStoreDef>,
-        fid: u32,
+        fid: u64,
         hash: Vec<u8>,
     ) -> Result<Option<Message>, HubError> {
         let partial_message = Message {
             data: Some(message::MessageData {
-                fid: fid as u64,
+                fid,
                 r#type: MessageType::CastRemove.into(),
                 body: Some(message::message_data::Body::CastRemoveBody(
                     message::CastRemoveBody {
@@ -417,7 +417,7 @@ impl CastStore {
 
     pub fn get_cast_adds_by_fid(
         store: &Store<CastStoreDef>,
-        fid: u32,
+        fid: u64,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
         store.get_adds_by_fid::<fn(&Message) -> bool>(fid, page_options, None)
@@ -425,7 +425,7 @@ impl CastStore {
 
     pub fn get_cast_removes_by_fid(
         store: &Store<CastStoreDef>,
-        fid: u32,
+        fid: u64,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
         store.get_removes_by_fid::<fn(&Message) -> bool>(fid, page_options, None)
@@ -454,7 +454,7 @@ impl CastStore {
                     .try_into()
                     .unwrap();
                 let message_primary_key =
-                    make_message_primary_key(fid, store.postfix(), Some(&ts_hash));
+                    make_message_primary_key(fid as u64, store.postfix(), Some(&ts_hash));
 
                 message_keys.push(message_primary_key.to_vec());
                 if message_keys.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {
@@ -481,7 +481,7 @@ impl CastStore {
 
     pub fn get_casts_by_mention(
         store: &Store<CastStoreDef>,
-        mention: u32,
+        mention: u64,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
         let prefix = CastStoreDef::make_cast_by_mention_key(mention, 0, None);
@@ -502,7 +502,7 @@ impl CastStore {
                     .try_into()
                     .unwrap();
                 let message_primary_key =
-                    make_message_primary_key(fid, store.postfix(), Some(&ts_hash));
+                    make_message_primary_key(fid as u64, store.postfix(), Some(&ts_hash));
 
                 message_keys.push(message_primary_key.to_vec());
                 if message_keys.len() >= page_options.page_size.unwrap_or(PAGE_SIZE_MAX) {

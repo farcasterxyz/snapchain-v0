@@ -118,7 +118,7 @@ impl StoreDef for VerificationStoreDef {
         let by_address_key = Self::make_verification_by_address_key(address);
         txn.put(
             by_address_key,
-            make_fid_key(message.data.as_ref().unwrap().fid as u32),
+            make_fid_key(message.data.as_ref().unwrap().fid),
         );
 
         Ok(())
@@ -175,7 +175,7 @@ impl StoreDef for VerificationStoreDef {
         };
 
         Ok(Self::make_verification_adds_key(
-            message.data.as_ref().unwrap().fid as u32,
+            message.data.as_ref().unwrap().fid,
             address,
         ))
     }
@@ -193,7 +193,7 @@ impl StoreDef for VerificationStoreDef {
         };
 
         Ok(Self::make_verification_removes_key(
-            message.data.as_ref().unwrap().fid as u32,
+            message.data.as_ref().unwrap().fid,
             address,
         ))
     }
@@ -205,7 +205,7 @@ impl StoreDef for VerificationStoreDef {
         })
     }
 
-    fn make_compact_state_prefix(&self, _fid: u32) -> Result<Vec<u8>, HubError> {
+    fn make_compact_state_prefix(&self, _fid: u64) -> Result<Vec<u8>, HubError> {
         Err(HubError {
             code: "bad_request.invalid_param".to_string(),
             message: "Verification Store doesn't support compact state".to_string(),
@@ -226,7 +226,7 @@ impl VerificationStoreDef {
         key
     }
 
-    pub fn make_verification_adds_key(fid: u32, address: &[u8]) -> Vec<u8> {
+    pub fn make_verification_adds_key(fid: u64, address: &[u8]) -> Vec<u8> {
         let mut key = Vec::with_capacity(33 + 1 + address.len());
         key.extend_from_slice(&make_user_key(fid));
         key.push(UserPostfix::VerificationAdds as u8);
@@ -234,7 +234,7 @@ impl VerificationStoreDef {
         key
     }
 
-    pub fn make_verification_removes_key(fid: u32, address: &[u8]) -> Vec<u8> {
+    pub fn make_verification_removes_key(fid: u64, address: &[u8]) -> Vec<u8> {
         let mut key = Vec::with_capacity(33 + 1 + address.len());
         key.extend_from_slice(&make_user_key(fid));
         key.push(UserPostfix::VerificationRemoves as u8);
@@ -260,12 +260,12 @@ impl VerificationStore {
 
     pub fn get_verification_add(
         store: &Store<VerificationStoreDef>,
-        fid: u32,
+        fid: u64,
         address: &[u8],
     ) -> Result<Option<Message>, HubError> {
         let partial_message = Message {
             data: Some(MessageData {
-                fid: fid as u64,
+                fid,
                 r#type: MessageType::VerificationAddEthAddress.into(),
                 body: Some(Body::VerificationAddAddressBody(
                     VerificationAddAddressBody {
@@ -283,12 +283,12 @@ impl VerificationStore {
 
     pub fn get_verification_remove(
         store: &Store<VerificationStoreDef>,
-        fid: u32,
+        fid: u64,
         address: &[u8],
     ) -> Result<Option<Message>, HubError> {
         let partial_message = Message {
             data: Some(MessageData {
-                fid: fid as u64,
+                fid,
                 r#type: MessageType::VerificationRemove.into(),
                 body: Some(Body::VerificationRemoveBody(VerificationRemoveBody {
                     address: address.to_vec(),
@@ -304,7 +304,7 @@ impl VerificationStore {
 
     pub fn get_verification_adds_by_fid(
         store: &Store<VerificationStoreDef>,
-        fid: u32,
+        fid: u64,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
         store.get_adds_by_fid::<fn(&Message) -> bool>(fid, page_options, None)
@@ -312,7 +312,7 @@ impl VerificationStore {
 
     pub fn get_verification_removes_by_fid(
         store: &Store<VerificationStoreDef>,
-        fid: u32,
+        fid: u64,
         page_options: &PageOptions,
     ) -> Result<MessagesPage, HubError> {
         store.get_removes_by_fid::<fn(&Message) -> bool>(fid, page_options, None)
@@ -346,7 +346,7 @@ impl VerificationStore {
                         return Ok(false); // Ignore non-add messages
                     }
 
-                    let fid = message.data.as_ref().unwrap().fid as u32;
+                    let fid = message.data.as_ref().unwrap().fid;
                     let verification_add =
                         match message.data.as_ref().unwrap().body.as_ref().unwrap() {
                             Body::VerificationAddAddressBody(body) => body,

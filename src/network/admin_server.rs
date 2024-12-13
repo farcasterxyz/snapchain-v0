@@ -129,7 +129,7 @@ impl AdminService for MyAdminService {
 
         let onchain_event = request.into_inner();
 
-        let fid = onchain_event.fid as u32;
+        let fid = onchain_event.fid;
         if fid == 0 {
             return Err(Status::invalid_argument(
                 "no fid or invalid fid".to_string(),

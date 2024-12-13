@@ -25,7 +25,7 @@ impl MessageGenerator for SingleUser {
     fn next(&mut self, seq: u64) -> Vec<NextMessage> {
         let mut messages = Vec::new();
 
-        let fid = self.thread_id * 1_000_000;
+        let fid = (self.thread_id * 1_000_000) as u64;
 
         if !self.initialized {
             self.initialized = true;

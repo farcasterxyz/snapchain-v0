@@ -94,7 +94,7 @@ impl StoreDef for UserDataStoreDef {
         };
 
         let key = Self::make_user_data_adds_key(
-            message.data.as_ref().unwrap().fid as u32,
+            message.data.as_ref().unwrap().fid,
             user_data_body.r#type,
         );
         Ok(key)
@@ -114,7 +114,7 @@ impl StoreDef for UserDataStoreDef {
         })
     }
 
-    fn make_compact_state_prefix(&self, _fid: u32) -> Result<Vec<u8>, HubError> {
+    fn make_compact_state_prefix(&self, _fid: u64) -> Result<Vec<u8>, HubError> {
         Err(HubError {
             code: "bad_request.invalid_param".to_string(),
             message: "UserDataStore doesn't support compact state".to_string(),
@@ -134,7 +134,7 @@ impl UserDataStoreDef {
      * @param dataType type of data being added
      * @returns RocksDB key of the form <root_prefix>:<fid>:<user_postfix>:<dataType?>
      */
-    fn make_user_data_adds_key(fid: u32, data_type: i32) -> Vec<u8> {
+    fn make_user_data_adds_key(fid: u64, data_type: i32) -> Vec<u8> {
         let mut key = Vec::with_capacity(33 + 1 + 1);
 
         key.extend_from_slice(&make_user_key(fid));
@@ -164,12 +164,12 @@ impl UserDataStore {
 
     pub fn get_user_data_add(
         store: &Store<UserDataStoreDef>,
-        fid: u32,
+        fid: u64,
         r#type: i32,
     ) -> Result<Option<proto::Message>, HubError> {
         let partial_message = proto::Message {
             data: Some(MessageData {
-                fid: fid as u64,
+                fid,
                 r#type: MessageType::UserDataAdd as i32,
                 body: Some(Body::UserDataBody(UserDataBody {
                     r#type,
@@ -185,7 +185,7 @@ impl UserDataStore {
 
     pub fn get_user_data_adds_by_fid(
         store: &Store<UserDataStoreDef>,
-        fid: u32,
+        fid: u64,
         page_options: &PageOptions,
         start_time: Option<u32>,
         stop_time: Option<u32>,
@@ -201,7 +201,7 @@ impl UserDataStore {
 
     pub fn get_user_data_by_fid_and_type(
         store: &Store<UserDataStoreDef>,
-        fid: u32,
+        fid: u64,
         user_data_type: proto::UserDataType,
     ) -> Result<proto::Message, HubError> {
         let result = store.get_adds_by_fid(
@@ -239,7 +239,7 @@ impl UserDataStore {
 
     pub fn get_username_proof_by_fid(
         store: &Store<UserDataStoreDef>,
-        fid: u32,
+        fid: u64,
     ) -> Result<Option<UserNameProof>, HubError> {
         get_fname_proof_by_fid(&store.db(), fid)
     }
@@ -250,7 +250,7 @@ impl UserDataStore {
         txn: &mut RocksDbTransactionBatch,
     ) -> Result<HubEvent, HubError> {
         let existing_proof = get_username_proof(&store.db(), &username_proof.name)?;
-        let mut existing_fid: Option<u32> = None;
+        let mut existing_fid: Option<u64> = None;
 
         if existing_proof.is_some() {
             let cmp =
@@ -268,7 +268,7 @@ impl UserDataStore {
                     message: "event conflicts with a more recent UserNameProof".to_string(),
                 });
             }
-            existing_fid = Some(existing_proof.as_ref().unwrap().fid as u32);
+            existing_fid = Some(existing_proof.as_ref().unwrap().fid);
         }
 
         if existing_proof.is_none() && username_proof.fid == 0 {

@@ -948,7 +948,7 @@ mod tests {
         ));
         let proof = engine.get_fname_proof(fname).unwrap();
         assert!(proof.is_some());
-        assert_eq!(proof.unwrap().fid as u32, FID_FOR_TEST);
+        assert_eq!(proof.unwrap().fid, FID_FOR_TEST);
     }
 
     #[tokio::test]

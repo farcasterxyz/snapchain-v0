@@ -132,8 +132,8 @@ mod tests {
         let blocks_store = BlockStore::new(make_db(&blocks_dir, "blocks.db"));
 
         let message_router = Box::new(routing::EvenOddRouterForTest {});
-        assert_eq!(message_router.route_message(SHARD1_FID as u32, 2), 1);
-        assert_eq!(message_router.route_message(SHARD2_FID as u32, 2), 2);
+        assert_eq!(message_router.route_message(SHARD1_FID, 2), 1);
+        assert_eq!(message_router.route_message(SHARD2_FID, 2), 2);
 
         (
             stores.clone(),
@@ -219,21 +219,19 @@ mod tests {
         let (_, _, [mut engine1, mut engine2], service) = make_server();
         let engine1 = &mut engine1;
         let engine2 = &mut engine2;
-        test_helper::register_user(SHARD1_FID as u32, test_helper::default_signer(), engine1).await;
-        test_helper::register_user(SHARD2_FID as u32, test_helper::default_signer(), engine2).await;
-        let cast_add =
-            messages_factory::casts::create_cast_add(SHARD1_FID as u32, "test", None, None);
-        let cast_add2 =
-            messages_factory::casts::create_cast_add(SHARD1_FID as u32, "test2", None, None);
+        test_helper::register_user(SHARD1_FID, test_helper::default_signer(), engine1).await;
+        test_helper::register_user(SHARD2_FID, test_helper::default_signer(), engine2).await;
+        let cast_add = messages_factory::casts::create_cast_add(SHARD1_FID, "test", None, None);
+        let cast_add2 = messages_factory::casts::create_cast_add(SHARD1_FID, "test2", None, None);
         let cast_remove = messages_factory::casts::create_cast_remove(
-            SHARD1_FID as u32,
+            SHARD1_FID,
             &cast_add.hash,
             Some(cast_add.data.as_ref().unwrap().timestamp + 1),
             None,
         );
 
         let another_shard_cast =
-            messages_factory::casts::create_cast_add(SHARD2_FID as u32, "another fid", None, None);
+            messages_factory::casts::create_cast_add(SHARD2_FID, "another fid", None, None);
 
         test_helper::commit_message(engine1, &cast_add).await;
         test_helper::commit_message(engine1, &cast_add2).await;
