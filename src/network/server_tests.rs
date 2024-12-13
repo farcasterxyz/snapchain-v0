@@ -8,22 +8,34 @@ mod tests {
     use crate::mempool::routing::MessageRouter;
     use crate::network::server::MyHubService;
     use crate::proto::hub_service_server::HubService;
-    use crate::proto::SubscribeRequest;
     use crate::proto::{self, HubEvent, HubEventType};
+    use crate::proto::{FidRequest, SubscribeRequest};
     use crate::storage::db::{self, RocksDB, RocksDbTransactionBatch};
     use crate::storage::store::engine::{Senders, ShardEngine};
     use crate::storage::store::stores::{StoreLimits, Stores};
     use crate::storage::store::{test_helper, BlockStore};
     use crate::storage::trie::merkle_trie;
-    use crate::utils::factory::messages_factory;
+    use crate::utils::factory::{events_factory, messages_factory};
     use crate::utils::statsd_wrapper::StatsdClientWrapper;
     use futures::StreamExt;
     use tempfile;
     use tokio::sync::{broadcast, mpsc};
     use tonic::Request;
+    use tracing::warn;
 
     const SHARD1_FID: u64 = 121;
     const SHARD2_FID: u64 = 122;
+
+    impl FidRequest {
+        fn for_fid(fid: u64) -> Request<Self> {
+            Request::new(FidRequest {
+                fid,
+                page_size: None,
+                page_token: None,
+                reverse: None,
+            })
+        }
+    }
 
     async fn subscribe_and_listen(service: &MyHubService, shard_id: u32, num_events_expected: u64) {
         let mut listener = service
@@ -329,5 +341,67 @@ mod tests {
             .get_all_cast_messages_by_fid(Request::new(bulk_casts_request))
             .await;
         test_helper::assert_contains_all_messages(&response, &[&cast_add2, &cast_remove]);
+    }
+
+    #[tokio::test]
+    async fn test_storage_limits() {
+        test_helper::enable_logging();
+        // Works with no storage
+        let (_, _, [mut engine1, _], service) = make_server();
+
+        let response = service
+            .get_current_storage_limits_by_fid(FidRequest::for_fid(SHARD1_FID))
+            .await
+            .unwrap();
+        assert_eq!(response.get_ref().units, 0);
+        assert_eq!(response.get_ref().limits.len(), 6);
+        for limit in response.get_ref().limits.iter() {
+            assert_eq!(limit.limit, 0);
+            assert_eq!(limit.used, 0);
+        }
+        assert_eq!(response.get_ref().unit_details.len(), 2);
+        assert_eq!(response.get_ref().unit_details[0].unit_size, 0);
+        assert_eq!(response.get_ref().unit_details[1].unit_size, 0);
+
+        test_helper::register_user(SHARD1_FID, test_helper::default_signer(), &mut engine1).await;
+        test_helper::commit_event(
+            &mut engine1,
+            &events_factory::create_rent_event(SHARD1_FID, Some(1), None, false),
+        )
+        .await;
+        test_helper::commit_event(
+            &mut engine1,
+            &events_factory::create_rent_event(SHARD1_FID, None, Some(2), false),
+        )
+        .await;
+        test_helper::commit_message(
+            &mut engine1,
+            &messages_factory::casts::create_cast_add(SHARD1_FID, "test", None, None),
+        )
+        .await;
+        test_helper::commit_message(
+            &mut engine1,
+            &messages_factory::casts::create_cast_add(SHARD1_FID, "test2", None, None),
+        )
+        .await;
+        test_helper::commit_message(
+            &mut engine1,
+            &messages_factory::links::create_link_add(SHARD1_FID, "follow", SHARD2_FID, None, None),
+        )
+        .await;
+
+        let response = service
+            .get_current_storage_limits_by_fid(FidRequest::for_fid(SHARD1_FID))
+            .await
+            .unwrap();
+        assert_eq!(response.get_ref().units, 3);
+        assert_eq!(response.get_ref().limits.len(), 6);
+        // for limit in response.get_ref().limits.iter() {
+        //     assert_eq!(limit.limit, 0);
+        //     assert_eq!(limit.used, 0);
+        // }
+        assert_eq!(response.get_ref().unit_details.len(), 2);
+        assert_eq!(response.get_ref().unit_details[0].unit_size, 1);
+        assert_eq!(response.get_ref().unit_details[1].unit_size, 2);
     }
 }
