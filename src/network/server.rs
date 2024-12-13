@@ -14,6 +14,7 @@ use crate::storage::constants::OnChainEventPostfix;
 use crate::storage::constants::RootPrefix;
 use crate::storage::db::PageOptions;
 use crate::storage::db::RocksDbTransactionBatch;
+use crate::storage::store::account::message_bytes_decode;
 use crate::storage::store::account::CastStore;
 use crate::storage::store::engine::{MempoolMessage, Senders, ShardEngine};
 use crate::storage::store::stores::{StoreLimits, Stores};
@@ -183,7 +184,8 @@ impl HubService for MyHubService {
         let hash = request.get_ref().hash.encode_hex::<String>();
         info!(hash, "Received call to [submit_message] RPC");
 
-        let message = request.into_inner();
+        let mut message = request.into_inner();
+        message_bytes_decode(&mut message);
         let response_message = self.submit_message_internal(message, false).await?;
 
         self.statsd_client.time(
