@@ -1,6 +1,6 @@
 use super::{
-    get_many_messages_as_bytes, make_cast_id_key, make_fid_key, make_message_primary_key,
-    make_user_key, read_fid_key, read_ts_hash,
+    get_many_messages, make_cast_id_key, make_fid_key, make_message_primary_key, make_user_key,
+    read_fid_key, read_ts_hash,
     store::{Store, StoreDef},
     MessagesPage, StoreEventHandler, PAGE_SIZE_MAX, TS_HASH_LENGTH,
 };
@@ -416,7 +416,7 @@ impl ReactionStore {
             },
         )?;
 
-        let messages_bytes = get_many_messages_as_bytes(store.db().borrow(), message_keys)?;
+        let messages = get_many_messages(store.db().borrow(), message_keys)?;
         let next_page_token = if last_key.len() > 0 {
             Some(last_key.to_vec())
         } else {
@@ -424,7 +424,7 @@ impl ReactionStore {
         };
 
         Ok(MessagesPage {
-            messages_bytes,
+            messages,
             next_page_token,
         })
     }

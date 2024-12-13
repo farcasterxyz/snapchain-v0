@@ -1,21 +1,27 @@
+use super::rpc_extensions::{AsMessagesResponse, AsSingleMessageResponse};
 use crate::core::error::HubError;
 use crate::mempool::routing;
 use crate::proto;
 use crate::proto::hub_service_server::HubService;
-use crate::proto::GetInfoByFidRequest;
-use crate::proto::GetInfoByFidResponse;
 use crate::proto::GetInfoRequest;
 use crate::proto::GetInfoResponse;
 use crate::proto::HubEvent;
 use crate::proto::MessageType;
 use crate::proto::{Block, CastId, DbStats};
 use crate::proto::{BlocksRequest, ShardChunksRequest, ShardChunksResponse, SubscribeRequest};
+use crate::proto::{FidRequest, FidTimestampRequest, GetInfoByFidRequest};
+use crate::proto::{
+    GetInfoByFidResponse, LinkRequest, LinksByFidRequest, Message, MessagesResponse,
+    ReactionRequest, ReactionsByFidRequest, UserDataRequest, VerificationRequest,
+};
 use crate::storage::constants::OnChainEventPostfix;
 use crate::storage::constants::RootPrefix;
 use crate::storage::db::PageOptions;
 use crate::storage::db::RocksDbTransactionBatch;
 use crate::storage::store::account::message_bytes_decode;
-use crate::storage::store::account::CastStore;
+use crate::storage::store::account::{
+    CastStore, LinkStore, ReactionStore, UserDataStore, VerificationStore,
+};
 use crate::storage::store::engine::{MempoolMessage, Senders, ShardEngine};
 use crate::storage::store::stores::{StoreLimits, Stores};
 use crate::storage::store::BlockStore;
@@ -130,6 +136,16 @@ impl MyHubService {
         }
 
         Ok(message)
+    }
+
+    fn get_stores_for(&self, fid: u64) -> Result<&Stores, Status> {
+        let shard_id = self.message_router.route_message(fid, self.num_shards);
+        match self.shard_stores.get(&shard_id) {
+            Some(store) => Ok(store),
+            None => Err(Status::invalid_argument(
+                "no shard store for fid".to_string(),
+            )),
+        }
     }
 }
 
@@ -455,22 +471,224 @@ impl HubService for MyHubService {
 
     async fn get_cast(&self, request: Request<CastId>) -> Result<Response<proto::Message>, Status> {
         let cast_id = request.into_inner();
-        let shard_id = self
-            .message_router
-            .route_message(cast_id.fid, self.num_shards);
-        let stores = match self.shard_stores.get(&shard_id) {
-            Some(store) => store,
-            None => {
-                return Err(Status::invalid_argument(
-                    "no shard store for fid".to_string(),
-                ))
+        let stores = self.get_stores_for(cast_id.fid)?;
+        CastStore::get_cast_add(&stores.cast_store, cast_id.fid, cast_id.hash).as_response()
+    }
+
+    async fn get_casts_by_fid(
+        &self,
+        request: Request<FidRequest>,
+    ) -> Result<Response<proto::MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let options = request.page_options();
+        CastStore::get_cast_adds_by_fid(&stores.cast_store, request.fid, &options).as_response()
+    }
+
+    async fn get_all_cast_messages_by_fid(
+        &self,
+        request: Request<FidTimestampRequest>,
+    ) -> Result<Response<proto::MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let (start_ts, stop_ts) = request.timestamps();
+        stores
+            .cast_store
+            .get_all_messages_by_fid(request.fid, start_ts, stop_ts, &request.page_options())
+            .as_response()
+    }
+
+    async fn get_reaction(
+        &self,
+        request: Request<ReactionRequest>,
+    ) -> Result<Response<Message>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let target = match request.target {
+            Some(proto::reaction_request::Target::TargetCastId(cast_id)) => {
+                Some(proto::reaction_body::Target::TargetCastId(cast_id))
             }
+            Some(proto::reaction_request::Target::TargetUrl(url)) => {
+                Some(proto::reaction_body::Target::TargetUrl(url))
+            }
+            None => None,
         };
-        let result = CastStore::get_cast_add(&stores.cast_store, cast_id.fid, cast_id.hash);
-        match result {
-            Ok(Some(message)) => Ok(Response::new(message)),
-            Ok(None) => Err(Status::not_found("cast not found")),
-            Err(err) => Err(Status::internal(err.to_string())),
-        }
+        ReactionStore::get_reaction_add(
+            &stores.reaction_store,
+            request.fid,
+            request.reaction_type,
+            target,
+        )
+        .as_response()
+    }
+
+    async fn get_reactions_by_fid(
+        &self,
+        request: Request<ReactionsByFidRequest>,
+    ) -> Result<Response<MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let options = request.page_options();
+        ReactionStore::get_reaction_adds_by_fid(
+            &stores.reaction_store,
+            request.fid,
+            request.reaction_type.unwrap_or(0),
+            &options,
+        )
+        .as_response()
+    }
+
+    async fn get_all_reaction_messages_by_fid(
+        &self,
+        request: Request<FidTimestampRequest>,
+    ) -> Result<Response<proto::MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let (start_ts, stop_ts) = request.timestamps();
+        stores
+            .reaction_store
+            .get_all_messages_by_fid(request.fid, start_ts, stop_ts, &request.page_options())
+            .as_response()
+    }
+
+    async fn get_link(&self, request: Request<LinkRequest>) -> Result<Response<Message>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let target = match request.target {
+            Some(proto::link_request::Target::TargetFid(fid)) => {
+                Some(proto::link_body::Target::TargetFid(fid))
+            }
+            None => None,
+        };
+        LinkStore::get_link_add(&stores.link_store, request.fid, request.link_type, target)
+            .as_response()
+    }
+
+    async fn get_links_by_fid(
+        &self,
+        request: Request<LinksByFidRequest>,
+    ) -> Result<Response<MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let options = request.page_options();
+        LinkStore::get_link_adds_by_fid(
+            &stores.link_store,
+            request.fid,
+            request.link_type.unwrap_or("".to_string()),
+            &options,
+        )
+        .as_response()
+    }
+
+    async fn get_all_link_messages_by_fid(
+        &self,
+        request: Request<FidTimestampRequest>,
+    ) -> Result<Response<MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let (start_ts, stop_ts) = request.timestamps();
+        stores
+            .link_store
+            .get_all_messages_by_fid(request.fid, start_ts, stop_ts, &request.page_options())
+            .as_response()
+    }
+
+    async fn get_user_data(
+        &self,
+        request: Request<UserDataRequest>,
+    ) -> Result<Response<Message>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let user_data_type = proto::UserDataType::try_from(request.user_data_type)
+            .map_err(|_| Status::invalid_argument("Invalid user data type"))?;
+        UserDataStore::get_user_data_by_fid_and_type(
+            &stores.user_data_store,
+            request.fid,
+            user_data_type,
+        )
+        .as_response()
+    }
+
+    async fn get_user_data_by_fid(
+        &self,
+        request: Request<FidRequest>,
+    ) -> Result<Response<MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let options = request.page_options();
+        UserDataStore::get_user_data_adds_by_fid(
+            &stores.user_data_store,
+            request.fid,
+            &options,
+            None,
+            None,
+        )
+        .as_response()
+    }
+
+    async fn get_all_user_data_messages_by_fid(
+        &self,
+        request: Request<FidTimestampRequest>,
+    ) -> Result<Response<MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let (start_ts, stop_ts) = request.timestamps();
+        stores
+            .user_data_store
+            .get_all_messages_by_fid(request.fid, start_ts, stop_ts, &request.page_options())
+            .as_response()
+    }
+
+    async fn get_verification(
+        &self,
+        request: Request<VerificationRequest>,
+    ) -> Result<Response<Message>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        VerificationStore::get_verification_add(
+            &stores.verification_store,
+            request.fid,
+            &request.address,
+        )
+        .as_response()
+    }
+
+    async fn get_verifications_by_fid(
+        &self,
+        request: Request<FidRequest>,
+    ) -> Result<Response<MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let options = request.page_options();
+        VerificationStore::get_verification_adds_by_fid(
+            &stores.verification_store,
+            request.fid,
+            &options,
+        )
+        .as_response()
+    }
+
+    async fn get_all_verification_messages_by_fid(
+        &self,
+        request: Request<FidTimestampRequest>,
+    ) -> Result<Response<MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let (start_ts, stop_ts) = request.timestamps();
+        stores
+            .verification_store
+            .get_all_messages_by_fid(request.fid, start_ts, stop_ts, &request.page_options())
+            .as_response()
+    }
+
+    async fn get_link_compact_state_message_by_fid(
+        &self,
+        request: Request<FidRequest>,
+    ) -> Result<Response<MessagesResponse>, Status> {
+        let request = request.into_inner();
+        let stores = self.get_stores_for(request.fid)?;
+        let options = request.page_options();
+        LinkStore::get_link_compact_state_message_by_fid(&stores.link_store, request.fid, &options)
+            .as_response()
     }
 }

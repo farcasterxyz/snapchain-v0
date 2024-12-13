@@ -1,6 +1,6 @@
 use super::{
-    get_many_messages_as_bytes, make_cast_id_key, make_fid_key, make_message_primary_key,
-    make_user_key, read_fid_key, read_ts_hash,
+    get_many_messages, make_cast_id_key, make_fid_key, make_message_primary_key, make_user_key,
+    read_fid_key, read_ts_hash,
     store::{Store, StoreDef},
     MessagesPage, StoreEventHandler, HASH_LENGTH, PAGE_SIZE_MAX, TRUE_VALUE, TS_HASH_LENGTH,
 };
@@ -464,7 +464,7 @@ impl CastStore {
             },
         )?;
 
-        let messages_bytes = get_many_messages_as_bytes(store.db().borrow(), message_keys)?;
+        let messages = get_many_messages(store.db().borrow(), message_keys)?;
         let next_page_token = if last_key.len() > 0 {
             Some(last_key[prefix.len()..].to_vec())
         } else {
@@ -472,7 +472,7 @@ impl CastStore {
         };
 
         Ok(MessagesPage {
-            messages_bytes,
+            messages,
             next_page_token,
         })
     }
@@ -510,7 +510,7 @@ impl CastStore {
             },
         )?;
 
-        let messages_bytes = get_many_messages_as_bytes(store.db().borrow(), message_keys)?;
+        let messages_bytes = get_many_messages(store.db().borrow(), message_keys)?;
         let next_page_token = if last_key.len() > 0 {
             Some(last_key[prefix.len()..].to_vec())
         } else {
@@ -518,7 +518,7 @@ impl CastStore {
         };
 
         Ok(MessagesPage {
-            messages_bytes,
+            messages: messages_bytes,
             next_page_token,
         })
     }

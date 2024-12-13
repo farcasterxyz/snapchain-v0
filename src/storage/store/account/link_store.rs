@@ -1,7 +1,7 @@
 use tracing::warn;
 
 use super::{
-    get_many_messages_as_bytes, get_message, make_fid_key, make_message_primary_key, make_user_key,
+    get_many_messages, get_message, make_fid_key, make_message_primary_key, make_user_key,
     read_fid_key, read_ts_hash,
     store::{Store, StoreDef},
     MessagesPage, StoreEventHandler, PAGE_SIZE_MAX, TS_HASH_LENGTH,
@@ -179,7 +179,7 @@ impl LinkStore {
             },
         )?;
 
-        let messages_bytes = get_many_messages_as_bytes(store.db().borrow(), message_keys)?;
+        let messages = get_many_messages(store.db().borrow(), message_keys)?;
         let next_page_token = if last_key.len() > 0 {
             Some(last_key.to_vec())
         } else {
@@ -187,7 +187,7 @@ impl LinkStore {
         };
 
         Ok(MessagesPage {
-            messages_bytes,
+            messages,
             next_page_token,
         })
     }

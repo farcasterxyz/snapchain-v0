@@ -7,15 +7,20 @@ use ed25519_dalek::{SecretKey, SigningKey};
 use std::sync::Arc;
 use tempfile;
 
+use crate::core::error::HubError;
 use crate::proto;
-use crate::proto::OnChainEvent;
 use crate::proto::{Height, ShardChunk, ShardHeader, Transaction};
+use crate::proto::{MessagesResponse, OnChainEvent};
+use crate::storage::store::account::MessagesPage;
 use crate::storage::store::engine::{MempoolMessage, ShardStateChange};
 #[allow(unused_imports)] // Used by cfg(test)
 use crate::storage::trie::merkle_trie::TrieKey;
+use crate::storage::util::bytes_compare;
 #[allow(unused_imports)]
 use crate::utils::factory::{events_factory, username_factory};
 use hex::FromHex;
+use tonic::{Response, Status};
+use tracing_subscriber::EnvFilter;
 
 pub const FID_FOR_TEST: u64 = 1234;
 
@@ -232,4 +237,83 @@ pub fn default_signer() -> SigningKey {
         &SecretKey::from_hex("1000000000000000000000000000000000000000000000000000000000000000")
             .unwrap(),
     )
+}
+
+#[allow(dead_code)]
+pub fn enable_logging() {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .try_init();
+}
+
+#[allow(dead_code)]
+pub fn assert_contains_message(
+    container: &dyn MessagesContainer,
+    expected_message: &proto::Message,
+) {
+    assert!(container
+        .messages()
+        .iter()
+        .find(|m| bytes_compare(&m.hash, &expected_message.hash) == 0)
+        .is_some());
+}
+
+#[allow(dead_code)]
+pub fn assert_does_not_contain_message(
+    container: &dyn MessagesContainer,
+    expected_message: &proto::Message,
+) {
+    assert!(container
+        .messages()
+        .iter()
+        .find(|m| bytes_compare(&m.hash, &expected_message.hash) == 0)
+        .is_none());
+}
+
+#[allow(dead_code)]
+pub fn assert_contains_all_messages(
+    container: &dyn MessagesContainer,
+    expected_messages: &[&proto::Message],
+) {
+    assert_eq!(container.messages().len(), expected_messages.len());
+    for message in expected_messages {
+        assert_contains_message(container.messages(), message);
+    }
+}
+
+#[allow(dead_code)]
+pub fn assert_messages_empty(messages: &dyn MessagesContainer) {
+    assert_eq!(messages.messages().len(), 0);
+}
+
+#[allow(dead_code)]
+pub trait MessagesContainer {
+    fn messages(&self) -> &Vec<proto::Message>;
+}
+
+impl MessagesContainer for MessagesPage {
+    fn messages(&self) -> &Vec<proto::Message> {
+        &self.messages
+    }
+}
+
+impl MessagesContainer for Result<MessagesPage, HubError> {
+    fn messages(&self) -> &Vec<proto::Message> {
+        assert!(self.is_ok());
+        &self.as_ref().unwrap().messages
+    }
+}
+
+impl MessagesContainer for Result<Response<MessagesResponse>, Status> {
+    fn messages(&self) -> &Vec<proto::Message> {
+        assert!(self.is_ok());
+        &self.as_ref().unwrap().get_ref().messages
+    }
+}
+
+impl MessagesContainer for Vec<proto::Message> {
+    fn messages(&self) -> &Vec<proto::Message> {
+        self
+    }
 }

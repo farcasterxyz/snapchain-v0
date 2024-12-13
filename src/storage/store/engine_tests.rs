@@ -13,17 +13,6 @@ mod tests {
     use crate::storage::trie::merkle_trie::TrieKey;
     use crate::utils::factory::{self, events_factory, messages_factory, time, username_factory};
     use ed25519_dalek::SigningKey;
-    use prost::Message as _;
-    use tracing_subscriber::EnvFilter;
-
-    #[allow(dead_code)]
-    fn enable_logging() {
-        let env_filter =
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(env_filter)
-            .try_init();
-    }
 
     fn from_hex(s: &str) -> Vec<u8> {
         hex::decode(s).unwrap()
@@ -222,7 +211,7 @@ mod tests {
 
         // propose does not write to the store
         let casts_result = engine.get_casts_by_fid(msg1.fid());
-        assert_eq!(0, casts_result.unwrap().messages_bytes.len());
+        test_helper::assert_messages_empty(&casts_result);
 
         // No events are generated either
         let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
@@ -236,16 +225,13 @@ mod tests {
 
         // validate does not write to the store
         let casts_result = engine.get_casts_by_fid(msg1.fid());
-        assert_eq!(0, casts_result.unwrap().messages_bytes.len());
+        test_helper::assert_messages_empty(&casts_result);
 
         test_helper::validate_and_commit_state_change(&mut engine, &state_change);
 
         // commit does write to the store
         let casts_result = engine.get_casts_by_fid(msg1.fid());
-        let messages = casts_result.unwrap().messages_bytes;
-        assert_eq!(1, messages.len());
-        let decoded = proto::Message::decode(&*messages[0]).unwrap();
-        assert_eq!(to_hex(&msg1.hash), to_hex(&decoded.hash));
+        test_helper::assert_contains_all_messages(&casts_result, &[&msg1]);
 
         // And events are generated
         let events = HubEvent::get_events(engine.db.clone(), 0, None, None).unwrap();
@@ -271,10 +257,7 @@ mod tests {
 
         // The cast is present in the store and the trie
         let casts_result = engine.get_casts_by_fid(cast.fid());
-        let messages = casts_result.unwrap().messages_bytes;
-        assert_eq!(1, messages.len());
-        let decoded = proto::Message::decode(&*messages[0]).unwrap();
-        assert_eq!(to_hex(&cast.hash), to_hex(&decoded.hash));
+        test_helper::assert_contains_all_messages(&casts_result.unwrap(), &[&cast]);
         assert_eq!(message_exists_in_trie(&mut engine, &cast), true);
 
         // Delete the cast
@@ -289,7 +272,7 @@ mod tests {
 
         // The cast is not present in the store
         let casts_result = engine.get_casts_by_fid(FID_FOR_TEST);
-        let messages = casts_result.unwrap().messages_bytes;
+        let messages = casts_result.unwrap().messages;
         assert_eq!(0, messages.len());
 
         // The cast is not present in the trie, but the remove message is
@@ -315,7 +298,7 @@ mod tests {
         commit_message(&mut engine, &link_add).await;
 
         let link_result = engine.get_links_by_fid(FID_FOR_TEST);
-        assert_eq!(1, link_result.unwrap().messages_bytes.len());
+        assert_eq!(1, link_result.unwrap().messages.len());
 
         let link_remove = messages_factory::links::create_link_remove(
             FID_FOR_TEST,
@@ -328,7 +311,7 @@ mod tests {
         commit_message(&mut engine, &link_remove).await;
 
         let link_result = engine.get_links_by_fid(FID_FOR_TEST);
-        assert_eq!(0, link_result.unwrap().messages_bytes.len());
+        assert_eq!(0, link_result.unwrap().messages.len());
 
         let link_compact_state = messages_factory::links::create_link_compact_state(
             FID_FOR_TEST,
@@ -341,7 +324,7 @@ mod tests {
         commit_message(&mut engine, &link_compact_state).await;
 
         let link_result = engine.get_link_compact_state_messages_by_fid(FID_FOR_TEST);
-        assert_eq!(1, link_result.unwrap().messages_bytes.len());
+        assert_eq!(1, link_result.unwrap().messages.len());
     }
 
     #[tokio::test]
@@ -362,7 +345,7 @@ mod tests {
         commit_message(&mut engine, &reaction_add).await;
 
         let reaction_result = engine.get_reactions_by_fid(FID_FOR_TEST);
-        assert_eq!(1, reaction_result.unwrap().messages_bytes.len());
+        assert_eq!(1, reaction_result.unwrap().messages.len());
 
         let reaction_remove = messages_factory::reactions::create_reaction_remove(
             FID_FOR_TEST,
@@ -375,7 +358,7 @@ mod tests {
         commit_message(&mut engine, &reaction_remove).await;
 
         let reaction_result = engine.get_reactions_by_fid(FID_FOR_TEST);
-        assert_eq!(0, reaction_result.unwrap().messages_bytes.len());
+        assert_eq!(0, reaction_result.unwrap().messages.len());
     }
 
     #[tokio::test]
@@ -395,7 +378,7 @@ mod tests {
         commit_message(&mut engine, &user_data_add).await;
 
         let user_data_result = engine.get_user_data_by_fid(FID_FOR_TEST);
-        assert_eq!(1, user_data_result.unwrap().messages_bytes.len());
+        assert_eq!(1, user_data_result.unwrap().messages.len());
     }
 
     #[tokio::test]
@@ -418,7 +401,7 @@ mod tests {
         commit_message(&mut engine, &verification_add).await;
 
         let verification_result = engine.get_verifications_by_fid(FID_FOR_TEST);
-        assert_eq!(1, verification_result.unwrap().messages_bytes.len());
+        assert_eq!(1, verification_result.unwrap().messages.len());
 
         let verification_remove = messages_factory::verifications::create_verification_remove(
             FID_FOR_TEST,
@@ -430,7 +413,7 @@ mod tests {
         commit_message(&mut engine, &verification_remove).await;
 
         let verification_result = engine.get_verifications_by_fid(FID_FOR_TEST);
-        assert_eq!(0, verification_result.unwrap().messages_bytes.len());
+        assert_eq!(0, verification_result.unwrap().messages.len());
     }
 
     #[tokio::test]
@@ -460,14 +443,14 @@ mod tests {
             let username_proof_result = engine.get_username_proofs_by_fid(FID2_FOR_TEST);
             assert!(username_proof_result.is_ok());
 
-            let messages_bytes_len = username_proof_result.unwrap().messages_bytes.len();
+            let messages_bytes_len = username_proof_result.unwrap().messages.len();
             assert_eq!(0, messages_bytes_len);
         }
         {
             let username_proof_result = engine.get_username_proofs_by_fid(FID_FOR_TEST);
             assert!(username_proof_result.is_ok());
 
-            let messages_bytes_len = username_proof_result.unwrap().messages_bytes.len();
+            let messages_bytes_len = username_proof_result.unwrap().messages.len();
             assert_eq!(1, messages_bytes_len);
         }
 
@@ -887,9 +870,9 @@ mod tests {
 
         // All 4 messages exist
         let messages = engine.get_casts_by_fid(FID_FOR_TEST).unwrap();
-        assert_eq!(3, messages.messages_bytes.len());
+        assert_eq!(3, messages.messages.len());
         let messages = engine.get_casts_by_fid(FID_FOR_TEST + 1).unwrap();
-        assert_eq!(1, messages.messages_bytes.len());
+        assert_eq!(1, messages.messages.len());
 
         // Revoke a single signer
         let revoke_event = events_factory::create_signer_event(
@@ -906,11 +889,11 @@ mod tests {
 
         // Only the messages from the revoked signer are deleted
         let messages = engine.get_casts_by_fid(FID_FOR_TEST).unwrap();
-        assert_eq!(1, messages.messages_bytes.len());
+        assert_eq!(1, messages.messages.len());
 
         // Different Fid with the same signer is unaffected
         let messages = engine.get_casts_by_fid(FID_FOR_TEST + 1).unwrap();
-        assert_eq!(1, messages.messages_bytes.len());
+        assert_eq!(1, messages.messages.len());
     }
 
     #[tokio::test]
@@ -976,7 +959,7 @@ mod tests {
         assert!(message_exists_in_trie(&mut engine, &fid_username_msg),);
 
         let original_fid_user_data = engine.get_user_data_by_fid(FID_FOR_TEST).unwrap();
-        assert_eq!(original_fid_user_data.messages_bytes.len(), 1);
+        assert_eq!(original_fid_user_data.messages.len(), 1);
 
         // Now transfer the fname, and the username userdata add should be revoked
         let transfer = username_factory::create_transfer(
@@ -1010,7 +993,7 @@ mod tests {
         ));
 
         let original_fid_user_data = engine.get_user_data_by_fid(FID_FOR_TEST).unwrap();
-        assert_eq!(original_fid_user_data.messages_bytes.len(), 0);
+        assert_eq!(original_fid_user_data.messages.len(), 0);
     }
 
     #[tokio::test]
@@ -1032,7 +1015,7 @@ mod tests {
         .await;
         assert_commit_fails(&mut engine, &default_message("msg1")).await;
         let messages = engine.get_casts_by_fid(FID_FOR_TEST).unwrap();
-        assert_eq!(0, messages.messages_bytes.len());
+        assert_eq!(0, messages.messages.len());
         let id_register = events_factory::create_id_register_event(
             FID_FOR_TEST,
             proto::IdRegisterEventType::Register,
@@ -1040,7 +1023,7 @@ mod tests {
         test_helper::commit_event(&mut engine, &id_register).await;
         commit_message(&mut engine, &default_message("msg1")).await;
         let messages = engine.get_casts_by_fid(FID_FOR_TEST).unwrap();
-        assert_eq!(1, messages.messages_bytes.len());
+        assert_eq!(1, messages.messages.len());
     }
 
     #[tokio::test]
@@ -1061,7 +1044,7 @@ mod tests {
         .await;
         assert_commit_fails(&mut engine, &default_message("msg1")).await;
         let messages = engine.get_casts_by_fid(FID_FOR_TEST).unwrap();
-        assert_eq!(0, messages.messages_bytes.len());
+        assert_eq!(0, messages.messages.len());
         test_helper::commit_event(
             &mut engine,
             &events_factory::create_signer_event(
@@ -1073,7 +1056,7 @@ mod tests {
         .await;
         commit_message(&mut engine, &default_message("msg1")).await;
         let messages = engine.get_casts_by_fid(FID_FOR_TEST).unwrap();
-        assert_eq!(1, messages.messages_bytes.len());
+        assert_eq!(1, messages.messages.len());
     }
 
     #[tokio::test]
