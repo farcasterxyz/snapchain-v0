@@ -236,10 +236,16 @@ impl ShardEngine {
         self.count("prepare_proposal.recv_messages", messages.len() as u64);
 
         let mut snapchain_txns = self.create_transactions_from_mempool(messages)?;
+        let mut validation_error_count = 0;
         for snapchain_txn in &mut snapchain_txns {
-            let (account_root, _events, _) =
-                self.replay_snapchain_txn(trie_ctx, &snapchain_txn, txn_batch)?;
+            let (account_root, _events, validation_errors) = self.replay_snapchain_txn(
+                trie_ctx,
+                &snapchain_txn,
+                txn_batch,
+                "prepare_proposal".to_string(),
+            )?;
             snapchain_txn.account_root = account_root;
+            validation_error_count += validation_errors.len();
         }
 
         let count = Self::txn_counts(&snapchain_txns);
@@ -247,6 +253,10 @@ impl ShardEngine {
         self.count("prepare_proposal.transactions", count.transactions);
         self.count("prepare_proposal.user_messages", count.user_messages);
         self.count("prepare_proposal.system_messages", count.system_messages);
+        self.count(
+            "prepare_proposal.validation_errors",
+            validation_error_count as u64,
+        );
 
         let new_root_hash = self.stores.trie.root_hash()?;
         let result = ShardStateChange {
@@ -341,11 +351,12 @@ impl ShardEngine {
         txn_batch: &mut RocksDbTransactionBatch,
         transactions: &[Transaction],
         shard_root: &[u8],
+        source: String,
     ) -> Result<Vec<HubEvent>, EngineError> {
         let mut events = vec![];
         for snapchain_txn in transactions {
             let (account_root, txn_events, _) =
-                self.replay_snapchain_txn(trie_ctx, snapchain_txn, txn_batch)?;
+                self.replay_snapchain_txn(trie_ctx, snapchain_txn, txn_batch, source.clone())?;
             // Reject early if account roots fail to match (shard roots will definitely fail)
             if &account_root != &snapchain_txn.account_root {
                 warn!(
@@ -379,6 +390,7 @@ impl ShardEngine {
         trie_ctx: &merkle_trie::Context,
         snapchain_txn: &Transaction,
         txn_batch: &mut RocksDbTransactionBatch,
+        source: String,
     ) -> Result<(Vec<u8>, Vec<HubEvent>, Vec<MessageValidationError>), EngineError> {
         let total_user_messages = snapchain_txn.user_messages.len();
         let total_system_messages = snapchain_txn.system_messages.len();
@@ -576,8 +588,10 @@ impl ShardEngine {
             messages_merged = merged_messages_count,
             messages_pruned = pruned_messages_count,
             messages_revoked = revoked_messages_count,
+            validation_errors = validation_errors.len(),
             new_account_root = hex::encode(&account_root),
             tx_account_root = hex::encode(&snapchain_txn.account_root),
+            source,
             "Replayed transaction"
         );
 
@@ -893,6 +907,7 @@ impl ShardEngine {
             &mut txn,
             transactions,
             shard_root,
+            "validate_state_change".to_string(),
         ) {
             error!("State change validation failed: {}", err);
             result = false;
@@ -988,7 +1003,13 @@ impl ShardEngine {
         };
         let trie_ctx = &merkle_trie::Context::with_callback(count_callback);
 
-        match self.replay_proposal(trie_ctx, &mut txn, transactions, shard_root) {
+        match self.replay_proposal(
+            trie_ctx,
+            &mut txn,
+            transactions,
+            shard_root,
+            "commit".to_string(),
+        ) {
             Err(err) => {
                 error!("State change commit failed: {}", err);
                 panic!("State change commit failed: {}", err);
@@ -1007,8 +1028,12 @@ impl ShardEngine {
             system_messages: vec![],
             user_messages: vec![message.clone()],
         };
-        let result =
-            self.replay_snapchain_txn(&merkle_trie::Context::new(), &snapchain_txn, &mut txn);
+        let result = self.replay_snapchain_txn(
+            &merkle_trie::Context::new(),
+            &snapchain_txn,
+            &mut txn,
+            "simulate_message".to_string(),
+        );
 
         match result {
             Ok((_, _, errors)) => {
