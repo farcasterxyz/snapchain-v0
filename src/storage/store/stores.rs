@@ -248,9 +248,18 @@ impl Stores {
             let max_messages =
                 self.store_limits
                     .max_messages(slot.units, slot.legacy_units, store_type);
+            let name = match store_type {
+                StoreType::None => "NONE",
+                StoreType::Casts => "CASTS",
+                StoreType::Links => "LINKS",
+                StoreType::Reactions => "REACTIONS",
+                StoreType::UserData => "USER_DATA",
+                StoreType::Verifications => "VERIFICATIONS",
+                StoreType::UsernameProofs => "USERNAME_PROOFS",
+            };
             let limit = StorageLimit {
                 store_type: store_type.try_into().unwrap(),
-                name: store_type.as_str_name().to_string(),
+                name: name.to_string(),
                 limit: max_messages as u64,
                 used: used as u64,
                 earliest_timestamp: 0, // Deprecate?
