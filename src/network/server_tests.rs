@@ -426,7 +426,7 @@ mod tests {
             (configured_limits.limits.casts * 2) + (configured_limits.legacy_limits.casts)
         );
         assert_eq!(casts_limit.used, 2); // Cast remove counts as 1
-        assert_eq!(casts_limit.name, "STORE_TYPE_CASTS");
+        assert_eq!(casts_limit.name, "CASTS");
 
         let links_limit = response
             .get_ref()
