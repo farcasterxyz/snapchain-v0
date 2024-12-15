@@ -42,10 +42,13 @@ fn dfs_print_node(
         child_hashes_str += &format!("{k}:{} ", hex::encode(v));
     }
 
+    let last_char = prefix.last().copied().unwrap_or_default();
+
     println!(
-        "{} d={} prefix=0x{} key=[{}] hash={} items={} child_hashes={}",
+        "{}d={} 0x{:02x} prefix=0x{} key=[{}] hash={} items={} child_hashes={}",
         indent,
         depth,
+        last_char,
         hex::encode(prefix),
         key_str,
         hex::encode(node.hash()),

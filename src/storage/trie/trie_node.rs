@@ -764,19 +764,24 @@ impl TrieNode {
         }
 
         println!(
-            "{}0x{} [{}]: {} {}",
+            "{}d={} 0x{} [{}]: {} {}",
             indent,
+            depth,
             hex::encode(vec![prefix]),
             key,
             hex::encode(self.hash.as_slice()),
             child_hashes
         );
 
-        for (char, child) in self.children.iter() {
-            match child {
-                TrieNodeType::Node(child_node) => child_node.print(*char, depth + 1)?,
+        // Collect child chars and sort them
+        let mut sorted_children: Vec<_> = self.children.keys().copied().collect();
+        sorted_children.sort();
+
+        for char in sorted_children {
+            match self.children.get(&char).unwrap() {
+                TrieNodeType::Node(child_node) => child_node.print(char, depth + 1)?,
                 TrieNodeType::Serialized(_) => {
-                    println!("{}  {} (serialized):", indent, *char as char);
+                    println!("{}  {} (serialized):", indent, char as char);
                 }
             }
         }
