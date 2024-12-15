@@ -69,7 +69,7 @@ fn dfs_print_node(
         child_prefix.push(c);
 
         match node.children().get(&c).unwrap() {
-            trie::trie_node::TrieNodeType::Node(child_node) => {
+            trie::trie_node::TrieNodeType::Node(_c) => {
                 panic!("shouldn't ever have a regular node");
             }
             trie::trie_node::TrieNodeType::Serialized(_) => {

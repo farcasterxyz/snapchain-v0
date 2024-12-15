@@ -37,13 +37,24 @@ mod tests {
 
         let mut txn_batch = RocksDbTransactionBatch::new();
         t.insert(ctx, db, &mut txn_batch, vec![vec![0x12, 0x34, 0xaa, 0xFF]])?;
+
+        t.print()?;
+        t.show_hashes();
+        println!("root hash = {}", hex::encode(t.root_hash()?));
+        db.commit(txn_batch).unwrap();
+        t.reload(db)?;
+        inspect_root_node(db)?;
+        print_entire_trie_dfs(db)?;
+
+        println!("\n ================================== \n");
+
+        let mut txn_batch = RocksDbTransactionBatch::new();
         t.insert(ctx, db, &mut txn_batch, vec![vec![0x12, 0x35, 0xaa, 0xFF]])?;
         t.insert(ctx, db, &mut txn_batch, vec![vec![0x13, 0x55, 0xaa, 0xFF]])?;
 
         t.print()?;
         t.show_hashes();
         println!("root hash = {}", hex::encode(t.root_hash()?));
-
         db.commit(txn_batch).unwrap();
         t.reload(db)?;
 
