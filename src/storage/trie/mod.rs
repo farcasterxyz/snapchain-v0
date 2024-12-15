@@ -11,3 +11,4 @@ mod merkle_trie_tests;
 
 #[cfg(test)]
 mod commit_rollback_tests;
+mod db_inspector;
