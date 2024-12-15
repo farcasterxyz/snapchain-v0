@@ -602,7 +602,16 @@ impl TrieNode {
         prefix: &[u8],
     ) -> Result<(), TrieError> {
         if prefix.len() > 0 {
-            child_hashes_.insert(prefix[prefix.len() - 1], self.hash());
+            let char = prefix[prefix.len() - 1];
+            let hash = self.hash();
+
+            if hash.is_empty() {
+                // println!("update_hash: remove char=0x{:02x} prefix={} hash={}", char, hex::encode(prefix), hex::encode(&hash));
+                child_hashes_.remove(&char);
+            } else {
+                // println!("update_hash: insert char=0x{:02x} prefix={} hash={}", char, hex::encode(prefix), hex::encode(&hash));
+                child_hashes_.insert(char, hash);
+            }
         }
 
         Ok(())

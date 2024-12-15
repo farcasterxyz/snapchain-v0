@@ -35,6 +35,7 @@ mod tests {
         t.reload(db)?;
         inspect_root_node(db)?;
         print_entire_trie_dfs(db)?;
+        println!("\n ================================== \n");
 
         Ok(())
     }
@@ -42,21 +43,17 @@ mod tests {
     #[test]
     fn test_basics() -> Result<(), TrieError> {
         let ctx = &Context::new();
-
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("a.db");
         let mut t = MerkleTrie::new(4).unwrap();
         let db = &RocksDB::new(db_path.to_str().unwrap());
         db.open().unwrap();
-
         t.initialize(db)?;
 
         let mut txn_batch = RocksDbTransactionBatch::new();
         t.insert(ctx, db, &mut txn_batch, vec![vec![0x12, 0x34, 0xaa, 0xFF]])?;
 
         show(&mut t, txn_batch, db)?;
-
-        println!("\n ================================== \n");
 
         let mut txn_batch = RocksDbTransactionBatch::new();
         t.insert(ctx, db, &mut txn_batch, vec![vec![0x12, 0x35, 0xaa, 0xFF]])?;
@@ -67,7 +64,31 @@ mod tests {
         Ok(())
     }
 
+    #[test]
     fn test_basic_delete() -> Result<(), TrieError> {
+        let ctx = &Context::new();
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("a.db");
+        let mut t = MerkleTrie::new(4).unwrap();
+        let db = &RocksDB::new(db_path.to_str().unwrap());
+        db.open().unwrap();
+        t.initialize(db)?;
+
+        let mut txn_batch = RocksDbTransactionBatch::new();
+        t.insert(ctx, db, &mut txn_batch, vec![vec![0x12, 0x34, 0xaa, 0xFF]])?;
+
+        show(&mut t, txn_batch, db)?;
+
+        let mut txn_batch = RocksDbTransactionBatch::new();
+        t.insert(ctx, db, &mut txn_batch, vec![vec![0x12, 0x35, 0xaa, 0xFF]])?;
+
+        show(&mut t, txn_batch, db)?;
+
+        let mut txn_batch = RocksDbTransactionBatch::new();
+        t.delete(ctx, db, &mut txn_batch, vec![vec![0x12, 0x35, 0xaa, 0xFF]])?;
+
+        show(&mut t, txn_batch, db)?;
+
         Ok(())
     }
 
