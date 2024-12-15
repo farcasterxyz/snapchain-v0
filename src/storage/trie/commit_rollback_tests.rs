@@ -45,11 +45,11 @@ mod tests {
         println!("root hash = {}", hex::encode(t.root_hash()?));
 
         db.commit(txn_batch).unwrap();
-        t.reload(db).unwrap();
+        t.reload(db)?;
 
-        inspect_root_node(db);
+        inspect_root_node(db)?;
 
-        print_entire_trie_dfs(db);
+        print_entire_trie_dfs(db)?;
 
         Ok(())
     }
