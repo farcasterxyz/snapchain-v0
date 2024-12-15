@@ -583,7 +583,7 @@ mod tests {
         }
 
         // Unload the children
-        node.unload_children();
+        // node.unload_children();
 
         // Make sure that all the children are serialized
         node.children().values().for_each(|child| match child {

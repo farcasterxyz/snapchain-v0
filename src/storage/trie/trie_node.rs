@@ -58,7 +58,6 @@ impl<'a> Drop for Context<'a> {
 /// and keeps track of the number of items in the subtree.
 #[derive(Default, Debug, Clone)]
 pub struct TrieNode {
-    hash: Vec<u8>,
     items: usize,
     children: HashMap<u8, TrieNodeType>,
     pub child_hashes: HashMap<u8, Vec<u8>>,
@@ -87,7 +86,6 @@ pub enum TrieNodeType {
 impl TrieNode {
     pub fn new() -> Self {
         TrieNode {
-            hash: vec![],
             items: 0,
             children: HashMap::new(),
             child_hashes: HashMap::new(),
@@ -115,7 +113,7 @@ impl TrieNode {
             key: node.key.as_ref().unwrap_or(&vec![]).clone(),
             child_chars: node.children.keys().map(|c| *c as u32).collect(),
             items: node.items as u32,
-            hash: node.hash.clone(),
+            hash: vec![],
             child_hashes: node
                 .child_hashes
                 .iter()
@@ -144,7 +142,6 @@ impl TrieNode {
             .collect();
 
         Ok(TrieNode {
-            hash: db_trie_node.hash,
             items: db_trie_node.items as usize,
             children,
             child_hashes,
@@ -163,7 +160,21 @@ impl TrieNode {
     }
 
     pub fn hash(&self) -> Vec<u8> {
-        self.hash.clone()
+        if self.is_leaf() {
+            return blake3_20(&self.key.as_ref().unwrap()).to_vec();
+        }
+
+        let mut chars: Vec<u8> = self.child_hashes.keys().copied().collect();
+        chars.sort();
+
+        let mut concat_hashes = vec![];
+        for c in chars {
+            if let Some(child_hash) = self.child_hashes.get(&c) {
+                concat_hashes.extend_from_slice(child_hash);
+            }
+        }
+
+        blake3_20(&concat_hashes)
     }
 
     #[cfg(test)]
@@ -588,76 +599,11 @@ impl TrieNode {
         child_hashes_: &mut HashMap<u8, Vec<u8>>,
         prefix: &[u8],
     ) -> Result<(), TrieError> {
-        if self.is_leaf() {
-            self.hash = blake3_20(&self.key.as_ref().unwrap_or(&vec![]));
-            if prefix.len() > 0 {
-                child_hashes_.insert(prefix[prefix.len() - 1], self.hash.clone());
-            }
-            return Ok(());
-        }
-
-        // Sort the children by their "char" value
-        let child_hashes: Vec<(u8, Vec<u8>)> = {
-            let mut sorted_children: Vec<_> = self.children.iter_mut().collect();
-            sorted_children.sort_by_key(|(char, _)| *char);
-
-            sorted_children
-                .iter()
-                .map(|(char, child)| match child {
-                    TrieNodeType::Node(node) => (**char, node.hash.clone()),
-                    TrieNodeType::Serialized(serialized) => {
-                        if serialized.hash.is_some() {
-                            (**char, serialized.hash.as_ref().unwrap().clone())
-                        } else {
-                            (**char, vec![])
-                        }
-                    }
-                })
-                .collect::<Vec<_>>()
-        };
-
-        // If any of the child hashes are none, we load the child from the db
-        let mut concat_hashes = vec![];
-        for (char, hash) in child_hashes.iter() {
-            if hash.is_empty() {
-                let child = self.get_or_load_child(ctx, db, prefix, *char)?;
-                concat_hashes.extend_from_slice(child.hash.as_slice());
-            } else {
-                concat_hashes.extend_from_slice(hash.as_slice());
-            }
-        }
-
-        self.hash = blake3_20(&concat_hashes);
         if prefix.len() > 0 {
-            child_hashes_.insert(prefix[prefix.len() - 1], self.hash.clone());
+            child_hashes_.insert(prefix[prefix.len() - 1], self.hash());
         }
+
         Ok(())
-    }
-
-    fn excluded_hash(
-        &mut self,
-        ctx: &Context,
-        db: &RocksDB,
-        prefix: &[u8],
-        prefix_char: u8,
-    ) -> Result<(usize, String), TrieError> {
-        let mut excluded_items = 0;
-        let mut child_hashes = vec![];
-
-        let mut sorted_children = self.children.keys().map(|c| *c).collect::<Vec<_>>();
-        sorted_children.sort();
-
-        for char in sorted_children {
-            if char != prefix_char {
-                let child_node = self.get_or_load_child(ctx, db, prefix, char)?;
-                child_hashes.push(child_node.hash.clone());
-                excluded_items += child_node.items;
-            }
-        }
-
-        let hash = blake3_20(&child_hashes.concat());
-
-        Ok((excluded_items, hex::encode(hash.as_slice())))
     }
 
     fn put_to_txn(&self, txn: &mut RocksDbTransactionBatch, prefix: &[u8]) {
@@ -669,20 +615,6 @@ impl TrieNode {
     fn delete_to_txn(&self, txn: &mut RocksDbTransactionBatch, prefix: &[u8]) {
         let key = Self::make_primary_key(prefix, None);
         txn.delete(key);
-    }
-
-    #[allow(dead_code)] // TODO
-    pub fn unload_children(&mut self) {
-        let mut serialized_children = HashMap::new();
-        for (char, child) in self.children.iter_mut() {
-            if let TrieNodeType::Node(child) = child {
-                serialized_children.insert(
-                    *char,
-                    TrieNodeType::Serialized(SerializedTrieNode::new(Some(child.hash.clone()))),
-                );
-            }
-        }
-        self.children = serialized_children;
     }
 
     pub fn get_all_values(
@@ -714,46 +646,6 @@ impl TrieNode {
         Ok(values)
     }
 
-    pub fn get_snapshot(
-        &mut self,
-        ctx: &Context,
-        db: &RocksDB,
-        prefix: &[u8],
-        current_index: usize,
-    ) -> Result<TrieSnapshot, TrieError> {
-        let mut excluded_hashes = vec![];
-        let mut num_messages = 0;
-
-        let mut current_node = self; // traverse from the current node
-        for (i, char) in prefix.iter().enumerate().skip(current_index) {
-            let current_prefix = prefix[0..i].to_vec();
-
-            let (excluded_items, excluded_hash) =
-                current_node.excluded_hash(ctx, db, &current_prefix, *char)?;
-
-            excluded_hashes.push(excluded_hash);
-            num_messages += excluded_items;
-
-            if !current_node.children.contains_key(char) {
-                return Ok(TrieSnapshot {
-                    prefix: current_prefix,
-                    excluded_hashes,
-                    num_messages,
-                });
-            }
-
-            current_node = current_node.get_or_load_child(ctx, db, &current_prefix, *char)?;
-        }
-
-        excluded_hashes.push(hex::encode(current_node.hash.as_slice()));
-
-        Ok(TrieSnapshot {
-            prefix: prefix.to_vec(),
-            excluded_hashes,
-            num_messages,
-        })
-    }
-
     pub(crate) fn print(&self, prefix: u8, depth: usize) -> Result<(), TrieError> {
         let indent = "  ".repeat(depth);
         let key = encode_with_spaces(self.key.as_ref().unwrap_or(&vec![]));
@@ -769,7 +661,7 @@ impl TrieNode {
             depth,
             hex::encode(vec![prefix]),
             key,
-            hex::encode(self.hash.as_slice()),
+            hex::encode(self.hash().as_slice()),
             child_hashes
         );
 

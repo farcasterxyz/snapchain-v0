@@ -303,19 +303,6 @@ impl MerkleTrie {
         }
     }
 
-    pub fn get_snapshot(
-        &mut self,
-        ctx: &Context,
-        db: &RocksDB,
-        prefix: &[u8],
-    ) -> Result<TrieSnapshot, TrieError> {
-        if let Some(root) = self.root.as_mut() {
-            root.get_snapshot(ctx, db, prefix, 0)
-        } else {
-            Err(TrieError::TrieNotInitialized)
-        }
-    }
-
     pub fn get_trie_node_metadata(
         &self,
         db: &RocksDB,
