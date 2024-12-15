@@ -167,6 +167,11 @@ impl TrieNode {
         }
 
         let mut chars: Vec<u8> = self.child_hashes.keys().copied().collect();
+
+        if chars.is_empty() {
+            return vec![];
+        }
+
         chars.sort();
 
         let mut concat_hashes = vec![];
