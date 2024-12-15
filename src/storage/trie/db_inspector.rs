@@ -70,8 +70,7 @@ fn dfs_print_node(
 
         match node.children().get(&c).unwrap() {
             trie::trie_node::TrieNodeType::Node(child_node) => {
-                // Already fully loaded node, recurse directly
-                dfs_print_node(db, &child_prefix, child_node, depth + 1)?;
+                panic!("shouldn't ever have a regular node");
             }
             trie::trie_node::TrieNodeType::Serialized(_) => {
                 // We have a serialized child, need to load it from the database
