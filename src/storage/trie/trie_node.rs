@@ -633,6 +633,20 @@ impl TrieNode {
         txn.delete(key);
     }
 
+    #[allow(dead_code)] // TODO
+    pub fn unload_children(&mut self) {
+        let mut serialized_children = HashMap::new();
+        for (char, child) in self.children.iter_mut() {
+            if let TrieNodeType::Node(child) = child {
+                serialized_children.insert(
+                    *char,
+                    TrieNodeType::Serialized(SerializedTrieNode::new(Some(child.hash()))),
+                );
+            }
+        }
+        self.children = serialized_children;
+    }
+
     pub fn get_all_values(
         &mut self,
         ctx: &Context,

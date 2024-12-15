@@ -281,7 +281,7 @@ mod tests {
         );
         assert_eq!(r.unwrap()[0], true);
         assert_eq!(node.items(), 0);
-        assert_eq!(node.hash(), empty_hash());
+        assert_eq!(node.hash(), Vec::<u8>::new());
 
         // Cleanup
         db.destroy().unwrap();
@@ -329,7 +329,10 @@ mod tests {
         );
         assert_eq!(r.unwrap()[0], true);
         assert_eq!(node.items(), 0);
-        assert_eq!(node.hash(), empty_hash());
+        let a = node.hash();
+        let b = empty_hash();
+        println!("a={} b={}", hex::encode(&a), hex::encode(&b));
+        assert_eq!(a, Vec::<u8>::new());
 
         // Getting the item after it has been deleted should return false
         let r = node.exists(ctx, &db, &key, 0).unwrap();
@@ -583,7 +586,7 @@ mod tests {
         }
 
         // Unload the children
-        // node.unload_children();
+        node.unload_children();
 
         // Make sure that all the children are serialized
         node.children().values().for_each(|child| match child {
