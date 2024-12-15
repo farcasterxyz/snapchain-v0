@@ -40,7 +40,7 @@ impl TrieKey {
     pub fn for_fname(fid: u64, name: &String) -> Vec<u8> {
         let mut key = Vec::new();
         key.extend_from_slice(&Self::for_fid(fid));
-        key.push(8); // 1-7 is for onchain events, use 8 for fnames, and everything else for messages
+        key.push(7); // 1-6 is for onchain events, use 7 for fnames, and everything else for messages
         key.extend_from_slice(&name.as_bytes());
         key
     }
