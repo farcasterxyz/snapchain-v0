@@ -29,7 +29,6 @@ pub fn inspect_root_node(db: &db::RocksDB) -> Result<(), trie::errors::TrieError
     Ok(())
 }
 
-// A helper function to recursively print a node and its children in a DFS manner.
 fn dfs_print_node(
     db: &db::RocksDB,
     prefix: &[u8],
@@ -44,8 +43,9 @@ fn dfs_print_node(
     }
 
     println!(
-        "{}prefix=0x{} key=[{}] hash={} items={} child_hashes={}",
+        "{} d={} prefix=0x{} key=[{}] hash={} items={} child_hashes={}",
         indent,
+        depth,
         hex::encode(prefix),
         key_str,
         hex::encode(node.hash()),
@@ -67,7 +67,7 @@ fn dfs_print_node(
                 // Already fully loaded node, recurse directly
                 dfs_print_node(db, &child_prefix, child_node, depth + 1)?;
             }
-            trie::trie_node::TrieNodeType::Serialized(serialized_child) => {
+            trie::trie_node::TrieNodeType::Serialized(_) => {
                 // We have a serialized child, need to load it from the database
                 let child_key = TrieNode::make_primary_key(prefix, Some(c));
                 if let Some(child_data) = db
