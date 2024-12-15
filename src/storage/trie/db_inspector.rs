@@ -1,4 +1,5 @@
 use crate::storage::trie::trie_node::TrieNode;
+use crate::storage::util::blake3_20;
 use crate::storage::{db, trie};
 use hex;
 
@@ -43,15 +44,17 @@ fn dfs_print_node(
     }
 
     let last_char = prefix.last().copied().unwrap_or_default();
+    let hash1 = compute_node_hash(node);
 
     println!(
-        "{}d={} 0x{:02x} prefix=0x{} key=[{}] hash={} items={} child_hashes={}",
+        "{}d={} 0x{:02x} prefix=0x{} key=[{}] hash0={} hash1={} items={} child_hashes={}",
         indent,
         depth,
         last_char,
         hex::encode(prefix),
         key_str,
         hex::encode(node.hash()),
+        hex::encode(hash1),
         node.items(),
         child_hashes_str,
     );
@@ -120,4 +123,22 @@ fn encode_with_spaces(bytes: &[u8]) -> String {
         .map(|byte| format!("{:02x}", byte))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn compute_node_hash(node: &TrieNode) -> Vec<u8> {
+    if node.is_leaf() {
+        return blake3_20(node.key_ref().unwrap_or(&[]));
+    }
+
+    let mut chars: Vec<u8> = node.child_hashes.keys().copied().collect();
+    chars.sort();
+
+    let mut concat_hashes = vec![];
+    for c in chars {
+        if let Some(child_hash) = node.child_hashes.get(&c) {
+            concat_hashes.extend_from_slice(child_hash);
+        }
+    }
+
+    blake3_20(&concat_hashes)
 }
