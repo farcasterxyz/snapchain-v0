@@ -23,6 +23,22 @@ mod tests {
         hash_chain
     }
 
+    fn show(
+        t: &mut MerkleTrie,
+        txn_batch: RocksDbTransactionBatch,
+        db: &RocksDB,
+    ) -> Result<(), TrieError> {
+        t.print()?;
+        t.show_hashes();
+        println!("root hash = {}", hex::encode(t.root_hash()?));
+        db.commit(txn_batch).unwrap();
+        t.reload(db)?;
+        inspect_root_node(db)?;
+        print_entire_trie_dfs(db)?;
+
+        Ok(())
+    }
+
     #[test]
     fn test_basics() -> Result<(), TrieError> {
         let ctx = &Context::new();
@@ -38,13 +54,7 @@ mod tests {
         let mut txn_batch = RocksDbTransactionBatch::new();
         t.insert(ctx, db, &mut txn_batch, vec![vec![0x12, 0x34, 0xaa, 0xFF]])?;
 
-        t.print()?;
-        t.show_hashes();
-        println!("root hash = {}", hex::encode(t.root_hash()?));
-        db.commit(txn_batch).unwrap();
-        t.reload(db)?;
-        inspect_root_node(db)?;
-        print_entire_trie_dfs(db)?;
+        show(&mut t, txn_batch, db)?;
 
         println!("\n ================================== \n");
 
@@ -52,16 +62,12 @@ mod tests {
         t.insert(ctx, db, &mut txn_batch, vec![vec![0x12, 0x35, 0xaa, 0xFF]])?;
         t.insert(ctx, db, &mut txn_batch, vec![vec![0x13, 0x55, 0xaa, 0xFF]])?;
 
-        t.print()?;
-        t.show_hashes();
-        println!("root hash = {}", hex::encode(t.root_hash()?));
-        db.commit(txn_batch).unwrap();
-        t.reload(db)?;
+        show(&mut t, txn_batch, db)?;
 
-        inspect_root_node(db)?;
+        Ok(())
+    }
 
-        print_entire_trie_dfs(db)?;
-
+    fn test_basic_delete() -> Result<(), TrieError> {
         Ok(())
     }
 

@@ -4,7 +4,6 @@ use super::super::{
     util::{blake3_20, bytes_compare},
 };
 use super::errors::TrieError;
-use super::merkle_trie::TrieSnapshot;
 use crate::proto::DbTrieNode;
 use prost::Message as _;
 use std::collections::hash_map::Iter;
