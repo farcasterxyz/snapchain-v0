@@ -161,7 +161,10 @@ impl TrieNode {
 
     pub fn hash(&self) -> Vec<u8> {
         if self.is_leaf() {
-            return blake3_20(&self.key.as_ref().unwrap()).to_vec();
+            return match self.key_ref() {
+                None => vec![],
+                Some(key_ref) => blake3_20(key_ref),
+            };
         }
 
         let mut chars: Vec<u8> = self.child_hashes.keys().copied().collect();
