@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::storage::db::{RocksDB, RocksDbTransactionBatch};
-    use crate::storage::trie::db_inspector::inspect_root_node;
+    use crate::storage::trie::db_inspector::{inspect_root_node, print_entire_trie_dfs};
     use crate::storage::trie::errors::TrieError;
     use crate::storage::trie::merkle_trie::{Context, MerkleTrie};
     use hex;
@@ -51,6 +51,8 @@ mod tests {
         t.reload(db).unwrap();
 
         inspect_root_node(db);
+
+        print_entire_trie_dfs(db);
 
         Ok(())
     }

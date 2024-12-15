@@ -95,6 +95,10 @@ impl TrieNode {
         }
     }
 
+    pub fn key_ref(&self) -> Option<&[u8]> {
+        self.key.as_deref()
+    }
+
     pub(crate) fn make_primary_key(prefix: &[u8], child_char: Option<u8>) -> Vec<u8> {
         let mut key = Vec::with_capacity(1 + prefix.len() + 1);
         key.push(RootPrefix::SyncMerkleTrieNode as u8);
