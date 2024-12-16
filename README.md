@@ -3,56 +3,42 @@
 Prototype for the snapchain proposal
 
 ## Prerequisites
-
-Before you begin, ensure you have the following installed:
-- Rust (latest stable version)
-- Cargo (comes with Rust)
-- Protocol Buffers compiler (protoc)
-
-## Installation
-
-1. First clone the malachite repo and checkout the correct commit:
-   ```
+- `Rust` (latest stable version) + `Cargo`
+- Protocol Buffers compiler (`protoc`)
+- `Docker` + `Docker Compose` (for containerized run)
+- `malachite` (commit 8a9f3702eb41199bc8a7f45139adba233a04744a)   
+   ```bash
    git clone git@github.com:informalsystems/malachite.git
    cd malachite
    git checkout 8a9f3702eb41199bc8a7f45139adba233a04744a # Remember to update GitHub workflow when changing
    cd code && cargo build
    ```
-2. Then clone the snapchain repo and build it:
-   ```
-   cd ..
-   git clone https://github.com/farcasterxyz/snapchain-v0.git
-   cd snapchain-v0
-   cargo build
-   ```
-
-## Testing
-
-After setting up your Rust toolchain above, you can run tests with:
-
-```
-cargo test
-```
 
 ## Running the Application
+There are two ways to run the application:
 
-For development, you can run multiple nodes by running:
-```
-make dev
-```
+### 1. Using Docker (recommended)
+- For development, you can run multiple nodes by running the below command and they will be configured to communicate with each other
+   ```bash
+   make dev        
+   ```
+- To query a node, you can run `grpcurl` from within the container:
+   ```bash
+   docker compose exec node1 grpcurl -import-path proto -proto proto/rpc.proto list
+   ```
 
-These will be configured to communicate with each other.
+### 2. Local build without Docker
+- Setup dependencies and build
+   ```bash
+   make local-build   
+   ```
 
-To query a node, you can run `grpcurl` from within the container:
-
-```
-docker compose exec node1 grpcurl -import-path proto -proto proto/rpc.proto list
-```
-
-## Clean up
-
-You can remove any cached items by running:
-
-```
-make clean
-```
+## Other useful commands
+- Remove all artifacts and containers
+   ```bash
+   make clean  
+   ```
+- For all available commands, run:
+   ```bash
+   make help
+   ```
