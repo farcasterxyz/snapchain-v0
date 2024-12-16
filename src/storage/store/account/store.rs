@@ -75,17 +75,6 @@ pub trait StoreDef: Send + Sync {
         Ok(())
     }
 
-    fn delete_remove_secondary_indices(
-        &self,
-        _txn: &mut RocksDbTransactionBatch,
-        _message: &Message,
-    ) -> Result<(), HubError> {
-        Ok(())
-    }
-
-    fn find_merge_add_conflicts(&self, db: &RocksDB, message: &Message) -> Result<(), HubError>;
-    fn find_merge_remove_conflicts(&self, db: &RocksDB, message: &Message) -> Result<(), HubError>;
-
     fn make_add_key(&self, message: &Message) -> Result<Vec<u8>, HubError>;
     fn make_remove_key(&self, message: &Message) -> Result<Vec<u8>, HubError>;
     fn make_compact_state_add_key(&self, message: &Message) -> Result<Vec<u8>, HubError>;
@@ -110,12 +99,6 @@ pub trait StoreDef: Send + Sync {
     ) -> Result<Vec<Message>, HubError> {
         // The JS code does validateAdd()/validateRemove() here, but that's not needed because we
         // already validated that the message has a data field and a body field in the is_add_type()
-
-        if self.is_add_type(message) {
-            self.find_merge_add_conflicts(db, message)?;
-        } else {
-            self.find_merge_remove_conflicts(db, message)?;
-        }
 
         let mut conflicts = vec![];
 
@@ -524,9 +507,6 @@ impl<T: StoreDef + Clone> Store<T> {
                 message: "remove type not supported".to_string(),
             });
         }
-
-        self.store_def
-            .delete_remove_secondary_indices(txn, message)?;
 
         let remove_key = self.store_def.make_remove_key(message)?;
         txn.delete(remove_key);

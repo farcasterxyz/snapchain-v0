@@ -84,19 +84,6 @@ impl StoreDef for CastStoreDef {
         false
     }
 
-    fn find_merge_add_conflicts(&self, _db: &RocksDB, _message: &Message) -> Result<(), HubError> {
-        // No conflicts
-        Ok(())
-    }
-
-    fn find_merge_remove_conflicts(
-        &self,
-        _db: &RocksDB,
-        _message: &Message,
-    ) -> Result<(), HubError> {
-        Ok(())
-    }
-
     // RemoveWins + LWW, instead of default
     fn message_compare(
         &self,
@@ -159,14 +146,6 @@ impl StoreDef for CastStoreDef {
             }
         }
 
-        Ok(())
-    }
-
-    fn delete_remove_secondary_indices(
-        &self,
-        _txn: &mut RocksDbTransactionBatch,
-        _message: &Message,
-    ) -> Result<(), HubError> {
         Ok(())
     }
 

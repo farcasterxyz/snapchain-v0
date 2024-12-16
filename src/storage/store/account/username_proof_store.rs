@@ -172,14 +172,6 @@ impl StoreDef for UsernameProofStoreDef {
         }
     }
 
-    fn delete_remove_secondary_indices(
-        &self,
-        _txn: &mut RocksDbTransactionBatch,
-        _message: &Message,
-    ) -> Result<(), HubError> {
-        Ok(())
-    }
-
     fn get_merge_conflicts(
         &self,
         db: &RocksDB,
@@ -253,21 +245,6 @@ impl StoreDef for UsernameProofStoreDef {
 
     fn is_remove_type(&self, _message: &Message) -> bool {
         false
-    }
-
-    fn find_merge_add_conflicts(&self, _db: &RocksDB, _message: &Message) -> Result<(), HubError> {
-        Ok(())
-    }
-
-    fn find_merge_remove_conflicts(
-        &self,
-        _db: &RocksDB,
-        _message: &Message,
-    ) -> Result<(), HubError> {
-        return Err(HubError {
-            code: "bad_request.validation_failure".to_string(),
-            message: "Username Proof store does not support removes".to_string(),
-        });
     }
 
     fn get_prune_size_limit(&self) -> u32 {

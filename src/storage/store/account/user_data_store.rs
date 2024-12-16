@@ -62,26 +62,6 @@ impl StoreDef for UserDataStoreDef {
         false
     }
 
-    fn find_merge_add_conflicts(
-        &self,
-        _db: &RocksDB,
-        _message: &proto::Message,
-    ) -> Result<(), HubError> {
-        // No conflicts
-        Ok(())
-    }
-
-    fn find_merge_remove_conflicts(
-        &self,
-        _db: &RocksDB,
-        _message: &proto::Message,
-    ) -> Result<(), HubError> {
-        Err(HubError {
-            code: "bad_request.invalid_param".to_string(),
-            message: "UserDataStoree doesn't support merging removes".to_string(),
-        })
-    }
-
     fn make_add_key(&self, message: &proto::Message) -> Result<Vec<u8>, HubError> {
         let user_data_body = match message.data.as_ref().unwrap().body.as_ref().unwrap() {
             Body::UserDataBody(body) => body,

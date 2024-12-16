@@ -1,15 +1,12 @@
-use tracing::warn;
-
 use super::{
-    get_many_messages, get_message, make_fid_key, make_message_primary_key, make_user_key,
-    read_fid_key, read_ts_hash,
+    get_many_messages, make_fid_key, make_message_primary_key, make_user_key, read_fid_key,
+    read_ts_hash,
     store::{Store, StoreDef},
     MessagesPage, StoreEventHandler, PAGE_SIZE_MAX, TS_HASH_LENGTH,
 };
 use crate::{
     core::error::HubError,
     proto::{link_body::Target, SignatureScheme},
-    storage::util::vec_to_u8_24,
 };
 use crate::{proto::message_data::Body, storage::db::PageOptions};
 use crate::{proto::LinkBody, storage::util::increment_vec_u8};
@@ -96,22 +93,7 @@ impl LinkStore {
             ..Default::default()
         };
 
-        let result = store.get_add(&partial_message);
-        if let Ok(None) = result {
-            // Check for incorrectly padded keys
-            let unpadded_key = Self::make_add_key_padded(&partial_message, false)?;
-            let message_ts_hash = store.db().get(&unpadded_key)?;
-            if message_ts_hash.is_none() {
-                return Ok(None);
-            }
-            return get_message(
-                store.db().borrow(),
-                partial_message.data.as_ref().unwrap().fid,
-                store.store_def().postfix(),
-                &vec_to_u8_24(&message_ts_hash)?,
-            );
-        }
-        result
+        store.get_add(&partial_message)
     }
 
     pub fn get_link_adds_by_fid(
@@ -220,22 +202,7 @@ impl LinkStore {
             ..Default::default()
         };
 
-        let result = store.get_remove(&partial_message);
-        if let Ok(None) = result {
-            // Check for incorrectly padded keys
-            let unpadded_key = Self::make_remove_key_padded(&partial_message, false)?;
-            let message_ts_hash = store.db().get(&unpadded_key)?;
-            if message_ts_hash.is_none() {
-                return Ok(None);
-            }
-            return get_message(
-                store.db().borrow(),
-                partial_message.data.as_ref().unwrap().fid,
-                store.store_def().postfix(),
-                &vec_to_u8_24(&message_ts_hash)?,
-            );
-        }
-        result
+        store.get_remove(&partial_message)
     }
 
     // Generates a unique key used to store a LinkCompactState message key in the store
@@ -261,7 +228,7 @@ impl LinkStore {
     /// * `fid` - farcaster id of the user who created the link
     /// * `link_body` - body of link that contains type of link created and target ID of the object
     ///                 being reacted to
-    fn link_add_key(fid: u64, link_body: &LinkBody, padded: bool) -> Result<Vec<u8>, HubError> {
+    fn link_add_key(fid: u64, link_body: &LinkBody) -> Result<Vec<u8>, HubError> {
         if link_body.target.is_some()
             && (link_body.r#type.is_empty() || link_body.r#type.len() == 0)
         {
@@ -288,10 +255,8 @@ impl LinkStore {
         key.extend_from_slice(&make_user_key(fid));
         key.push(UserPostfix::LinkAdds.as_u8());
         let type_bytes = &mut link_body.r#type.as_bytes().to_vec();
-        if padded {
-            // Pad with zero bytes
-            type_bytes.resize(Self::LINK_TYPE_BYTE_SIZE, 0);
-        }
+        // Pad with zero bytes
+        type_bytes.resize(Self::LINK_TYPE_BYTE_SIZE, 0);
         key.extend_from_slice(&type_bytes);
         match link_body.target {
             None => {}
@@ -310,7 +275,7 @@ impl LinkStore {
     /// * `fid` - farcaster id of the user who created the link
     /// * `link_body` - body of link that contains type of link created and target ID of the object
     ///                 being reacted to
-    fn link_remove_key(fid: u64, link_body: &LinkBody, padded: bool) -> Result<Vec<u8>, HubError> {
+    fn link_remove_key(fid: u64, link_body: &LinkBody) -> Result<Vec<u8>, HubError> {
         if link_body.target.is_some()
             && (link_body.r#type.is_empty() || link_body.r#type.len() == 0)
         {
@@ -338,10 +303,8 @@ impl LinkStore {
         key.extend_from_slice(&make_user_key(fid));
         key.push(UserPostfix::LinkRemoves.as_u8());
         let type_bytes = &mut link_body.r#type.as_bytes().to_vec();
-        if padded {
-            // Pad with zero bytes
-            type_bytes.resize(Self::LINK_TYPE_BYTE_SIZE, 0);
-        }
+        // Pad with zero bytes
+        type_bytes.resize(Self::LINK_TYPE_BYTE_SIZE, 0);
         key.extend_from_slice(&type_bytes);
         match link_body.target {
             None => {}
@@ -353,7 +316,7 @@ impl LinkStore {
         Ok(key)
     }
 
-    pub fn make_add_key_padded(message: &Message, padded: bool) -> Result<Vec<u8>, HubError> {
+    pub fn make_add_key(message: &Message) -> Result<Vec<u8>, HubError> {
         message
             .data
             .as_ref()
@@ -363,15 +326,13 @@ impl LinkStore {
                     .as_ref()
                     .ok_or(HubError::invalid_parameter("invalid message data body"))
                     .and_then(|body_option| match body_option {
-                        Body::LinkBody(link_body) => {
-                            Self::link_add_key(data.fid, link_body, padded)
-                        }
+                        Body::LinkBody(link_body) => Self::link_add_key(data.fid, link_body),
                         _ => Err(HubError::invalid_parameter("link body not specified")),
                     })
             })
     }
 
-    pub fn make_remove_key_padded(message: &Message, padded: bool) -> Result<Vec<u8>, HubError> {
+    pub fn make_remove_key(message: &Message) -> Result<Vec<u8>, HubError> {
         message
             .data
             .as_ref()
@@ -381,9 +342,7 @@ impl LinkStore {
                     .as_ref()
                     .ok_or(HubError::invalid_parameter("invalid message data body"))
                     .and_then(|body_option| match body_option {
-                        Body::LinkBody(link_body) => {
-                            Self::link_remove_key(data.fid, link_body, padded)
-                        }
+                        Body::LinkBody(link_body) => Self::link_remove_key(data.fid, link_body),
                         _ => Err(HubError::invalid_parameter("link body not specified")),
                     })
             })
@@ -552,148 +511,9 @@ impl StoreDef for LinkStore {
         message: &Message,
     ) -> Result<(), HubError> {
         let (by_target_key, _) = self.secondary_index_key(ts_hash, message)?;
-        if self.is_add_type(message) {
-            let incorrectly_padded_key = Self::make_add_key_padded(message, false)?;
-            txn.delete(incorrectly_padded_key);
-        } else if self.is_remove_type(message) {
-            let incorrectly_padded_key = Self::make_remove_key_padded(message, false)?;
-            txn.delete(incorrectly_padded_key);
-        };
 
         txn.delete(by_target_key);
 
-        Ok(())
-    }
-
-    fn delete_remove_secondary_indices(
-        &self,
-        txn: &mut RocksDbTransactionBatch,
-        message: &Message,
-    ) -> Result<(), HubError> {
-        if self.is_add_type(message) {
-            let incorrectly_padded_key = Self::make_add_key_padded(message, false)?;
-            txn.delete(incorrectly_padded_key);
-        } else if self.is_remove_type(message) {
-            let incorrectly_padded_key = Self::make_remove_key_padded(message, false)?;
-            txn.delete(incorrectly_padded_key);
-        };
-
-        Ok(())
-    }
-
-    // During the initial rust migration, we were not padding the type field to 8 bytes, so we still
-    // have some links that don't have the right padding. Override the default merge conflict resolution
-    // to check for the presence of incorrectly padded links as well
-    fn get_merge_conflicts(
-        &self,
-        db: &RocksDB,
-        message: &Message,
-        ts_hash: &[u8; TS_HASH_LENGTH],
-    ) -> Result<Vec<Message>, HubError> {
-        // First, call the default implementation to get the default merge conflicts
-        let mut conflicts = Self::get_default_merge_conflicts(self, db, message, ts_hash)?;
-
-        let remove_key = Self::make_remove_key_padded(message, false)?;
-        let remove_ts_hash = db.get(&remove_key)?;
-
-        if remove_ts_hash.is_some() {
-            let remove_compare = self.message_compare(
-                self.remove_message_type(),
-                &remove_ts_hash.clone().unwrap(),
-                message.data.as_ref().unwrap().r#type as u8,
-                &ts_hash.to_vec(),
-            );
-
-            if remove_compare > 0 {
-                return Err(HubError {
-                    code: "bad_request.conflict".to_string(),
-                    message: "message conflicts with a more recent remove".to_string(),
-                });
-            }
-            if remove_compare == 0 {
-                return Err(HubError {
-                    code: "bad_request.duplicate".to_string(),
-                    message: "message has already been merged".to_string(),
-                });
-            }
-
-            // If the existing remove has a lower order than the new message, retrieve the full
-            // Remove message and delete it as part of the RocksDB transaction
-            let maybe_existing_remove = get_message(
-                &db,
-                message.data.as_ref().unwrap().fid,
-                self.postfix(),
-                &vec_to_u8_24(&remove_ts_hash)?,
-            )?;
-
-            if maybe_existing_remove.is_some() {
-                conflicts.push(maybe_existing_remove.unwrap());
-            } else {
-                warn!(
-                    "Message's ts_hash exists but message not found in store {:#?}",
-                    remove_ts_hash
-                );
-            }
-        }
-
-        // Check if there is an add timestamp hash for this
-        let add_key = Self::make_add_key_padded(message, false)?;
-        let add_ts_hash = db.get(&add_key)?;
-
-        if add_ts_hash.is_some() {
-            let add_compare = self.message_compare(
-                self.add_message_type(),
-                &add_ts_hash.clone().unwrap(),
-                message.data.as_ref().unwrap().r#type as u8,
-                &ts_hash.to_vec(),
-            );
-
-            if add_compare > 0 {
-                return Err(HubError {
-                    code: "bad_request.conflict".to_string(),
-                    message: "message conflicts with a more recent add".to_string(),
-                });
-            }
-            if add_compare == 0 {
-                return Err(HubError {
-                    code: "bad_request.duplicate".to_string(),
-                    message: "message has already been merged".to_string(),
-                });
-            }
-
-            // If the existing add has a lower order than the new message, retrieve the full
-            // Add message and delete it as part of the RocksDB transaction
-            let maybe_existing_add = get_message(
-                &db,
-                message.data.as_ref().unwrap().fid,
-                self.postfix(),
-                &vec_to_u8_24(&add_ts_hash)?,
-            )?;
-
-            if maybe_existing_add.is_none() {
-                warn!(
-                    "Message's ts_hash exists but message not found in store {:#?}",
-                    add_ts_hash
-                );
-            } else {
-                conflicts.push(maybe_existing_add.unwrap());
-            }
-        }
-
-        return Ok(conflicts);
-    }
-
-    fn find_merge_add_conflicts(&self, _db: &RocksDB, _message: &Message) -> Result<(), HubError> {
-        // For links, there will be no additional conflict logic
-        Ok(())
-    }
-
-    fn find_merge_remove_conflicts(
-        &self,
-        _db: &RocksDB,
-        _message: &Message,
-    ) -> Result<(), HubError> {
-        // For links, there will be no additional conflict logic
         Ok(())
     }
 
@@ -733,11 +553,11 @@ impl StoreDef for LinkStore {
     fn make_add_key(&self, message: &Message) -> Result<Vec<u8>, HubError> {
         // Type bytes must be padded to 8 bytes, but we had a bug which allowed unpadded types,
         // so this function allows access to both types of keys
-        return Self::make_add_key_padded(message, true);
+        Self::make_add_key(message)
     }
 
     fn make_remove_key(&self, message: &Message) -> Result<Vec<u8>, HubError> {
-        return Self::make_remove_key_padded(message, true);
+        Self::make_remove_key(message)
     }
 
     fn get_prune_size_limit(&self) -> u32 {
