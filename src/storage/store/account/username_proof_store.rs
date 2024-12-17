@@ -1,5 +1,5 @@
 use super::{
-    get_message, make_fid_key, make_user_key, read_fid_key,
+    get_from_db_or_txn, get_message, make_fid_key, make_user_key, read_fid_key,
     store::{Store, StoreDef},
     IntoU8, MessagesPage, StoreEventHandler, TS_HASH_LENGTH,
 };
@@ -172,17 +172,10 @@ impl StoreDef for UsernameProofStoreDef {
         }
     }
 
-    fn delete_remove_secondary_indices(
-        &self,
-        _txn: &mut RocksDbTransactionBatch,
-        _message: &Message,
-    ) -> Result<(), HubError> {
-        Ok(())
-    }
-
     fn get_merge_conflicts(
         &self,
         db: &RocksDB,
+        txn: &mut RocksDbTransactionBatch,
         message: &Message,
         ts_hash: &[u8; TS_HASH_LENGTH],
     ) -> Result<Vec<Message>, HubError> {
@@ -207,14 +200,17 @@ impl StoreDef for UsernameProofStoreDef {
         let mut conflicts = Vec::new();
         let by_name_key = Self::make_username_proof_by_name_key(name);
 
-        let fid_result = db.get(by_name_key.as_slice());
+        let fid_result = get_from_db_or_txn(db, txn, by_name_key.as_slice());
         if let Ok(Some(fid_bytes)) = fid_result {
             let fid = read_fid_key(&fid_bytes, 0);
             if fid > 0 {
                 let existing_add_key = Self::make_username_proof_by_fid_key(fid, name);
-                if let Ok(existing_message_ts_hash) = db.get(existing_add_key.as_slice()) {
+                if let Ok(existing_message_ts_hash) =
+                    get_from_db_or_txn(db, txn, existing_add_key.as_slice())
+                {
                     if let Ok(Some(existing_message)) = get_message(
                         db,
+                        txn,
                         fid,
                         self.postfix(),
                         &util::vec_to_u8_24(&existing_message_ts_hash)?,
@@ -253,21 +249,6 @@ impl StoreDef for UsernameProofStoreDef {
 
     fn is_remove_type(&self, _message: &Message) -> bool {
         false
-    }
-
-    fn find_merge_add_conflicts(&self, _db: &RocksDB, _message: &Message) -> Result<(), HubError> {
-        Ok(())
-    }
-
-    fn find_merge_remove_conflicts(
-        &self,
-        _db: &RocksDB,
-        _message: &Message,
-    ) -> Result<(), HubError> {
-        return Err(HubError {
-            code: "bad_request.validation_failure".to_string(),
-            message: "Username Proof store does not support removes".to_string(),
-        });
     }
 
     fn get_prune_size_limit(&self) -> u32 {

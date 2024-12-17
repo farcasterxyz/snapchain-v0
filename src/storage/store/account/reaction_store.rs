@@ -86,28 +86,6 @@ impl StoreDef for ReactionStoreDef {
         Ok(())
     }
 
-    fn delete_remove_secondary_indices(
-        &self,
-        _txn: &mut RocksDbTransactionBatch,
-        _message: &Message,
-    ) -> Result<(), HubError> {
-        Ok(())
-    }
-
-    fn find_merge_add_conflicts(&self, _db: &RocksDB, _message: &Message) -> Result<(), HubError> {
-        // For reactions, there will be no conflicts
-        Ok(())
-    }
-
-    fn find_merge_remove_conflicts(
-        &self,
-        _db: &RocksDB,
-        _message: &Message,
-    ) -> Result<(), HubError> {
-        // For reactions, there will be no conflicts
-        Ok(())
-    }
-
     fn make_add_key(&self, message: &Message) -> Result<Vec<u8>, HubError> {
         let reaction_body = match message.data.as_ref().unwrap().body.as_ref().unwrap() {
             Body::ReactionBody(reaction_body) => reaction_body,

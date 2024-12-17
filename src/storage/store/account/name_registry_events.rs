@@ -9,7 +9,7 @@ use crate::{
     },
 };
 
-use super::make_fid_key;
+use super::{get_from_db_or_txn, make_fid_key};
 
 pub fn make_fname_username_proof_key(name: &[u8]) -> Vec<u8> {
     let mut key = Vec::with_capacity(1 + 32);
@@ -26,9 +26,13 @@ pub fn make_fname_username_proof_by_fid_key(fid: u64) -> Vec<u8> {
     key
 }
 
-pub fn get_username_proof(db: &RocksDB, name: &[u8]) -> Result<Option<UserNameProof>, HubError> {
+pub fn get_username_proof(
+    db: &RocksDB,
+    txn: &mut RocksDbTransactionBatch,
+    name: &[u8],
+) -> Result<Option<UserNameProof>, HubError> {
     let key = make_fname_username_proof_key(name);
-    let buf = db.get(&key)?;
+    let buf = get_from_db_or_txn(db, txn, &key)?;
     if buf.is_none() {
         return Ok(None);
     }

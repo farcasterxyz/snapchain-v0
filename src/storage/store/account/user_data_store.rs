@@ -62,26 +62,6 @@ impl StoreDef for UserDataStoreDef {
         false
     }
 
-    fn find_merge_add_conflicts(
-        &self,
-        _db: &RocksDB,
-        _message: &proto::Message,
-    ) -> Result<(), HubError> {
-        // No conflicts
-        Ok(())
-    }
-
-    fn find_merge_remove_conflicts(
-        &self,
-        _db: &RocksDB,
-        _message: &proto::Message,
-    ) -> Result<(), HubError> {
-        Err(HubError {
-            code: "bad_request.invalid_param".to_string(),
-            message: "UserDataStoree doesn't support merging removes".to_string(),
-        })
-    }
-
     fn make_add_key(&self, message: &proto::Message) -> Result<Vec<u8>, HubError> {
         let user_data_body = match message.data.as_ref().unwrap().body.as_ref().unwrap() {
             Body::UserDataBody(body) => body,
@@ -232,9 +212,10 @@ impl UserDataStore {
 
     pub fn get_username_proof(
         store: &Store<UserDataStoreDef>,
+        txn: &mut RocksDbTransactionBatch,
         name: &[u8],
     ) -> Result<Option<UserNameProof>, HubError> {
-        get_username_proof(&store.db(), name)
+        get_username_proof(&store.db(), txn, name)
     }
 
     pub fn get_username_proof_by_fid(
@@ -249,7 +230,7 @@ impl UserDataStore {
         username_proof: &UserNameProof,
         txn: &mut RocksDbTransactionBatch,
     ) -> Result<HubEvent, HubError> {
-        let existing_proof = get_username_proof(&store.db(), &username_proof.name)?;
+        let existing_proof = get_username_proof(&store.db(), txn, &username_proof.name)?;
         let mut existing_fid: Option<u64> = None;
 
         if existing_proof.is_some() {
