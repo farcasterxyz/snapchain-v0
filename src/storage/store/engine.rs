@@ -518,7 +518,7 @@ impl ShardEngine {
 
         for msg in &snapchain_txn.user_messages {
             // Errors are validated based on the shard root
-            match self.validate_user_message(msg) {
+            match self.validate_user_message(msg, txn_batch) {
                 Ok(()) => {
                     let result = self.merge_message(msg, txn_batch);
                     match result {
@@ -811,6 +811,7 @@ impl ShardEngine {
     fn validate_user_message(
         &self,
         message: &proto::Message,
+        txn_batch: &mut RocksDbTransactionBatch,
     ) -> Result<(), MessageValidationError> {
         // Ensure message data is present
         let message_data = message
@@ -837,7 +838,7 @@ impl ShardEngine {
         match &message_data.body {
             Some(proto::message_data::Body::UserDataBody(user_data)) => {
                 if user_data.r#type == proto::UserDataType::Username as i32 {
-                    self.validate_username(message_data.fid, &user_data.value)?;
+                    self.validate_username(message_data.fid, &user_data.value, txn_batch)?;
                 }
             }
             Some(proto::message_data::Body::UsernameProofBody(_)) => {
@@ -855,7 +856,12 @@ impl ShardEngine {
         Ok(())
     }
 
-    fn validate_username(&self, fid: u64, fname: &str) -> Result<(), MessageValidationError> {
+    fn validate_username(
+        &self,
+        fid: u64,
+        fname: &str,
+        txn: &mut RocksDbTransactionBatch,
+    ) -> Result<(), MessageValidationError> {
         if fname.is_empty() {
             // Setting an empty username is allowed, no need to validate the proof
             return Ok(());
@@ -866,12 +872,15 @@ impl ShardEngine {
         if fname.ends_with(".eth") {
             // TODO: Validate ens names
         } else {
-            let proof =
-                UserDataStore::get_username_proof(&self.stores.user_data_store, fname.as_bytes())
-                    .map_err(|e| MessageValidationError::StoreError {
-                    inner: e,
-                    hash: vec![],
-                })?;
+            let proof = UserDataStore::get_username_proof(
+                &self.stores.user_data_store,
+                txn,
+                fname.as_bytes(),
+            )
+            .map_err(|e| MessageValidationError::StoreError {
+                inner: e,
+                hash: vec![],
+            })?;
             match proof {
                 Some(proof) => {
                     if proof.fid != fid {
@@ -1142,7 +1151,11 @@ impl ShardEngine {
     }
 
     pub fn get_fname_proof(&self, name: &String) -> Result<Option<UserNameProof>, HubError> {
-        UserDataStore::get_username_proof(&self.stores.user_data_store, name.as_bytes())
+        UserDataStore::get_username_proof(
+            &self.stores.user_data_store,
+            &mut RocksDbTransactionBatch::new(),
+            name.as_bytes(),
+        )
     }
 
     pub fn get_onchain_events(

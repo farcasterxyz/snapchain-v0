@@ -212,9 +212,10 @@ impl UserDataStore {
 
     pub fn get_username_proof(
         store: &Store<UserDataStoreDef>,
+        txn: &mut RocksDbTransactionBatch,
         name: &[u8],
     ) -> Result<Option<UserNameProof>, HubError> {
-        get_username_proof(&store.db(), name)
+        get_username_proof(&store.db(), txn, name)
     }
 
     pub fn get_username_proof_by_fid(
@@ -229,7 +230,7 @@ impl UserDataStore {
         username_proof: &UserNameProof,
         txn: &mut RocksDbTransactionBatch,
     ) -> Result<HubEvent, HubError> {
-        let existing_proof = get_username_proof(&store.db(), &username_proof.name)?;
+        let existing_proof = get_username_proof(&store.db(), txn, &username_proof.name)?;
         let mut existing_fid: Option<u64> = None;
 
         if existing_proof.is_some() {

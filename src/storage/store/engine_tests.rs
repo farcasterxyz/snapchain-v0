@@ -4,7 +4,7 @@ mod tests {
     use crate::proto::{self, ReactionType};
     use crate::proto::{HubEvent, ValidatorMessage};
     use crate::proto::{OnChainEvent, OnChainEventType};
-    use crate::storage::db::RocksDbTransactionBatch;
+    use crate::storage::db::{PageOptions, RocksDbTransactionBatch};
     use crate::storage::store::engine::{MempoolMessage, ShardEngine};
     use crate::storage::store::test_helper;
     use crate::storage::store::test_helper::{
@@ -606,6 +606,62 @@ mod tests {
             assert_eq!(height.shard_index, 1);
             // assert_eq!(height.block_number, 1); // TODO
         }
+    }
+
+    #[tokio::test]
+    async fn test_add_remove_in_same_tx_respects_crdt_rules() {
+        let (mut engine, _tmpdir) = test_helper::new_engine();
+        register_user(FID_FOR_TEST, test_helper::default_signer(), &mut engine).await;
+
+        let ts = time::farcaster_time();
+        let cast1 = &messages_factory::casts::create_cast_add(FID_FOR_TEST, "msg1", Some(ts), None);
+        let cast2 = &messages_factory::casts::create_cast_remove(
+            FID_FOR_TEST,
+            &cast1.hash,
+            Some(ts + 10),
+            None,
+        );
+        let cast3 = &messages_factory::casts::create_cast_remove(
+            FID_FOR_TEST,
+            &cast1.hash,
+            Some(ts + 20),
+            None,
+        );
+        let mut event_rx = engine.get_senders().events_tx.subscribe();
+        let messages = vec![
+            MempoolMessage::UserMessage(cast1.clone()),
+            MempoolMessage::UserMessage(cast2.clone()),
+            MempoolMessage::UserMessage(cast3.clone()),
+        ];
+        let state_change = engine.propose_state_change(1, messages);
+        test_helper::validate_and_commit_state_change(&mut engine, &state_change);
+
+        // We merged an add, a remove and a second remove which should win over the first (later timestamp)
+        // In the end, the add and the intermediate remove should not exist
+        assert_eq!(
+            test_helper::key_exists_in_trie(&mut engine, &TrieKey::for_message(cast1)),
+            false
+        );
+        assert_eq!(
+            test_helper::key_exists_in_trie(&mut engine, &TrieKey::for_message(cast2)),
+            false
+        );
+        assert_eq!(
+            test_helper::key_exists_in_trie(&mut engine, &TrieKey::for_message(cast3)),
+            true
+        );
+
+        let messages = &engine
+            .get_stores()
+            .cast_store
+            .get_all_messages_by_fid(FID_FOR_TEST, None, None, &PageOptions::default())
+            .unwrap();
+        test_helper::assert_contains_all_messages(messages, &[cast3]);
+
+        // We receive a merge event for the add and the intermediate remove, even though it would never get committed to the db
+        assert_merge_event(&event_rx.try_recv().unwrap(), &cast1);
+        assert_merge_event(&event_rx.try_recv().unwrap(), &cast2);
+        assert_merge_event(&event_rx.try_recv().unwrap(), &cast3);
     }
 
     #[tokio::test]

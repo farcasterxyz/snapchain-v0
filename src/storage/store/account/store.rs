@@ -1,8 +1,8 @@
 use super::{
     super::super::util::{bytes_compare, vec_to_u8_24},
-    delete_message_transaction, get_message, get_messages_page_by_prefix, is_message_in_time_range,
-    make_message_primary_key, make_ts_hash, message_decode, message_encode,
-    put_message_transaction, MessagesPage, StoreEventHandler, TS_HASH_LENGTH,
+    delete_message_transaction, get_from_db_or_txn, get_message, get_messages_page_by_prefix,
+    is_message_in_time_range, make_message_primary_key, make_ts_hash, message_decode,
+    message_encode, put_message_transaction, MessagesPage, StoreEventHandler, TS_HASH_LENGTH,
 };
 use crate::core::error::HubError;
 use crate::proto::{
@@ -85,26 +85,15 @@ pub trait StoreDef: Send + Sync {
     fn get_merge_conflicts(
         &self,
         db: &RocksDB,
+        txn: &mut RocksDbTransactionBatch,
         message: &Message,
         ts_hash: &[u8; TS_HASH_LENGTH],
     ) -> Result<Vec<Message>, HubError> {
-        Self::get_default_merge_conflicts(&self, db, message, ts_hash)
-    }
-
-    fn get_default_merge_conflicts(
-        &self,
-        db: &RocksDB,
-        message: &Message,
-        ts_hash: &[u8; TS_HASH_LENGTH],
-    ) -> Result<Vec<Message>, HubError> {
-        // The JS code does validateAdd()/validateRemove() here, but that's not needed because we
-        // already validated that the message has a data field and a body field in the is_add_type()
-
         let mut conflicts = vec![];
 
         if self.remove_type_supported() {
             let remove_key = self.make_remove_key(message)?;
-            let remove_ts_hash = db.get(&remove_key)?;
+            let remove_ts_hash = get_from_db_or_txn(db, txn, &remove_key)?;
 
             if remove_ts_hash.is_some() {
                 let remove_compare = self.message_compare(
@@ -131,6 +120,7 @@ pub trait StoreDef: Send + Sync {
                 // Remove message and delete it as part of the RocksDB transaction
                 let maybe_existing_remove = get_message(
                     &db,
+                    txn,
                     message.data.as_ref().unwrap().fid,
                     self.postfix(),
                     &vec_to_u8_24(&remove_ts_hash)?,
@@ -149,7 +139,7 @@ pub trait StoreDef: Send + Sync {
 
         // Check if there is an add timestamp hash for this
         let add_key = self.make_add_key(message)?;
-        let add_ts_hash = db.get(&add_key)?;
+        let add_ts_hash = get_from_db_or_txn(db, txn, &add_key)?;
 
         if add_ts_hash.is_some() {
             let add_compare = self.message_compare(
@@ -176,6 +166,7 @@ pub trait StoreDef: Send + Sync {
             // Add message and delete it as part of the RocksDB transaction
             let maybe_existing_add = get_message(
                 &db,
+                txn,
                 message.data.as_ref().unwrap().fid,
                 self.postfix(),
                 &vec_to_u8_24(&add_ts_hash)?,
@@ -316,8 +307,9 @@ impl<T: StoreDef + Clone> Store<T> {
             });
         }
 
+        let txn = &mut RocksDbTransactionBatch::new();
         let adds_key = self.store_def.make_add_key(partial_message)?;
-        let message_ts_hash = self.db.get(&adds_key)?;
+        let message_ts_hash = get_from_db_or_txn(&self.db, txn, &adds_key)?;
 
         if message_ts_hash.is_none() {
             return Ok(None);
@@ -325,6 +317,7 @@ impl<T: StoreDef + Clone> Store<T> {
 
         get_message(
             &self.db,
+            txn,
             partial_message.data.as_ref().unwrap().fid,
             self.store_def.postfix(),
             &vec_to_u8_24(&message_ts_hash)?,
@@ -347,8 +340,9 @@ impl<T: StoreDef + Clone> Store<T> {
             });
         }
 
+        let txn = &mut RocksDbTransactionBatch::new();
         let removes_key = self.store_def.make_remove_key(partial_message)?;
-        let message_ts_hash = self.db.get(&removes_key)?;
+        let message_ts_hash = get_from_db_or_txn(&self.db, txn, &removes_key)?;
 
         if message_ts_hash.is_none() {
             return Ok(None);
@@ -356,6 +350,7 @@ impl<T: StoreDef + Clone> Store<T> {
 
         get_message(
             &self.db,
+            txn,
             partial_message.data.as_ref().unwrap().fid,
             self.store_def.postfix(),
             &vec_to_u8_24(&message_ts_hash)?,
@@ -637,7 +632,7 @@ impl<T: StoreDef + Clone> Store<T> {
         // First, find if there's an existing compact state message, and if there is,
         // delete it if it is older
         let compact_state_key = self.store_def.make_compact_state_add_key(message)?;
-        let existing_compact_state = self.db.get(&compact_state_key)?;
+        let existing_compact_state = get_from_db_or_txn(&self.db, txn, &compact_state_key)?;
 
         if existing_compact_state.is_some() {
             if let Ok(existing_compact_state_message) =
@@ -728,7 +723,9 @@ impl<T: StoreDef + Clone> Store<T> {
         if self.store_def.compact_state_type_supported() {
             // Get the compact state message
             let compact_state_key = self.store_def.make_compact_state_add_key(message)?;
-            if let Some(compact_state_message_bytes) = self.db.get(&compact_state_key)? {
+            if let Some(compact_state_message_bytes) =
+                get_from_db_or_txn(&self.db, txn, &compact_state_key)?
+            {
                 let compact_state_message = message_decode(compact_state_message_bytes.as_ref())?;
 
                 let (_, compact_state_timestamp, target_fids) =
@@ -756,7 +753,7 @@ impl<T: StoreDef + Clone> Store<T> {
         // Get the merge conflicts first
         let merge_conflicts = self
             .store_def
-            .get_merge_conflicts(&self.db, message, ts_hash)?;
+            .get_merge_conflicts(&self.db, txn, message, ts_hash)?;
 
         // Delete all the merge conflicts
         self.delete_many_transaction(txn, &merge_conflicts)?;
@@ -787,7 +784,9 @@ impl<T: StoreDef + Clone> Store<T> {
         if self.store_def.compact_state_type_supported() {
             // Get the compact state message
             let compact_state_key = self.store_def.make_compact_state_add_key(message)?;
-            if let Some(compact_state_message_bytes) = self.db.get(&compact_state_key)? {
+            if let Some(compact_state_message_bytes) =
+                get_from_db_or_txn(&self.db, txn, &compact_state_key)?
+            {
                 let compact_state_message = message_decode(compact_state_message_bytes.as_ref())?;
 
                 let (_, compact_state_timestamp, _) =
@@ -808,7 +807,7 @@ impl<T: StoreDef + Clone> Store<T> {
         // Get the merge conflicts first
         let merge_conflicts = self
             .store_def
-            .get_merge_conflicts(&self.db, message, ts_hash)?;
+            .get_merge_conflicts(&self.db, txn, message, ts_hash)?;
 
         // Delete all the merge conflicts
         self.delete_many_transaction(txn, &merge_conflicts)?;

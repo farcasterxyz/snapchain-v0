@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use prost::{DecodeError, Message};
 
-use super::{make_fid_key, StoreEventHandler};
+use super::{get_from_db_or_txn, make_fid_key, StoreEventHandler};
 use crate::core::error::HubError;
 use crate::proto::{
     self, on_chain_event, IdRegisterEventBody, IdRegisterEventType, OnChainEvent, OnChainEventType,
@@ -77,7 +77,7 @@ pub fn merge_onchain_event(
     onchain_event: OnChainEvent,
 ) -> Result<(), OnchainEventStorageError> {
     let primary_key = make_onchain_event_primary_key(&onchain_event);
-    if let Some(_) = db.get(&primary_key)? {
+    if let Some(_) = get_from_db_or_txn(db, txn, &primary_key)? {
         return Err(OnchainEventStorageError::DuplicateOnchainEvent);
     }
     txn.put(primary_key, onchain_event.encode_to_vec());
