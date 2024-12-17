@@ -9,6 +9,7 @@ use crate::proto::DbTrieNode;
 use prost::Message as _;
 use std::collections::HashMap;
 use std::sync::atomic;
+use tracing::error;
 
 // TODO: remove or reduce this and/or rename (make sure it works under all branching factors)
 pub const TIMESTAMP_LENGTH: usize = 10;
@@ -460,6 +461,14 @@ impl TrieNode {
     ) -> Result<(), TrieError> {
         let key = self.key.take().unwrap();
         let prefix = key[..current_index].to_vec();
+
+        // we saw some crashes here during testing, let's log here even though a panic is incoming
+        if current_index >= key.len() {
+            error!(
+                key = hex::encode(&key),
+                current_index, "current_index out of bounds"
+            );
+        }
 
         let new_child_char = key[current_index];
 
