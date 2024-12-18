@@ -37,6 +37,10 @@ pub fn get_farcaster_time() -> Result<u64, HubError> {
     Ok(to_farcaster_time(now.as_millis() as u64)?)
 }
 
+pub fn calculate_message_hash(data_bytes: &[u8]) -> Vec<u8> {
+    blake3::hash(data_bytes).as_bytes()[0..20].to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

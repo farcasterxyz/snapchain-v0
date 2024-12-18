@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::core::util::calculate_message_hash;
     use crate::proto::ShardChunk;
     use crate::proto::{self, ReactionType};
     use crate::proto::{HubEvent, ValidatorMessage};
@@ -13,6 +14,7 @@ mod tests {
     use crate::storage::trie::merkle_trie::TrieKey;
     use crate::utils::factory::{self, events_factory, messages_factory, time, username_factory};
     use ed25519_dalek::SigningKey;
+    use prost::Message;
 
     fn from_hex(s: &str) -> Vec<u8> {
         hex::decode(s).unwrap()
@@ -172,6 +174,47 @@ mod tests {
         chunk.header.as_mut().unwrap().shard_root = invalid_hash;
 
         engine.commit_shard_chunk(&chunk);
+    }
+
+    #[tokio::test]
+    async fn test_engine_rejects_message_with_invalid_hash() {
+        let (mut engine, _tmpdir) = test_helper::new_engine();
+        register_user(FID_FOR_TEST, test_helper::default_signer(), &mut engine).await;
+        let mut message = default_message("msg1");
+        let current_timestamp = message.data.as_ref().unwrap().timestamp;
+        // Modify the message so the hash is no longer correct
+        message.data.as_mut().unwrap().timestamp = current_timestamp + 1;
+
+        assert_commit_fails(&mut engine, &message).await;
+
+        assert_eq!(
+            engine
+                .validate_user_message(&message, &mut RocksDbTransactionBatch::new())
+                .unwrap_err()
+                .to_string(),
+            "Invalid message hash"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_engine_rejects_message_with_invalid_signature() {
+        let (mut engine, _tmpdir) = test_helper::new_engine();
+        register_user(FID_FOR_TEST, test_helper::default_signer(), &mut engine).await;
+        let mut message = default_message("msg1");
+        let current_timestamp = message.data.as_ref().unwrap().timestamp;
+        // Modify the message so the signatures is no longer correct
+        message.data.as_mut().unwrap().timestamp = current_timestamp + 1;
+        message.hash = calculate_message_hash(&message.data.as_ref().unwrap().encode_to_vec());
+
+        assert_commit_fails(&mut engine, &message).await;
+
+        assert_eq!(
+            engine
+                .validate_user_message(&message, &mut RocksDbTransactionBatch::new())
+                .unwrap_err()
+                .to_string(),
+            "Invalid message signature"
+        );
     }
 
     #[tokio::test]

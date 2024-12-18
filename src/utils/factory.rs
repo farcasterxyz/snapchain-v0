@@ -164,6 +164,7 @@ pub mod events_factory {
 
 pub mod messages_factory {
     use super::*;
+    use crate::core::util::calculate_message_hash;
 
     pub fn farcaster_time() -> u32 {
         (std::time::SystemTime::now()
@@ -202,7 +203,7 @@ pub mod messages_factory {
         };
 
         let msg_data_bytes = msg_data.encode_to_vec();
-        let hash = blake3::hash(&msg_data_bytes).as_bytes()[0..20].to_vec();
+        let hash = calculate_message_hash(&msg_data_bytes);
 
         let signature = key.sign(&hash).to_bytes();
         message::Message {
