@@ -36,6 +36,8 @@ thiserror = "1.0.66"
 reqwest = { version = "0.12.9", features = ["json"] }
 figment = { version = "0.10.19", features = ["env", "toml"] }
 alloy = { version = "0.5.4", features = ["full"] }
+alloy-dyn-abi = { version = "0.8.15", features = ["eip712"] }
+alloy-rlp = "0.3.9"
 futures-util = "0.3.31"
 url = "2.5.3"
 alloy-transport = "0.5.4"

@@ -444,11 +444,17 @@ impl ShardEngine {
                         "Fname transfer has no proof"
                     );
                 }
-                let proof = fname_transfer.proof.as_ref().unwrap();
-                // TODO: Verify the EIP-712 server signature
+
+                match fname_transfer.verify_signature() {
+                    Ok(_) => {}
+                    Err(err) => {
+                        warn!("Error validating fname transfer: {:?}", err);
+                    }
+                }
+
                 let event = UserDataStore::merge_username_proof(
                     &self.stores.user_data_store,
-                    proof,
+                    fname_transfer.proof.as_ref().unwrap(),
                     txn_batch,
                 );
                 match event {
