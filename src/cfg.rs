@@ -38,6 +38,7 @@ pub struct Config {
     pub clear_db: bool,
     pub statsd: StatsdConfig,
     pub trie_branching_factor: u32,
+    pub l1_rpc_url: String,
 }
 
 impl Default for Config {
@@ -54,6 +55,7 @@ impl Default for Config {
             clear_db: false,
             statsd: StatsdConfig::default(),
             trie_branching_factor: 16,
+            l1_rpc_url: "".to_string(),
         }
     }
 }

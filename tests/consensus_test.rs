@@ -120,6 +120,7 @@ impl NodeForTest {
                 statsd_client.clone(),
                 num_shards,
                 Box::new(routing::EvenOddRouterForTest {}),
+                None,
             );
 
             let grpc_socket_addr: SocketAddr = addr.parse().unwrap();

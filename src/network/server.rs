@@ -1,10 +1,13 @@
 use super::rpc_extensions::{AsMessagesResponse, AsSingleMessageResponse};
+use crate::connectors::onchain_events::L1Client;
 use crate::core::error::HubError;
 use crate::mempool::routing;
 use crate::proto;
 use crate::proto::hub_service_server::HubService;
 use crate::proto::GetInfoResponse;
 use crate::proto::HubEvent;
+use crate::proto::UserNameProof;
+use crate::proto::UserNameType;
 use crate::proto::{Block, CastId, DbStats};
 use crate::proto::{BlocksRequest, ShardChunksRequest, ShardChunksResponse, SubscribeRequest};
 use crate::proto::{FidRequest, FidTimestampRequest};
@@ -39,6 +42,7 @@ pub struct MyHubService {
     num_shards: u32,
     message_router: Box<dyn routing::MessageRouter>,
     statsd_client: StatsdClientWrapper,
+    l1_client: Option<L1Client>,
 }
 
 impl MyHubService {
@@ -49,6 +53,7 @@ impl MyHubService {
         statsd_client: StatsdClientWrapper,
         num_shards: u32,
         message_router: Box<dyn routing::MessageRouter>,
+        l1_client: Option<L1Client>,
     ) -> Self {
         Self {
             block_store,
@@ -57,6 +62,7 @@ impl MyHubService {
             statsd_client,
             message_router,
             num_shards,
+            l1_client,
         }
     }
 
@@ -111,6 +117,25 @@ impl MyHubService {
                     err.to_string()
                 )));
             }
+
+            if let Some(message_data) = &message.data {
+                match &message_data.body {
+                    Some(proto::message_data::Body::UserDataBody(user_data)) => {
+                        if user_data.r#type() == proto::UserDataType::Username {
+                            if user_data.value.ends_with(".eth") {
+                                self.validate_ens_username(fid, user_data.value.to_string())
+                                    .await?;
+                            }
+                        };
+                    }
+                    Some(proto::message_data::Body::UsernameProofBody(proof)) => {
+                        if proof.r#type() == UserNameType::UsernameTypeEnsL1 {
+                            self.validate_ens_username_proof(fid, &proof).await?;
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
 
         match sender
@@ -142,6 +167,73 @@ impl MyHubService {
             Some(store) => Ok(store),
             None => Err(Status::invalid_argument(
                 "no shard store for fid".to_string(),
+            )),
+        }
+    }
+
+    async fn validate_ens_username_proof(
+        &self,
+        fid: u64,
+        proof: &UserNameProof,
+    ) -> Result<(), Status> {
+        match &self.l1_client {
+            None => {
+                // Skip validation
+                Err(Status::invalid_argument("unable to validate ens name"))
+            }
+            Some(l1_client) => {
+                let name = std::str::from_utf8(&proof.name)
+                    .map_err(|err| Status::from_error(Box::new(err)))?;
+
+                if !name.ends_with(".eth") {
+                    return Err(Status::invalid_argument(
+                        "invalid ens name, doesn't end with .eth",
+                    ));
+                }
+
+                let resolved_ens_address = l1_client
+                    .resolve_ens_name(name.to_string())
+                    .await
+                    .map_err(|err| Status::from_error(Box::new(err)))?
+                    .to_vec();
+
+                if resolved_ens_address != proof.owner {
+                    return Err(Status::invalid_argument("invalid ens name"));
+                }
+
+                let stores = self
+                    .get_stores_for(fid)
+                    .map_err(|err| Status::from_error(Box::new(err)))?;
+
+                let verification = VerificationStore::get_verification_add(
+                    &stores.verification_store,
+                    fid,
+                    &resolved_ens_address,
+                )
+                .map_err(|err| Status::from_error(Box::new(err)))?;
+
+                match verification {
+                    None => Err(Status::invalid_argument("invalid ens name")),
+                    Some(_) => Ok(()),
+                }
+            }
+        }
+    }
+
+    async fn validate_ens_username(&self, fid: u64, fname: String) -> Result<(), Status> {
+        let stores = self
+            .get_stores_for(fid)
+            .map_err(|err| Status::from_error(Box::new(err)))?;
+        let proof = UserDataStore::get_username_proof(
+            &stores.user_data_store,
+            &mut RocksDbTransactionBatch::new(),
+            fname.as_bytes(),
+        )
+        .map_err(|err| Status::from_error(Box::new(err)))?;
+        match proof {
+            Some(proof) => self.validate_ens_username_proof(fid, &proof).await,
+            None => Err(Status::invalid_argument(
+                "missing username proof for username",
             )),
         }
     }

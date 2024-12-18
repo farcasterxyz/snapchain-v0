@@ -1,13 +1,11 @@
 use std::collections::HashMap;
 
-use alloy::{
-    primitives::{address, Address, Bytes, FixedBytes, Uint},
-    providers::{Provider, ProviderBuilder, RootProvider},
-    rpc::types::{Filter, Log},
-    sol,
-    sol_types::SolEvent,
-    transports::http::{Client, Http},
-};
+use alloy_primitives::{address, Address, Bytes, FixedBytes, Uint};
+use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use alloy_rpc_types::{Filter, Log};
+use alloy_sol_types::{sol, SolEvent};
+use alloy_transport_http::{Client, Http};
+use foundry_common::ens::EnsError;
 use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -86,7 +84,7 @@ pub enum SubscribeError {
     UnableToFindBlockByHash,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum SignerEvent {
     Add {
         key: Bytes,
@@ -102,13 +100,13 @@ pub enum SignerEvent {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SignerMigratedEvent {
     #[allow(dead_code)] // TODO
     migrated_at: u64,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum IdRegisterEvent {
     Register {
         to: Address,
@@ -123,7 +121,7 @@ pub enum IdRegisterEvent {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct StorageRentEvent {
     #[allow(dead_code)] // TODO
     payer: Address,
@@ -135,7 +133,7 @@ pub struct StorageRentEvent {
     expiry: u64,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum EventType {
     Signer(SignerEvent),
     SignerMigrated { migrated_at: u64 },
@@ -143,7 +141,7 @@ pub enum EventType {
     StorageRent(StorageRentEvent),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Event {
     #[allow(dead_code)] // TODO
     chain_id: u64,
@@ -173,6 +171,28 @@ pub struct Event {
     event_type: EventType,
 }
 
+pub struct L1Client {
+    provider: RootProvider<Http<Client>>,
+}
+
+impl L1Client {
+    pub fn new(rpc_url: String) -> Result<L1Client, SubscribeError> {
+        if rpc_url.is_empty() {
+            return Err(SubscribeError::EmptyRpcUrl);
+        }
+        let url = rpc_url.parse()?;
+        let provider = ProviderBuilder::new().on_http(url);
+        Ok(L1Client { provider })
+    }
+
+    pub async fn resolve_ens_name(&self, name: String) -> Result<Address, EnsError> {
+        foundry_common::ens::NameOrAddress::Name(name)
+            .resolve(&self.provider)
+            .await
+    }
+}
+
+#[derive(Clone)]
 pub struct Subscriber {
     provider: RootProvider<Http<Client>>,
     onchain_events_by_block: HashMap<u64, Vec<Event>>,
@@ -227,7 +247,7 @@ impl Subscriber {
     async fn get_block_timestamp(&self, block_hash: FixedBytes<32>) -> Result<u64, SubscribeError> {
         let block = self
             .provider
-            .get_block_by_hash(block_hash, alloy::rpc::types::BlockTransactionsKind::Hashes)
+            .get_block_by_hash(block_hash, alloy_rpc_types::BlockTransactionsKind::Hashes)
             .await?
             .ok_or(SubscribeError::UnableToFindBlockByHash)?;
         Ok(block.header.timestamp)

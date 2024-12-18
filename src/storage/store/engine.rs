@@ -875,27 +875,25 @@ impl ShardEngine {
         let fname = fname.to_string();
         // TODO: validate fname string
 
-        if fname.ends_with(".eth") {
-            // TODO: Validate ens names
-        } else {
-            let proof = UserDataStore::get_username_proof(
-                &self.stores.user_data_store,
-                txn,
-                fname.as_bytes(),
-            )
-            .map_err(|e| MessageValidationError::StoreError {
-                inner: e,
-                hash: vec![],
-            })?;
-            match proof {
-                Some(proof) => {
-                    if proof.fid != fid {
-                        return Err(MessageValidationError::MissingFname);
-                    }
-                }
-                None => {
+        let proof =
+            UserDataStore::get_username_proof(&self.stores.user_data_store, txn, fname.as_bytes())
+                .map_err(|e| MessageValidationError::StoreError {
+                    inner: e,
+                    hash: vec![],
+                })?;
+        match proof {
+            Some(proof) => {
+                if proof.fid != fid {
                     return Err(MessageValidationError::MissingFname);
                 }
+
+                if fname.ends_with(".eth") {
+                    // TODO: Validate ens names
+                } else {
+                }
+            }
+            None => {
+                return Err(MessageValidationError::MissingFname);
             }
         }
         Ok(())

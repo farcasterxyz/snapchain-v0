@@ -158,6 +158,7 @@ mod tests {
                 statsd_client,
                 num_shards,
                 message_router,
+                None,
             ),
         )
     }
