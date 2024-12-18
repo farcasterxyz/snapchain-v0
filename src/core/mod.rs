@@ -3,3 +3,6 @@ mod message;
 pub mod types;
 pub mod util;
 pub mod validations;
+
+#[cfg(test)]
+mod validations_test;
