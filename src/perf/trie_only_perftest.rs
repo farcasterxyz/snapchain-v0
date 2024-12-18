@@ -28,6 +28,9 @@ struct Args {
 
     #[arg(long, default_value_t = 1_000_000)]
     users_per_shard: u32,
+
+    #[arg(long)]
+    shard_id: Option<u32>,
 }
 
 pub fn run() -> Result<(), Box<dyn Error>> {
@@ -48,7 +51,16 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
     let mut handles = Vec::new();
 
-    for shard_id in 0..args.shard_count {
+    let shard_ids = if args.shard_id.is_some() {
+        if args.shard_count != 1 {
+            panic!("shard count must be 1 when shard_id specified")
+        }
+        vec![args.shard_id.unwrap()]
+    } else {
+        (0..args.shard_count).collect::<Vec<_>>()
+    };
+
+    for shard_id in shard_ids {
         let shard_statsd = statsd_client.clone();
         let shard_args = args.clone();
         let shard_path = base_path.join(format!("shard_{}", shard_id));
