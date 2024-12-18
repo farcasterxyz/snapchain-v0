@@ -121,6 +121,7 @@ fn run_shard(
     };
 
     let mut ctx = Context::with_callback(count_callback.clone());
+    let mut insert_count = 0;
 
     loop {
         if last_tick.elapsed() >= Duration::from_secs(1) {
@@ -133,6 +134,8 @@ fn run_shard(
                 shard_id, elapsed_secs, items
             );
             statsd_client.gauge_with_shard(shard_id, "engine.trie.num_items", items as u64);
+            statsd_client.count_with_shard(shard_id, "trie_insert", insert_count as u64);
+            insert_count = 0;
             ctx = Context::with_callback(count_callback.clone());
         }
 
@@ -153,6 +156,7 @@ fn run_shard(
             match msg {
                 generate::NextMessage::Message(message) => {
                     t.insert(&ctx, &db, &mut txn_batch, vec![message.hash.clone()])?;
+                    insert_count += 1;
                 }
                 generate::NextMessage::OnChainEvent(_) => {
                     // Ignore for now
