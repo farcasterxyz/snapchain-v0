@@ -7,9 +7,9 @@ use crate::utils::statsd_wrapper;
 use clap::Parser;
 use std::collections::VecDeque;
 use std::error::Error;
-use std::net;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::{net, thread};
 use tempfile::TempDir;
 
 #[derive(Parser, Debug, Clone)]
@@ -51,20 +51,27 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     for shard_id in 0..args.shard_count {
         let shard_statsd = statsd_client.clone();
         let shard_args = args.clone();
-        let shard_turbohash = turbohash;
         let shard_path = base_path.join(format!("shard_{}", shard_id));
         std::fs::create_dir_all(&shard_path)?;
 
-        let handle = std::thread::spawn(move || {
-            if let Err(e) = run_shard(
-                shard_id,
-                &shard_args,
-                shard_statsd,
-                shard_turbohash,
-                &shard_path,
-            ) {
+        let handle = thread::spawn(move || {
+            if let Err(e) = run_shard(shard_id, &shard_args, shard_statsd, &shard_path) {
                 eprintln!("Error in shard {}: {:?}", shard_id, e);
             }
+        });
+        handles.push(handle);
+    }
+
+    {
+        // common metrics thread
+        let handle = thread::spawn(move || loop {
+            statsd_client.gauge("branching_factor", args.branching_factor as u64);
+            statsd_client.gauge("messages_per_block", args.messages_per_block as u64);
+            statsd_client.gauge("turbohash", turbohash);
+            statsd_client.gauge("users_per_shard", args.users_per_shard as u64);
+            statsd_client.gauge("shard_count", args.shard_count as u64);
+
+            thread::sleep(Duration::from_secs(1));
         });
         handles.push(handle);
     }
@@ -81,7 +88,6 @@ fn run_shard(
     shard_id: u32,
     args: &Args,
     statsd_client: Arc<statsd_wrapper::StatsdClientWrapper>,
-    turbohash: u64,
     shard_path: &std::path::Path,
 ) -> Result<(), Box<dyn Error>> {
     let db_path = shard_path.join("db");
@@ -127,18 +133,6 @@ fn run_shard(
                 shard_id, elapsed_secs, items
             );
             statsd_client.gauge_with_shard(shard_id, "engine.trie.num_items", items as u64);
-            statsd_client.gauge_with_shard(
-                shard_id,
-                "engine.trie.branching_factor",
-                args.branching_factor as u64,
-            );
-            statsd_client.gauge_with_shard(
-                shard_id,
-                "messages_per_block",
-                args.messages_per_block as u64,
-            );
-            statsd_client.gauge_with_shard(shard_id, "turbohash", turbohash);
-
             ctx = Context::with_callback(count_callback.clone());
         }
 
