@@ -86,7 +86,13 @@ fn start_submit_messages(
         let gen_type = gen_type.clone();
 
         submit_message_handles.push(tokio::spawn(async move {
-            let mut generator = new_generator(gen_type, thread_id);
+            let mut generator = new_generator(
+                gen_type,
+                thread_id,
+                generate::Config {
+                    users_per_shard: 5000,
+                },
+            );
 
             let mut submit_message_timer = time::interval(config.submit_message.interval);
 
