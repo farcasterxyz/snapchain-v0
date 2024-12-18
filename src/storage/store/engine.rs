@@ -1,6 +1,7 @@
 use super::account::{IntoU8, OnchainEventStorageError, UserDataStore};
 use crate::core::error::HubError;
 use crate::core::types::Height;
+use crate::core::validations;
 use crate::proto::HubEvent;
 use crate::proto::Message;
 use crate::proto::UserNameProof;
@@ -64,6 +65,9 @@ pub enum MessageValidationError {
 
     #[error("missing signer")]
     MissingSigner,
+
+    #[error(transparent)]
+    MessageValidationError(#[from] validations::ValidationError),
 
     #[error("invalid message type")]
     InvalidMessageType(i32),
@@ -808,7 +812,7 @@ impl ShardEngine {
         Ok(())
     }
 
-    fn validate_user_message(
+    pub(crate) fn validate_user_message(
         &self,
         message: &proto::Message,
         txn_batch: &mut RocksDbTransactionBatch,
@@ -820,6 +824,8 @@ impl ShardEngine {
             .ok_or(MessageValidationError::NoMessageData)?;
 
         // TODO(aditi): Check network
+
+        validations::validate_message(message)?;
 
         // Check that the user has a custody address
         self.stores
