@@ -201,8 +201,6 @@ impl MyHubService {
                     .to_vec();
 
                 if resolved_ens_address != proof.owner {
-                    println!("resolved ens address {:#?}", resolved_ens_address);
-                    println!("proof address {:#?}", proof.owner);
                     return Err(Status::invalid_argument(
                         "invalid ens name, resolved address doesn't match custody address",
                     ));
