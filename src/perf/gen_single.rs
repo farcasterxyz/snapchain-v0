@@ -35,6 +35,7 @@ impl MessageGenerator for SingleUser {
                     fid,
                     proto::IdRegisterEventType::Register,
                     vec![],
+                    None,
                 ),
             ));
             messages.push(NextMessage::OnChainEvent(
@@ -42,6 +43,7 @@ impl MessageGenerator for SingleUser {
                     fid,
                     self.private_key.clone(),
                     proto::SignerEventType::Add,
+                    None,
                 ),
             ));
         }

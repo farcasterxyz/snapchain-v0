@@ -88,10 +88,13 @@ pub mod events_factory {
             units: rent_units,
             payer: rand::random::<[u8; 32]>().to_vec(),
         };
+        let random_number_under_1000 = rand::random::<u32>() % 1000;
+        // Ensure higher timestamp always has higher block number by left shifting the timestamp by 10 bits (1024)
+        let block_number = timestamp.checked_shl(10).unwrap() + random_number_under_1000;
         OnChainEvent {
             r#type: OnChainEventType::EventTypeStorageRent as i32,
             chain_id: 10,
-            block_number: rand::random::<u32>(),
+            block_number,
             block_hash: vec![],
             block_timestamp: timestamp as u64,
             transaction_hash: rand::random::<[u8; 32]>().to_vec(),
@@ -109,6 +112,7 @@ pub mod events_factory {
         fid: u64,
         signer: SigningKey,
         event_type: proto::SignerEventType,
+        timestamp: Option<u32>,
     ) -> OnChainEvent {
         let signer_event_body = proto::SignerEventBody {
             key: signer.verifying_key().as_bytes().to_vec(),
@@ -117,12 +121,16 @@ pub mod events_factory {
             key_type: 1,
             metadata_type: 1,
         };
+        let block_timestamp = timestamp.unwrap_or_else(|| time::current_timestamp_with_offset(-10));
+        let random_number_under_1000 = rand::random::<u32>() % 1000;
+        // Ensure higher timestamp always has higher block number by left shifting the timestamp by 10 bits (1024)
+        let block_number = block_timestamp.checked_shl(10).unwrap() + random_number_under_1000;
         OnChainEvent {
             r#type: OnChainEventType::EventTypeSigner as i32,
             chain_id: 10,
-            block_number: rand::random::<u32>(),
+            block_number,
             block_hash: vec![],
-            block_timestamp: time::current_timestamp_with_offset(-10) as u64,
+            block_timestamp: block_timestamp as u64,
             transaction_hash: rand::random::<[u8; 32]>().to_vec(),
             log_index: 0,
             fid,
@@ -138,6 +146,7 @@ pub mod events_factory {
         fid: u64,
         event_type: proto::IdRegisterEventType,
         custody_address: Vec<u8>,
+        timestamp: Option<u32>,
     ) -> OnChainEvent {
         let id_register_event_body = proto::IdRegisterEventBody {
             to: custody_address,
@@ -145,12 +154,16 @@ pub mod events_factory {
             from: vec![],
             recovery_address: vec![],
         };
+        let block_timestamp = timestamp.unwrap_or_else(|| time::current_timestamp_with_offset(-10));
+        let random_number_under_1000 = rand::random::<u32>() % 1000;
+        // Ensure higher timestamp always has higher block number by left shifting the timestamp by 10 bits (1024)
+        let block_number = block_timestamp.checked_shl(10).unwrap() + random_number_under_1000;
         OnChainEvent {
-            r#type: OnChainEventType::EventTypeSigner as i32,
+            r#type: OnChainEventType::EventTypeIdRegister as i32,
             chain_id: 10,
-            block_number: rand::random::<u32>(),
+            block_number,
             block_hash: vec![],
-            block_timestamp: time::current_timestamp_with_offset(-10) as u64,
+            block_timestamp: block_timestamp as u64,
             transaction_hash: rand::random::<[u8; 32]>().to_vec(),
             log_index: 0,
             fid,

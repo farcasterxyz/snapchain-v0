@@ -1049,6 +1049,7 @@ mod tests {
             FID_FOR_TEST,
             another_signer.clone(),
             proto::SignerEventType::Add,
+            None,
         );
         test_helper::commit_event(&mut engine, &another_signer_event).await;
         test_helper::register_user(
@@ -1080,6 +1081,7 @@ mod tests {
             FID_FOR_TEST,
             signer.clone(),
             proto::SignerEventType::Remove,
+            Some(timestamp + 3),
         );
         test_helper::commit_event(&mut engine, &revoke_event).await;
         assert_onchain_hub_event(&event_rx.try_recv().unwrap(), &revoke_event);
@@ -1095,6 +1097,15 @@ mod tests {
         // Different Fid with the same signer is unaffected
         let messages = engine.get_casts_by_fid(FID_FOR_TEST + 1).unwrap();
         assert_eq!(1, messages.messages.len());
+
+        // Submitting a message from the revoked signer should fail
+        let post_revoke_message = messages_factory::casts::create_cast_add(
+            FID_FOR_TEST,
+            "after revoke",
+            Some(timestamp + 5),
+            Some(&signer),
+        );
+        assert_commit_fails(&mut engine, &post_revoke_message).await;
     }
 
     #[tokio::test]
@@ -1223,6 +1234,7 @@ mod tests {
                 FID_FOR_TEST,
                 test_helper::default_signer(),
                 proto::SignerEventType::Add,
+                None,
             ),
         )
         .await;
@@ -1233,6 +1245,7 @@ mod tests {
             FID_FOR_TEST,
             proto::IdRegisterEventType::Register,
             vec![],
+            None,
         );
         test_helper::commit_event(&mut engine, &id_register).await;
         commit_message(&mut engine, &default_message("msg1")).await;
@@ -1254,6 +1267,7 @@ mod tests {
                 FID_FOR_TEST,
                 proto::IdRegisterEventType::Register,
                 vec![],
+                None,
             ),
         )
         .await;
@@ -1266,6 +1280,7 @@ mod tests {
                 FID_FOR_TEST,
                 test_helper::default_signer(),
                 proto::SignerEventType::Add,
+                None,
             ),
         )
         .await;

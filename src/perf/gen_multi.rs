@@ -43,10 +43,16 @@ impl MessageGenerator for MultiUser {
                     fid,
                     proto::IdRegisterEventType::Register,
                     vec![],
+                    None,
                 ),
             ));
             messages.push(NextMessage::OnChainEvent(
-                events_factory::create_signer_event(fid, private_key, proto::SignerEventType::Add),
+                events_factory::create_signer_event(
+                    fid,
+                    private_key,
+                    proto::SignerEventType::Add,
+                    None,
+                ),
             ));
 
             self.initialized_fids.insert(fid);
