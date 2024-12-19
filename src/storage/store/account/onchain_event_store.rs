@@ -18,6 +18,7 @@ static PAGE_SIZE: usize = 1000;
 
 const LEGACY_STORAGE_UNIT_CUTOFF_TIMESTAMP: u32 = 1724889600;
 const ONE_YEAR_IN_SECONDS: u32 = 365 * 24 * 60 * 60;
+const SUPPORTED_SIGNER_KEY_TYPE: u32 = 1;
 
 #[derive(Error, Debug)]
 pub enum OnchainEventStorageError {
@@ -436,7 +437,21 @@ impl OnchainEventStore {
         signer: Vec<u8>,
     ) -> Result<Option<OnChainEvent>, OnchainEventStorageError> {
         let signer_key = make_signer_onchain_event_by_signer_key(fid, signer);
-        get_event_by_secondary_key(&self.db, signer_key)
+        let signer = get_event_by_secondary_key(&self.db, signer_key)
+            .map_err(|e| OnchainEventStorageError::from(e))?;
+        if let Some(signer) = signer {
+            if let Some(body) = &signer.body {
+                if let on_chain_event::Body::SignerEventBody(signer_event_body) = body {
+                    // Only return the signer if it's active (not removed) and the key type is supported
+                    if signer_event_body.event_type() == SignerEventType::Add
+                        && signer_event_body.key_type == SUPPORTED_SIGNER_KEY_TYPE
+                    {
+                        return Ok(Some(signer));
+                    }
+                }
+            }
+        }
+        Ok(None)
     }
 
     pub fn get_storage_slot_for_fid(

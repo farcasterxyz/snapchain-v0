@@ -236,10 +236,11 @@ pub async fn register_user(
         fid,
         proto::IdRegisterEventType::Register,
         custody_address,
+        None,
     );
     commit_event(engine, &id_register_event).await;
     let signer_event =
-        events_factory::create_signer_event(fid, signer, proto::SignerEventType::Add);
+        events_factory::create_signer_event(fid, signer, proto::SignerEventType::Add, None);
     commit_event(engine, &signer_event).await;
 }
 
