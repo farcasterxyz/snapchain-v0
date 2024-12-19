@@ -32,7 +32,7 @@ struct Args {
 
 pub fn run() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
-    let turbohash = 0;
+    let turbohash = 1;
 
     let host = ("127.0.0.1", cadence::DEFAULT_PORT);
     let socket = net::UdpSocket::bind("0.0.0.0:0").unwrap();
