@@ -293,7 +293,7 @@ mod tests {
         let result = service
             .validate_ens_username_proof(fid, &username_proof)
             .await;
-        assert!(result.is_err(),);
+        assert!(result.is_err());
     }
 
     #[tokio::test]
