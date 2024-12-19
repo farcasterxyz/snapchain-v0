@@ -5,6 +5,7 @@ use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types::{Filter, Log};
 use alloy_sol_types::{sol, SolEvent};
 use alloy_transport_http::{Client, Http};
+use async_trait::async_trait;
 use foundry_common::ens::EnsError;
 use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -171,21 +172,29 @@ pub struct Event {
     event_type: EventType,
 }
 
-pub struct L1Client {
+#[async_trait]
+pub trait L1Client: Send + Sync {
+    async fn resolve_ens_name(&self, name: String) -> Result<Address, EnsError>;
+}
+
+pub struct RealL1Client {
     provider: RootProvider<Http<Client>>,
 }
 
-impl L1Client {
-    pub fn new(rpc_url: String) -> Result<L1Client, SubscribeError> {
+impl RealL1Client {
+    pub fn new(rpc_url: String) -> Result<RealL1Client, SubscribeError> {
         if rpc_url.is_empty() {
             return Err(SubscribeError::EmptyRpcUrl);
         }
         let url = rpc_url.parse()?;
         let provider = ProviderBuilder::new().on_http(url);
-        Ok(L1Client { provider })
+        Ok(RealL1Client { provider })
     }
+}
 
-    pub async fn resolve_ens_name(&self, name: String) -> Result<Address, EnsError> {
+#[async_trait]
+impl L1Client for RealL1Client {
+    async fn resolve_ens_name(&self, name: String) -> Result<Address, EnsError> {
         foundry_common::ens::NameOrAddress::Name(name)
             .resolve(&self.provider)
             .await

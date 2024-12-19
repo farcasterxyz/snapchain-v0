@@ -4,6 +4,7 @@ use crate::core::error::HubError;
 use crate::mempool::routing;
 use crate::proto;
 use crate::proto::hub_service_server::HubService;
+use crate::proto::on_chain_event::Body;
 use crate::proto::GetInfoResponse;
 use crate::proto::HubEvent;
 use crate::proto::UserNameProof;
@@ -42,7 +43,7 @@ pub struct MyHubService {
     num_shards: u32,
     message_router: Box<dyn routing::MessageRouter>,
     statsd_client: StatsdClientWrapper,
-    l1_client: Option<L1Client>,
+    l1_client: Option<Box<dyn L1Client>>,
 }
 
 impl MyHubService {
@@ -53,7 +54,7 @@ impl MyHubService {
         statsd_client: StatsdClientWrapper,
         num_shards: u32,
         message_router: Box<dyn routing::MessageRouter>,
-        l1_client: Option<L1Client>,
+        l1_client: Option<Box<dyn L1Client>>,
     ) -> Self {
         Self {
             block_store,
@@ -153,7 +154,7 @@ impl MyHubService {
             }
             Err(e) => {
                 self.statsd_client.count("rpc.submit_message.failure", 1);
-                info!("error sending: {:?}", e.to_string());
+                println!("error sending: {:?}", e.to_string());
                 return Err(Status::internal("failed to submit message"));
             }
         }
@@ -171,15 +172,17 @@ impl MyHubService {
         }
     }
 
-    async fn validate_ens_username_proof(
+    pub async fn validate_ens_username_proof(
         &self,
         fid: u64,
         proof: &UserNameProof,
     ) -> Result<(), Status> {
         match &self.l1_client {
             None => {
-                // Skip validation
-                Err(Status::invalid_argument("unable to validate ens name"))
+                // Fail validation, can be fixed with config change
+                Err(Status::invalid_argument(
+                    "unable to validate ens name because there's no l1 client",
+                ))
             }
             Some(l1_client) => {
                 let name = std::str::from_utf8(&proof.name)
@@ -198,23 +201,49 @@ impl MyHubService {
                     .to_vec();
 
                 if resolved_ens_address != proof.owner {
-                    return Err(Status::invalid_argument("invalid ens name"));
+                    println!("resolved ens address {:#?}", resolved_ens_address);
+                    println!("proof address {:#?}", proof.owner);
+                    return Err(Status::invalid_argument(
+                        "invalid ens name, resolved address doesn't match custody address",
+                    ));
                 }
 
                 let stores = self
                     .get_stores_for(fid)
                     .map_err(|err| Status::from_error(Box::new(err)))?;
 
-                let verification = VerificationStore::get_verification_add(
-                    &stores.verification_store,
-                    fid,
-                    &resolved_ens_address,
-                )
-                .map_err(|err| Status::from_error(Box::new(err)))?;
+                let id_register = stores
+                    .onchain_event_store
+                    .get_id_register_event_by_fid(fid)
+                    .map_err(|err| Status::from_error(Box::new(err)))?;
 
-                match verification {
-                    None => Err(Status::invalid_argument("invalid ens name")),
-                    Some(_) => Ok(()),
+                match id_register {
+                    None => return Err(Status::invalid_argument("missing id registration")),
+                    Some(id_register) => {
+                        match id_register.body {
+                            Some(Body::IdRegisterEventBody(id_register)) => {
+                                // Check verified addresses if the resolved address doesn't match the custody address
+                                if id_register.to != resolved_ens_address {
+                                    let verification = VerificationStore::get_verification_add(
+                                        &stores.verification_store,
+                                        fid,
+                                        &resolved_ens_address,
+                                    )
+                                    .map_err(|err| Status::from_error(Box::new(err)))?;
+
+                                    match verification {
+                                    None => Err(Status::invalid_argument(
+                                        "invalid ens name, no matching address including verified addresses",
+                                    )),
+                                    Some(_) => Ok(()),
+                                }
+                                } else {
+                                    Ok(())
+                                }
+                            }
+                            _ => return Err(Status::invalid_argument("missing id registration")),
+                        }
+                    }
                 }
             }
         }
