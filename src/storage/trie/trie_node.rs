@@ -58,21 +58,20 @@ impl<'a> Drop for Context<'a> {
 /// and keeps track of the number of items in the subtree.
 #[derive(Default, Debug, Clone)]
 pub struct TrieNode {
-    hash: Vec<u8>,
     items: usize,
     children: HashMap<u8, TrieNodeType>,
+    child_hashes: HashMap<u8, Vec<u8>>,
     key: Option<Vec<u8>>,
 }
 
 // An empty struct that represents a serialized trie node, which will need to be loaded from the db
+// TODO: since SerializedTrieNode is now empty, do we need it at all?
 #[derive(Debug, Clone)]
-pub struct SerializedTrieNode {
-    pub hash: Option<Vec<u8>>,
-}
+pub struct SerializedTrieNode {}
 
 impl SerializedTrieNode {
-    fn new(hash: Option<Vec<u8>>) -> Self {
-        SerializedTrieNode { hash }
+    fn new() -> Self {
+        SerializedTrieNode {}
     }
 }
 
@@ -86,9 +85,9 @@ pub enum TrieNodeType {
 impl TrieNode {
     pub fn new() -> Self {
         TrieNode {
-            hash: vec![],
             items: 0,
             children: HashMap::new(),
+            child_hashes: HashMap::new(),
             key: None,
         }
     }
@@ -109,7 +108,11 @@ impl TrieNode {
             key: node.key.as_ref().unwrap_or(&vec![]).clone(),
             child_chars: node.children.keys().map(|c| *c as u32).collect(),
             items: node.items as u32,
-            hash: node.hash.clone(),
+            child_hashes: node
+                .child_hashes
+                .iter()
+                .map(|(&k, v)| (k as u32, v.clone()))
+                .collect(),
         };
 
         db_trie_node.encode_to_vec()
@@ -122,15 +125,25 @@ impl TrieNode {
         for char in db_trie_node.child_chars {
             children.insert(
                 char as u8,
-                TrieNodeType::Serialized(SerializedTrieNode::new(None)),
+                TrieNodeType::Serialized(SerializedTrieNode::new()),
             );
         }
 
+        let child_hashes = db_trie_node
+            .child_hashes
+            .into_iter()
+            .map(|(k, v)| (k as u8, v))
+            .collect();
+
         Ok(TrieNode {
-            hash: db_trie_node.hash,
             items: db_trie_node.items as usize,
             children,
-            key: Some(db_trie_node.key),
+            child_hashes,
+            key: if db_trie_node.key.is_empty() {
+                None
+            } else {
+                Some(db_trie_node.key)
+            },
         })
     }
 }
@@ -145,7 +158,34 @@ impl TrieNode {
     }
 
     pub fn hash(&self) -> Vec<u8> {
-        self.hash.clone()
+        if self.is_leaf() {
+            return match self.key.as_deref() {
+                None => vec![],
+                Some(key_ref) => {
+                    if key_ref.is_empty() {
+                        panic!("empty key found on leaf node");
+                    }
+                    blake3_20(key_ref)
+                }
+            };
+        }
+
+        let mut chars: Vec<u8> = self.child_hashes.keys().copied().collect();
+
+        if chars.is_empty() {
+            return vec![];
+        }
+
+        chars.sort();
+
+        let mut concat_hashes = vec![];
+        for c in chars {
+            if let Some(child_hash) = self.child_hashes.get(&c) {
+                concat_hashes.extend_from_slice(child_hash);
+            }
+        }
+
+        blake3_20(&concat_hashes)
     }
 
     #[cfg(test)]
@@ -197,6 +237,7 @@ impl TrieNode {
     pub fn insert(
         &mut self,
         ctx: &Context,
+        child_hashes: &mut HashMap<u8, Vec<u8>>,
         db: &RocksDB,
         txn: &mut RocksDbTransactionBatch,
         mut keys: Vec<Vec<u8>>,
@@ -220,10 +261,13 @@ impl TrieNode {
             if self.key.is_none() {
                 let key = keys.pop().unwrap();
                 // Reached a leaf node with no value, insert it
+                if key.is_empty() {
+                    panic!("empty key found on leaf node");
+                }
                 self.key = Some(key);
                 self.items += 1;
 
-                self.update_hash(ctx, db, &prefix)?;
+                self.update_hash(child_hashes, &prefix)?;
                 self.put_to_txn(txn, &prefix);
 
                 inserted = true;
@@ -289,8 +333,15 @@ impl TrieNode {
             }
 
             // Recurse into a non-leaf node and instruct it to insert the value.
-            let child = self.get_or_load_child(ctx, db, &prefix, char)?;
-            let child_results = child.insert(ctx, db, txn, keys, current_index + 1)?;
+            let child_results = {
+                // temporarily taking child_hashes out of the node here to appease the borrow-checker
+                let mut child_hashes = std::mem::take(&mut self.child_hashes);
+                let child = self.get_or_load_child(ctx, db, &prefix, char)?;
+                let results =
+                    child.insert(ctx, &mut child_hashes, db, txn, keys, current_index + 1)?;
+                self.child_hashes = child_hashes;
+                results
+            };
 
             for (i, result) in is.into_iter().zip(child_results) {
                 results[i] = result;
@@ -303,7 +354,7 @@ impl TrieNode {
         if successes > 0 {
             self.items += successes;
 
-            self.update_hash(ctx, db, &prefix)?;
+            self.update_hash(child_hashes, &prefix)?;
             self.put_to_txn(txn, &prefix);
         }
 
@@ -313,6 +364,7 @@ impl TrieNode {
     pub fn delete(
         &mut self,
         ctx: &Context,
+        child_hashes: &mut HashMap<u8, Vec<u8>>,
         db: &RocksDB,
         txn: &mut RocksDbTransactionBatch,
         keys: Vec<Vec<u8>>,
@@ -329,7 +381,7 @@ impl TrieNode {
                     self.items -= 1;
 
                     self.delete_to_txn(txn, &prefix);
-                    self.update_hash(ctx, db, &prefix)?;
+                    self.update_hash(child_hashes, &prefix)?;
 
                     results[i] = true;
                     break;
@@ -365,8 +417,6 @@ impl TrieNode {
                 continue;
             }
 
-            let child = self.get_or_load_child(ctx, db, &prefix, char)?;
-
             // Split the child_keys into the "i"s and the keys
             let mut is = vec![];
             let mut keys = vec![];
@@ -375,13 +425,22 @@ impl TrieNode {
                 keys.push(key);
             }
 
-            let child_results = child.delete(ctx, db, txn, keys, current_index + 1)?;
-            let child_items = child.items;
+            let (child_results, child_items) = {
+                // temporarily taking child_hashes out of the node here to appease the borrow-checker
+                let mut child_hashes = std::mem::take(&mut self.child_hashes);
+                let child = self.get_or_load_child(ctx, db, &prefix, char)?;
+                let child_results =
+                    child.delete(ctx, &mut child_hashes, db, txn, keys, current_index + 1)?;
+                let child_items = child.items();
+                self.child_hashes = child_hashes;
+                (child_results, child_items)
+            };
 
             // Delete the child if it's empty. This is required to make sure the hash will be the same
             // as another trie that doesn't have this node in the first place.
             if child_items == 0 {
                 self.children.remove(&char);
+                self.child_hashes.remove(&char);
             }
 
             for (i, result) in is.into_iter().zip(child_results) {
@@ -398,7 +457,7 @@ impl TrieNode {
             if self.items == 0 {
                 // Delete this node
                 self.delete_to_txn(txn, &prefix);
-                self.update_hash(ctx, db, &prefix)?;
+                self.update_hash(child_hashes, &prefix)?;
                 return Ok(results);
             }
 
@@ -408,7 +467,11 @@ impl TrieNode {
                 let child = self.get_or_load_child(ctx, db, &prefix, char)?;
 
                 if child.key.is_some() {
-                    self.key = child.key.take();
+                    let new_key = child.key.take();
+                    if new_key.as_ref().unwrap().is_empty() {
+                        panic!("empty key found on leaf node");
+                    }
+                    self.key = new_key;
                     self.children.remove(&char);
 
                     // Delete child
@@ -417,7 +480,7 @@ impl TrieNode {
                 }
             }
 
-            self.update_hash(ctx, db, &prefix)?;
+            self.update_hash(child_hashes, &prefix)?;
             self.put_to_txn(txn, &prefix);
         }
 
@@ -476,10 +539,20 @@ impl TrieNode {
             .insert(new_child_char, TrieNodeType::Node(TrieNode::default()));
 
         if let Some(TrieNodeType::Node(new_child)) = self.children.get_mut(&new_child_char) {
-            new_child.insert(ctx, db, txn, vec![key], current_index + 1)?;
+            // temporarily taking child_hashes out of the node here to appease the borrow-checker
+            let mut child_hashes = std::mem::take(&mut self.child_hashes);
+            new_child.insert(
+                ctx,
+                &mut child_hashes,
+                db,
+                txn,
+                vec![key],
+                current_index + 1,
+            )?;
+            self.child_hashes = child_hashes;
+            self.child_hashes.insert(new_child_char, new_child.hash());
         }
 
-        self.update_hash(ctx, db, &prefix)?;
         self.put_to_txn(txn, &prefix);
 
         Ok(())
@@ -525,45 +598,25 @@ impl TrieNode {
         }
     }
 
-    fn update_hash(&mut self, ctx: &Context, db: &RocksDB, prefix: &[u8]) -> Result<(), TrieError> {
-        if self.is_leaf() {
-            self.hash = blake3_20(&self.key.as_ref().unwrap_or(&vec![]));
-        } else {
-            // Sort the children by their "char" value
-            let child_hashes = {
-                let mut sorted_children: Vec<_> = self.children.iter_mut().collect();
-                sorted_children.sort_by_key(|(char, _)| *char);
+    fn update_hash(
+        &mut self,
+        child_hashes: &mut HashMap<u8, Vec<u8>>,
+        prefix: &[u8],
+    ) -> Result<(), TrieError> {
+        if prefix.len() > 0 {
+            let char = prefix[prefix.len() - 1];
+            let hash = self.hash();
 
-                sorted_children
-                    .iter()
-                    .map(|(char, child)| match child {
-                        TrieNodeType::Node(node) => (**char, node.hash.clone()),
-                        TrieNodeType::Serialized(serialized) => {
-                            if serialized.hash.is_some() {
-                                (**char, serialized.hash.as_ref().unwrap().clone())
-                            } else {
-                                (**char, vec![])
-                            }
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            };
-
-            // If any of the child hashes are none, we load the child from the db
-            let mut concat_hashes = vec![];
-            for (char, hash) in child_hashes.iter() {
-                if hash.is_empty() {
-                    let child = self.get_or_load_child(ctx, db, prefix, *char)?;
-                    concat_hashes.extend_from_slice(child.hash.as_slice());
-                } else {
-                    concat_hashes.extend_from_slice(hash.as_slice());
-                }
+            if hash.is_empty() {
+                child_hashes.remove(&char);
+            } else {
+                child_hashes.insert(char, hash);
             }
-
-            self.hash = blake3_20(&concat_hashes);
         }
+
         Ok(())
     }
+
     fn excluded_hash(
         &mut self,
         ctx: &Context,
@@ -580,7 +633,7 @@ impl TrieNode {
         for char in sorted_children {
             if char != prefix_char {
                 let child_node = self.get_or_load_child(ctx, db, prefix, char)?;
-                child_hashes.push(child_node.hash.clone());
+                child_hashes.push(child_node.hash().clone());
                 excluded_items += child_node.items;
             }
         }
@@ -605,11 +658,9 @@ impl TrieNode {
     pub fn unload_children(&mut self) {
         let mut serialized_children = HashMap::new();
         for (char, child) in self.children.iter_mut() {
-            if let TrieNodeType::Node(child) = child {
-                serialized_children.insert(
-                    *char,
-                    TrieNodeType::Serialized(SerializedTrieNode::new(Some(child.hash.clone()))),
-                );
+            if let TrieNodeType::Node(_) = child {
+                serialized_children
+                    .insert(*char, TrieNodeType::Serialized(SerializedTrieNode::new()));
             }
         }
         self.children = serialized_children;
@@ -675,7 +726,7 @@ impl TrieNode {
             current_node = current_node.get_or_load_child(ctx, db, &current_prefix, *char)?;
         }
 
-        excluded_hashes.push(hex::encode(current_node.hash.as_slice()));
+        excluded_hashes.push(hex::encode(current_node.hash().as_slice()));
 
         Ok(TrieSnapshot {
             prefix: prefix.to_vec(),
