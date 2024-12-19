@@ -155,7 +155,11 @@ impl MerkleTrie {
 
         if let Some(root) = self.root.as_mut() {
             let mut txn = RocksDbTransactionBatch::new();
-            let results = root.insert(ctx, db, &mut txn, keys, 0)?;
+            // root_stub_map: the hash of a node is stored/cached in the parent of that node (in a hashmap)
+            // the root doesn't have a parent, but still needs a hashmap here to satisfy the API. Note also
+            // that the root's hash will NOT be populated anywhere in this map. Use root.hash() for that.
+            let mut root_stub_map = HashMap::new();
+            let results = root.insert(ctx, &mut root_stub_map, db, &mut txn, keys, 0)?;
 
             txn_batch.merge(txn);
             Ok(results)
@@ -185,7 +189,9 @@ impl MerkleTrie {
 
         if let Some(root) = self.root.as_mut() {
             let mut txn = RocksDbTransactionBatch::new();
-            let results = root.delete(ctx, db, &mut txn, keys, 0)?;
+            // root_stub_map: see comment in insert()
+            let root_stub_map = &mut HashMap::new();
+            let results = root.delete(ctx, root_stub_map, db, &mut txn, keys, 0)?;
 
             txn_batch.merge(txn);
             Ok(results)

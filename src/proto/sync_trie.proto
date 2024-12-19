@@ -4,6 +4,6 @@ message DbTrieNode {
   bytes key = 1;
   repeated uint32 childChars = 2;
   uint32 items = 3;
-  bytes hash = 4;
+  map<uint32, bytes> childHashes = 4;
 }
 
