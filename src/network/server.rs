@@ -119,6 +119,7 @@ impl MyHubService {
                 )));
             }
 
+            // We're doing the ens validations here for now because we don't want ens resolution to be on the consensus critical path. Eventually this will move to the fname server.
             if let Some(message_data) = &message.data {
                 match &message_data.body {
                     Some(proto::message_data::Body::UserDataBody(user_data)) => {
@@ -202,7 +203,7 @@ impl MyHubService {
 
                 if resolved_ens_address != proof.owner {
                     return Err(Status::invalid_argument(
-                        "invalid ens name, resolved address doesn't match custody address",
+                        "invalid ens name, resolved address doesn't match proof owner address",
                     ));
                 }
 
@@ -231,7 +232,7 @@ impl MyHubService {
 
                                     match verification {
                                     None => Err(Status::invalid_argument(
-                                        "invalid ens name, no matching address including verified addresses",
+                                        "invalid ens proof, no matching custody address or verified addresses",
                                     )),
                                     Some(_) => Ok(()),
                                 }
