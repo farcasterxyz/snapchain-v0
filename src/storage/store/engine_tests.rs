@@ -179,7 +179,13 @@ mod tests {
     #[tokio::test]
     async fn test_engine_rejects_message_with_invalid_hash() {
         let (mut engine, _tmpdir) = test_helper::new_engine();
-        register_user(FID_FOR_TEST, test_helper::default_signer(), &mut engine).await;
+        register_user(
+            FID_FOR_TEST,
+            test_helper::default_signer(),
+            test_helper::default_custody_address(),
+            &mut engine,
+        )
+        .await;
         let mut message = default_message("msg1");
         let current_timestamp = message.data.as_ref().unwrap().timestamp;
         // Modify the message so the hash is no longer correct
@@ -199,7 +205,13 @@ mod tests {
     #[tokio::test]
     async fn test_engine_rejects_message_with_invalid_signature() {
         let (mut engine, _tmpdir) = test_helper::new_engine();
-        register_user(FID_FOR_TEST, test_helper::default_signer(), &mut engine).await;
+        register_user(
+            FID_FOR_TEST,
+            test_helper::default_signer(),
+            test_helper::default_custody_address(),
+            &mut engine,
+        )
+        .await;
         let mut message = default_message("msg1");
         let current_timestamp = message.data.as_ref().unwrap().timestamp;
         // Modify the message so the signatures is no longer correct
