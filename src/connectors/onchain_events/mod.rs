@@ -85,7 +85,7 @@ pub enum SubscribeError {
     UnableToFindBlockByHash,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum SignerEvent {
     Add {
         key: Bytes,
@@ -101,13 +101,13 @@ pub enum SignerEvent {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct SignerMigratedEvent {
     #[allow(dead_code)] // TODO
     migrated_at: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum IdRegisterEvent {
     Register {
         to: Address,
@@ -122,7 +122,7 @@ pub enum IdRegisterEvent {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct StorageRentEvent {
     #[allow(dead_code)] // TODO
     payer: Address,
@@ -134,7 +134,7 @@ pub struct StorageRentEvent {
     expiry: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum EventType {
     Signer(SignerEvent),
     SignerMigrated { migrated_at: u64 },
@@ -142,7 +142,7 @@ pub enum EventType {
     StorageRent(StorageRentEvent),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Event {
     #[allow(dead_code)] // TODO
     chain_id: u64,
@@ -201,7 +201,6 @@ impl L1Client for RealL1Client {
     }
 }
 
-#[derive(Clone)]
 pub struct Subscriber {
     provider: RootProvider<Http<Client>>,
     onchain_events_by_block: HashMap<u64, Vec<Event>>,
