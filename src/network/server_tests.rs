@@ -1,14 +1,18 @@
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
+    use foundry_common::ens::EnsError;
+    use prost::Message;
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
 
+    use crate::connectors::onchain_events::L1Client;
     use crate::mempool::routing;
     use crate::mempool::routing::MessageRouter;
     use crate::network::server::MyHubService;
     use crate::proto::hub_service_server::HubService;
-    use crate::proto::{self, HubEvent, HubEventType};
+    use crate::proto::{self, HubEvent, HubEventType, UserNameProof, UserNameType};
     use crate::proto::{FidRequest, SubscribeRequest};
     use crate::storage::db::{self, RocksDB, RocksDbTransactionBatch};
     use crate::storage::store::engine::{Senders, ShardEngine};
@@ -17,6 +21,7 @@ mod tests {
     use crate::storage::trie::merkle_trie;
     use crate::utils::factory::{events_factory, messages_factory};
     use crate::utils::statsd_wrapper::StatsdClientWrapper;
+    use futures::future;
     use futures::StreamExt;
     use tempfile;
     use tokio::sync::{broadcast, mpsc};
@@ -33,6 +38,20 @@ mod tests {
                 page_token: None,
                 reverse: None,
             })
+        }
+    }
+
+    struct MockL1Client {}
+
+    #[async_trait]
+    impl L1Client for MockL1Client {
+        async fn resolve_ens_name(
+            &self,
+            _name: String,
+        ) -> Result<alloy_primitives::Address, EnsError> {
+            let addr =
+                alloy_primitives::Address::from_slice(&test_helper::default_custody_address());
+            future::ready(Ok(addr)).await
         }
     }
 
@@ -158,6 +177,7 @@ mod tests {
                 statsd_client,
                 num_shards,
                 message_router,
+                Some(Box::new(MockL1Client {})),
             ),
         )
     }
@@ -227,12 +247,149 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_good_ens_proof() {
+        let (_stores, _senders, [mut engine1, mut _engine2], service) = make_server();
+        let signer = test_helper::default_signer();
+        let owner = test_helper::default_custody_address();
+        let fid = SHARD1_FID;
+
+        test_helper::register_user(fid, signer.clone(), owner.clone(), &mut engine1).await;
+
+        let username_proof = UserNameProof {
+            timestamp: messages_factory::farcaster_time() as u64,
+            name: "username.eth".to_string().encode_to_vec(),
+            owner,
+            signature: "signature".to_string().encode_to_vec(),
+            fid,
+            r#type: UserNameType::UsernameTypeEnsL1 as i32,
+        };
+
+        let result = service
+            .validate_ens_username_proof(fid, &username_proof)
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ens_proof_with_bad_owner() {
+        let (_stores, _senders, [mut engine1, mut _engine2], service) = make_server();
+        let signer = test_helper::default_signer();
+        let owner = test_helper::default_custody_address();
+        let fid = SHARD1_FID;
+
+        test_helper::register_user(fid, signer.clone(), owner.clone(), &mut engine1).await;
+
+        let username_proof = UserNameProof {
+            timestamp: messages_factory::farcaster_time() as u64,
+            name: "username.eth".to_string().encode_to_vec(),
+            owner: "100000000000000000".to_string().encode_to_vec(),
+            signature: "signature".to_string().encode_to_vec(),
+            fid,
+            r#type: UserNameType::UsernameTypeEnsL1 as i32,
+        };
+
+        // Proof owner does not match owner of ens name
+        let result = service
+            .validate_ens_username_proof(fid, &username_proof)
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_ens_proof_with_bad_custody_address() {
+        let (_stores, _senders, [mut engine1, mut _engine2], service) = make_server();
+        let signer = test_helper::default_signer();
+        let owner = test_helper::default_custody_address();
+        let fid = SHARD1_FID;
+
+        test_helper::register_user(
+            fid,
+            signer.clone(),
+            "100000000000000000".to_string().encode_to_vec(),
+            &mut engine1,
+        )
+        .await;
+
+        let username_proof = UserNameProof {
+            timestamp: messages_factory::farcaster_time() as u64,
+            name: "username.eth".to_string().encode_to_vec(),
+            owner,
+            signature: "signature".to_string().encode_to_vec(),
+            fid,
+            r#type: UserNameType::UsernameTypeEnsL1 as i32,
+        };
+
+        let result = service
+            .validate_ens_username_proof(fid, &username_proof)
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_ens_proof_with_verified_address() {
+        let (_stores, _senders, [mut engine1, mut _engine2], service) = make_server();
+        let signer = test_helper::default_signer();
+        let owner = test_helper::default_custody_address();
+        let fid = SHARD1_FID;
+        let signature = "signature".to_string();
+
+        test_helper::register_user(
+            fid,
+            signer.clone(),
+            "100000000000000000".to_string().encode_to_vec(),
+            &mut engine1,
+        )
+        .await;
+
+        let verification_add = messages_factory::verifications::create_verification_add(
+            fid,
+            0,
+            owner.clone(),
+            signature.clone(),
+            "hash".to_string(),
+            None,
+            None,
+        );
+
+        test_helper::commit_message(&mut engine1, &verification_add).await;
+
+        let username_proof = UserNameProof {
+            timestamp: messages_factory::farcaster_time() as u64,
+            name: "username.eth".to_string().encode_to_vec(),
+            owner,
+            signature: signature.encode_to_vec(),
+            fid,
+            r#type: UserNameType::UsernameTypeEnsL1 as i32,
+        };
+
+        let result = service
+            .validate_ens_username_proof(fid, &username_proof)
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
     async fn test_cast_apis() {
         let (_, _, [mut engine1, mut engine2], service) = make_server();
         let engine1 = &mut engine1;
         let engine2 = &mut engine2;
-        test_helper::register_user(SHARD1_FID, test_helper::default_signer(), engine1).await;
-        test_helper::register_user(SHARD2_FID, test_helper::default_signer(), engine2).await;
+        test_helper::register_user(
+            SHARD1_FID,
+            test_helper::default_signer(),
+            test_helper::default_custody_address(),
+            engine1,
+        )
+        .await;
+        test_helper::register_user(
+            SHARD2_FID,
+            test_helper::default_signer(),
+            test_helper::default_custody_address(),
+            engine2,
+        )
+        .await;
         let cast_add = messages_factory::casts::create_cast_add(SHARD1_FID, "test", None, None);
         let cast_add2 = messages_factory::casts::create_cast_add(SHARD1_FID, "test2", None, None);
         let cast_remove = messages_factory::casts::create_cast_remove(
@@ -362,7 +519,13 @@ mod tests {
         assert_eq!(response.get_ref().unit_details[0].unit_size, 0);
         assert_eq!(response.get_ref().unit_details[1].unit_size, 0);
 
-        test_helper::register_user(SHARD1_FID, test_helper::default_signer(), &mut engine1).await;
+        test_helper::register_user(
+            SHARD1_FID,
+            test_helper::default_signer(),
+            test_helper::default_custody_address(),
+            &mut engine1,
+        )
+        .await;
         // register_user will give the user a single unit of storage, let add one more legacy unit and a 2024 unit for a total of 1 legacy and 2 2024 units
         test_helper::commit_event(
             &mut engine1,

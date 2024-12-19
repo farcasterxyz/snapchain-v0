@@ -41,7 +41,13 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
 
     let fid = test_helper::FID_FOR_TEST;
 
-    test_helper::register_user(fid, test_helper::default_signer(), &mut engine).await;
+    test_helper::register_user(
+        fid,
+        test_helper::default_signer(),
+        test_helper::default_custody_address(),
+        &mut engine,
+    )
+    .await;
 
     loop {
         for _ in 0..100 {

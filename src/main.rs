@@ -1,4 +1,5 @@
 use malachite_metrics::{Metrics, SharedRegistry};
+use snapchain::connectors::onchain_events::{L1Client, RealL1Client};
 use snapchain::consensus::consensus::SystemMessage;
 use snapchain::core::types::proto;
 use snapchain::mempool::routing;
@@ -167,6 +168,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let rpc_block_store = block_store.clone();
     tokio::spawn(async move {
+        let l1_client: Option<Box<dyn L1Client>> = match RealL1Client::new(app_config.l1_rpc_url) {
+            Ok(client) => Some(Box::new(client)),
+            Err(_) => None,
+        };
         let service = MyHubService::new(
             rpc_block_store,
             rpc_shard_stores,
@@ -174,6 +179,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             statsd_client.clone(),
             app_config.consensus.num_shards,
             Box::new(routing::ShardRouter {}),
+            l1_client,
         );
 
         let resp = Server::builder()

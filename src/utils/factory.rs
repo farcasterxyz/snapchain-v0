@@ -137,9 +137,10 @@ pub mod events_factory {
     pub fn create_id_register_event(
         fid: u64,
         event_type: proto::IdRegisterEventType,
+        custody_address: Vec<u8>,
     ) -> OnChainEvent {
         let id_register_event_body = proto::IdRegisterEventBody {
-            to: vec![],
+            to: custody_address,
             event_type: event_type as i32,
             from: vec![],
             recovery_address: vec![],
@@ -412,14 +413,14 @@ pub mod messages_factory {
         pub fn create_verification_add(
             fid: u64,
             verification_type: u32,
-            address: String,
+            address: Vec<u8>,
             claim_signature: String,
             block_hash: String,
             timestamp: Option<u32>,
             private_key: Option<&SigningKey>,
         ) -> message::Message {
             let body = VerificationAddAddressBody {
-                address: address.encode_to_vec(),
+                address: address,
                 claim_signature: claim_signature.encode_to_vec(),
                 block_hash: block_hash.encode_to_vec(),
                 verification_type,
@@ -463,7 +464,7 @@ pub mod messages_factory {
             fid: u64,
             username_type: crate::proto::UserNameType,
             name: String,
-            owner: String,
+            owner: Vec<u8>,
             signature: String,
             timestamp: u64,
             private_key: Option<&SigningKey>,
@@ -471,7 +472,7 @@ pub mod messages_factory {
             let proof = UserNameProof {
                 timestamp,
                 name: name.encode_to_vec(),
-                owner: owner.encode_to_vec(),
+                owner,
                 signature: signature.encode_to_vec(),
                 fid,
                 r#type: username_type as i32,

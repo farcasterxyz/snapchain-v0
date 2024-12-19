@@ -4,6 +4,7 @@ use crate::storage::store::stores::StoreLimits;
 use crate::storage::trie::merkle_trie;
 use crate::utils::statsd_wrapper::StatsdClientWrapper;
 use ed25519_dalek::{SecretKey, SigningKey};
+use prost::Message;
 use std::sync::Arc;
 use tempfile;
 
@@ -224,10 +225,18 @@ pub fn default_storage_event(fid: u64) -> OnChainEvent {
     events_factory::create_rent_event(fid, None, Some(1), false)
 }
 
-pub async fn register_user(fid: u64, signer: SigningKey, engine: &mut ShardEngine) {
+pub async fn register_user(
+    fid: u64,
+    signer: SigningKey,
+    custody_address: Vec<u8>,
+    engine: &mut ShardEngine,
+) {
     commit_event(engine, &default_storage_event(fid)).await;
-    let id_register_event =
-        events_factory::create_id_register_event(fid, proto::IdRegisterEventType::Register);
+    let id_register_event = events_factory::create_id_register_event(
+        fid,
+        proto::IdRegisterEventType::Register,
+        custody_address,
+    );
     commit_event(engine, &id_register_event).await;
     let signer_event =
         events_factory::create_signer_event(fid, signer, proto::SignerEventType::Add);
@@ -258,6 +267,10 @@ pub fn default_signer() -> SigningKey {
         &SecretKey::from_hex("1000000000000000000000000000000000000000000000000000000000000000")
             .unwrap(),
     )
+}
+
+pub fn default_custody_address() -> Vec<u8> {
+    "000000000000000000".to_string().encode_to_vec()
 }
 
 #[allow(dead_code)]

@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 
-use alloy::{
-    primitives::{address, Address, Bytes, FixedBytes, Uint},
-    providers::{Provider, ProviderBuilder, RootProvider},
-    rpc::types::{Filter, Log},
-    sol,
-    sol_types::SolEvent,
-    transports::http::{Client, Http},
-};
+use alloy_primitives::{address, Address, Bytes, FixedBytes, Uint};
+use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use alloy_rpc_types::{Filter, Log};
+use alloy_sol_types::{sol, SolEvent};
+use alloy_transport_http::{Client, Http};
+use async_trait::async_trait;
+use foundry_common::ens::EnsError;
 use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -173,6 +172,35 @@ pub struct Event {
     event_type: EventType,
 }
 
+#[async_trait]
+pub trait L1Client: Send + Sync {
+    async fn resolve_ens_name(&self, name: String) -> Result<Address, EnsError>;
+}
+
+pub struct RealL1Client {
+    provider: RootProvider<Http<Client>>,
+}
+
+impl RealL1Client {
+    pub fn new(rpc_url: String) -> Result<RealL1Client, SubscribeError> {
+        if rpc_url.is_empty() {
+            return Err(SubscribeError::EmptyRpcUrl);
+        }
+        let url = rpc_url.parse()?;
+        let provider = ProviderBuilder::new().on_http(url);
+        Ok(RealL1Client { provider })
+    }
+}
+
+#[async_trait]
+impl L1Client for RealL1Client {
+    async fn resolve_ens_name(&self, name: String) -> Result<Address, EnsError> {
+        foundry_common::ens::NameOrAddress::Name(name)
+            .resolve(&self.provider)
+            .await
+    }
+}
+
 pub struct Subscriber {
     provider: RootProvider<Http<Client>>,
     onchain_events_by_block: HashMap<u64, Vec<Event>>,
@@ -227,7 +255,7 @@ impl Subscriber {
     async fn get_block_timestamp(&self, block_hash: FixedBytes<32>) -> Result<u64, SubscribeError> {
         let block = self
             .provider
-            .get_block_by_hash(block_hash, alloy::rpc::types::BlockTransactionsKind::Hashes)
+            .get_block_by_hash(block_hash, alloy_rpc_types::BlockTransactionsKind::Hashes)
             .await?
             .ok_or(SubscribeError::UnableToFindBlockByHash)?;
         Ok(block.header.timestamp)

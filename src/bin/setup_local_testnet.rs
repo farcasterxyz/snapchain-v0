@@ -9,6 +9,9 @@ struct Args {
     #[arg(long, value_parser = parse_duration, default_value = "250ms")]
     propose_value_delay: Duration,
 
+    #[arg(long, default_value = "")]
+    l1_rpc_url: String,
+
     /// Statsd prefix. note: node ID will be appended before config file written
     #[arg(long, default_value = "snapchain")]
     statsd_prefix: String,
@@ -66,11 +69,13 @@ async fn main() {
         let statsd_prefix = format!("{}{}", args.statsd_prefix, id);
         let statsd_addr = args.statsd_addr.clone();
         let statsd_use_tags = args.statsd_use_tags;
+        let l1_rpc_url = args.l1_rpc_url.clone();
 
         let config_file_content = format!(
             r#"
 rpc_address="{rpc_address}"
 rocksdb_dir="{db_dir}"
+l1_rpc_url="{l1_rpc_url}"
 
 [statsd]
 prefix="{statsd_prefix}"

@@ -31,7 +31,11 @@ impl MessageGenerator for SingleUser {
             self.initialized = true;
             messages.push(NextMessage::OnChainEvent(cli::compose_rent_event(fid)));
             messages.push(NextMessage::OnChainEvent(
-                events_factory::create_id_register_event(fid, proto::IdRegisterEventType::Register),
+                events_factory::create_id_register_event(
+                    fid,
+                    proto::IdRegisterEventType::Register,
+                    vec![],
+                ),
             ));
             messages.push(NextMessage::OnChainEvent(
                 events_factory::create_signer_event(
