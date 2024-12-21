@@ -122,20 +122,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         });
     }
 
-    if !app_config.onchain_events.rpc_url.is_empty() {
-        let mut onchain_events_subscriber =
-            snapchain::connectors::onchain_events::Subscriber::new(app_config.onchain_events)?;
-        tokio::spawn(async move {
-            let result = onchain_events_subscriber.run().await;
-            match result {
-                Ok(()) => {}
-                Err(e) => {
-                    error!("Error subscribing to on chain events {:#?}", e);
-                }
-            }
-        });
-    }
-
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
     let registry = SharedRegistry::global();
@@ -162,6 +148,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
         app_config.consensus.num_shards,
         Box::new(routing::ShardRouter {}),
     );
+
+    if !app_config.onchain_events.rpc_url.is_empty() {
+        let mut onchain_events_subscriber = snapchain::connectors::onchain_events::Subscriber::new(
+            app_config.onchain_events,
+            node.shard_senders.clone(),
+            app_config.consensus.num_shards,
+            Box::new(routing::ShardRouter {}),
+        )?;
+        tokio::spawn(async move {
+            let result = onchain_events_subscriber.run(false).await;
+            match result {
+                Ok(()) => {}
+                Err(e) => {
+                    error!("Error subscribing to on chain events {:#?}", e);
+                }
+            }
+        });
+    }
 
     let rpc_shard_stores = node.shard_stores.clone();
     let rpc_shard_senders = node.shard_senders.clone();
