@@ -12,6 +12,15 @@ struct Args {
     #[arg(long, default_value = "")]
     l1_rpc_url: String,
 
+    #[arg(long, default_value = "")]
+    l2_rpc_url: String,
+
+    #[arg(long, default_value = "108864739")]
+    start_block_number: u64,
+
+    #[arg(long, default_value = "0")]
+    stop_block_number: u64,
+
     /// Statsd prefix. note: node ID will be appended before config file written
     #[arg(long, default_value = "snapchain")]
     statsd_prefix: String,
@@ -55,12 +64,12 @@ async fn main() {
         let secret_key = hex::encode(SecretKey::generate());
         let rpc_port = base_rpc_port + i;
         let gossip_port = base_gossip_port + i;
-        let host = format!("127.0.0.1{i}");
+        let host = format!("127.0.0.1");
         let rpc_address = format!("{host}:{rpc_port}");
         let gossip_multi_addr = format!("/ip4/{host}/udp/{gossip_port}/quic-v1");
         let other_nodes_addresses = (1..=nodes)
             .filter(|&x| x != id)
-            .map(|x| format!("/ip4/127.0.0.1{x}/udp/{:?}/quic-v1", base_gossip_port + x))
+            .map(|x| format!("/ip4/127.0.0.1/udp/{:?}/quic-v1", base_gossip_port + x))
             .collect::<Vec<String>>()
             .join(",");
 
@@ -70,6 +79,9 @@ async fn main() {
         let statsd_addr = args.statsd_addr.clone();
         let statsd_use_tags = args.statsd_use_tags;
         let l1_rpc_url = args.l1_rpc_url.clone();
+        let l2_rpc_url = args.l2_rpc_url.clone();
+        let start_block_number = args.start_block_number;
+        let stop_block_number = args.stop_block_number;
 
         let config_file_content = format!(
             r#"
@@ -89,6 +101,11 @@ bootstrap_peers = "{other_nodes_addresses}"
 [consensus]
 private_key = "{secret_key}"
 propose_value_delay = "{propose_value_delay}"
+
+[onchain_events]
+rpc_url= "{l2_rpc_url}"
+start_block_number = {start_block_number}
+stop_block_number = {stop_block_number}
             "#
         );
 
