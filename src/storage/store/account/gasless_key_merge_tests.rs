@@ -346,4 +346,94 @@ mod tests {
             other => panic!("expected KeyClaimedByDifferentFid, got {other:?}"),
         }
     }
+
+    /// NEYN-10579: an FID already at `MAX_GASLESS_KEYS_PER_FID` (1000) is rejected on a
+    /// first-time KEY_ADD, with the exact error carrying the cap value. Seeds the counter
+    /// directly via `increment_gasless_key_count` (1000 times) rather than performing 1000 real
+    /// signed merges — the counter is the only state this test needs to manipulate, and
+    /// `merge_key_add` never distinguishes a seeded count from one it built up itself.
+    #[test]
+    fn key_add_at_cap_rejected_with_active_key_cap_exceeded() {
+        use crate::core::validations::key::MAX_GASLESS_KEYS_PER_FID;
+        use crate::storage::store::account::{get_gasless_key_count, increment_gasless_key_count};
+
+        let world = new_world();
+        let f = fresh_fixture(7, 99);
+        register_custody(&world, f.fid, &f.fid_custody);
+        register_custody(&world, f.request_fid, &f.app_custody);
+
+        // Seed the counter to exactly the cap (1000) with no records actually written — the
+        // cap check only reads the counter, so this reproduces "FID already at the cap" without
+        // needing 1000 distinct signed KEY_ADDs.
+        let mut seed_txn = RocksDbTransactionBatch::new();
+        for _ in 0..MAX_GASLESS_KEYS_PER_FID {
+            increment_gasless_key_count(&world.db, &mut seed_txn, f.fid).unwrap();
+        }
+        world.db.commit(seed_txn).unwrap();
+
+        // A first-time add for a brand-new key, with the FID already at the cap, must be
+        // rejected — this is the boundary the `>=` in the cap check exists to enforce.
+        let mut txn = RocksDbTransactionBatch::new();
+        let err = merge_key_add(&world.db, &world.store, &f.build(), &mut txn, false).unwrap_err();
+        match err {
+            MessageValidationError::MessageValidationError(
+                ValidationError::ActiveKeyCapExceeded(cap),
+            ) => {
+                assert_eq!(cap, MAX_GASLESS_KEYS_PER_FID);
+            }
+            other => panic!("expected ActiveKeyCapExceeded, got {other:?}"),
+        }
+
+        // And the counter itself is unchanged by the rejected attempt — a rejected add must
+        // not silently bump the count past the cap.
+        let txn2 = RocksDbTransactionBatch::new();
+        let count = get_gasless_key_count(&world.db, &txn2, f.fid).unwrap();
+        assert_eq!(count, MAX_GASLESS_KEYS_PER_FID);
+    }
+
+    /// The cap is explicitly documented as skipped on the resubmission (upsert) path, because
+    /// replacing an existing record is net-zero for the counter. An FID at the cap must still be
+    /// able to modify a key it already owns.
+    #[test]
+    fn resubmit_at_cap_still_succeeds() {
+        use crate::core::validations::key::MAX_GASLESS_KEYS_PER_FID;
+        use crate::storage::store::account::{get_gasless_key_count, increment_gasless_key_count};
+
+        let world = new_world();
+        let mut f = fresh_fixture(7, 99);
+        register_custody(&world, f.fid, &f.fid_custody);
+        register_custody(&world, f.request_fid, &f.app_custody);
+
+        // First-time add while comfortably under the cap.
+        commit_merge(&world, &f.build());
+
+        // Now push the counter up to the cap by seeding the remainder directly (one slot is
+        // already accounted for by the real add above).
+        let mut seed_txn = RocksDbTransactionBatch::new();
+        for _ in 0..(MAX_GASLESS_KEYS_PER_FID - 1) {
+            increment_gasless_key_count(&world.db, &mut seed_txn, f.fid).unwrap();
+        }
+        world.db.commit(seed_txn).unwrap();
+
+        let txn_check = RocksDbTransactionBatch::new();
+        assert_eq!(
+            get_gasless_key_count(&world.db, &txn_check, f.fid).unwrap(),
+            MAX_GASLESS_KEYS_PER_FID,
+        );
+
+        // Resubmit the SAME key (same envelope signer, same request_fid) with a higher nonce —
+        // this must succeed despite being at the cap, since it upserts rather than adds.
+        f.nonce = 2;
+        f.ttl = 7200;
+        let mut txn = RocksDbTransactionBatch::new();
+        merge_key_add(&world.db, &world.store, &f.build(), &mut txn, false).unwrap();
+        world.db.commit(txn).unwrap();
+
+        // Counter is still exactly at the cap — an upsert must not increment it.
+        let txn3 = RocksDbTransactionBatch::new();
+        assert_eq!(
+            get_gasless_key_count(&world.db, &txn3, f.fid).unwrap(),
+            MAX_GASLESS_KEYS_PER_FID,
+        );
+    }
 }
