@@ -400,27 +400,19 @@ impl NodeRegistry {
     /// Drop any existing entry the incoming config node matches, so a whole
     /// entry (both index keys) is replaced rather than partially merged.
     ///
-    /// KNOWN EDGE CASE (uncovered): only the *first* match is removed — by
-    /// pubkey, else by peer id. A config entry whose pubkey matches builtin A but
-    /// whose peer id matches a *different* builtin B removes A, then the later
-    /// `insert` overwrites B's peer-id index slot while B's pubkey index entry
-    /// survives — leaving B half-updated (reachable by pubkey but not peer id).
-    /// This requires a pathological config (an entry carrying another node's peer
-    /// id) and is not currently guarded. Tracked in
-    /// https://github.com/farcasterxyz/snapchain/issues/978.
     fn remove_existing(&mut self, node: &KnownNode) {
-        let existing = node
+        let pubkey_match = node
             .consensus_public_key
             .as_ref()
             .filter(|k| !k.is_empty())
-            .and_then(|k| self.by_pubkey.get(&k.to_ascii_lowercase()).cloned())
-            .or_else(|| {
-                node.peer_id
-                    .as_ref()
-                    .filter(|p| !p.is_empty())
-                    .and_then(|p| self.by_peer_id.get(p).cloned())
-            });
-        if let Some(existing) = existing {
+            .and_then(|k| self.by_pubkey.get(&k.to_ascii_lowercase()).cloned());
+        let peer_id_match = node
+            .peer_id
+            .as_ref()
+            .filter(|p| !p.is_empty())
+            .and_then(|p| self.by_peer_id.get(p).cloned());
+
+        for existing in [pubkey_match, peer_id_match].into_iter().flatten() {
             if let Some(pubkey) = &existing.consensus_public_key {
                 self.by_pubkey.remove(&pubkey.to_ascii_lowercase());
             }
@@ -646,6 +638,62 @@ mod tests {
         // The builtin peer-id index entry for mordor is gone (whole-entry replace).
         assert!(registry
             .lookup("12D3KooWCc28TYrrXFivwUshyZ8R5HqPMgx4f7AP54iCDLYr7kFR", None)
+            .is_none());
+    }
+
+    #[test]
+    fn config_override_removes_distinct_pubkey_and_peer_id_matches() {
+        let cfg = cfg_with(vec![KnownNode {
+            name: "combined".to_string(),
+            operator: Operator::Community,
+            role: NodeRole::MainnetValidator,
+            http_api_url: None,
+            // Mordor's public key and Rohan's peer id intentionally match two
+            // different builtin entries.
+            consensus_public_key: Some(
+                "29696eb40eb900a329a8d2542edef15d552c9ba6ded7882276be1e9eca090970".to_string(),
+            ),
+            peer_id: Some(
+                "12D3KooWQaoBw2gvdmfGdXjepEQU9i47FXxvsCZ6wu8Vn4gwvHm2".to_string(),
+            ),
+            offline: false,
+            note: None,
+        }]);
+
+        let registry = NodeRegistry::from_config(&cfg);
+
+        assert_eq!(registry.len(), BUILTIN.len() - 1);
+        assert_eq!(
+            registry
+                .lookup(
+                    "",
+                    Some(
+                        "29696eb40eb900a329a8d2542edef15d552c9ba6ded7882276be1e9eca090970"
+                    )
+                )
+                .unwrap()
+                .name,
+            "combined"
+        );
+        assert_eq!(
+            registry
+                .lookup(
+                    "12D3KooWQaoBw2gvdmfGdXjepEQU9i47FXxvsCZ6wu8Vn4gwvHm2",
+                    None
+                )
+                .unwrap()
+                .name,
+            "combined"
+        );
+        // Both of the original nodes' other index keys must be gone.
+        assert!(registry
+            .lookup("12D3KooWCc28TYrrXFivwUshyZ8R5HqPMgx4f7AP54iCDLYr7kFR", None)
+            .is_none());
+        assert!(registry
+            .lookup(
+                "",
+                Some("db65769be751f402fe9ea2fdf21679a870ea0e088454bbc47e02c4cc6c258081")
+            )
             .is_none());
     }
 
