@@ -1,7 +1,10 @@
 mod tests {
     use serde::Deserialize;
 
-    use crate::core::validations;
+    use crate::{
+        core::validations::{self, error::ValidationError},
+        proto::{reaction_body::Target, CastId as ProtoCastId, ReactionType},
+    };
 
     #[derive(Deserialize)]
     struct Message {
@@ -83,6 +86,97 @@ mod tests {
                 "validate_reaction_body failed: {:?}",
                 result.unwrap_err()
             )
+        }
+    }
+
+    fn reaction(reaction_type: ReactionType, target: Option<Target>) -> crate::proto::ReactionBody {
+        crate::proto::ReactionBody {
+            r#type: reaction_type as i32,
+            target,
+        }
+    }
+
+    #[test]
+    fn test_reaction_validation_shape_space() {
+        let valid_cast = || {
+            Target::TargetCastId(ProtoCastId {
+                fid: 1,
+                hash: vec![0; 20],
+            })
+        };
+
+        for reaction_type in [ReactionType::None, ReactionType::Like, ReactionType::Recast] {
+            assert_eq!(
+                validations::reaction::validate_reaction_body(&reaction(
+                    reaction_type,
+                    Some(valid_cast()),
+                )),
+                Ok(())
+            );
+            assert_eq!(
+                validations::reaction::validate_reaction_body(&reaction(
+                    reaction_type,
+                    Some(Target::TargetUrl("x".to_string())),
+                )),
+                Ok(())
+            );
+        }
+
+        assert_eq!(
+            validations::reaction::validate_reaction_body(&reaction(
+                ReactionType::Like,
+                Some(Target::TargetUrl("x".repeat(256))),
+            )),
+            Ok(())
+        );
+
+        let invalid_cases = [
+            (
+                crate::proto::ReactionBody {
+                    r#type: 3,
+                    target: Some(Target::TargetUrl("x".to_string())),
+                },
+                ValidationError::InvalidReactionType,
+            ),
+            (
+                reaction(ReactionType::Like, None),
+                ValidationError::TargetIsMissing,
+            ),
+            (
+                reaction(ReactionType::Like, Some(Target::TargetUrl(String::new()))),
+                ValidationError::UrlTooShort,
+            ),
+            (
+                reaction(ReactionType::Like, Some(Target::TargetUrl("x".repeat(257)))),
+                ValidationError::UrlTooLong,
+            ),
+            (
+                reaction(
+                    ReactionType::Like,
+                    Some(Target::TargetCastId(ProtoCastId {
+                        fid: 1,
+                        hash: vec![0; 19],
+                    })),
+                ),
+                ValidationError::HashIsMissing,
+            ),
+            (
+                reaction(
+                    ReactionType::Like,
+                    Some(Target::TargetCastId(ProtoCastId {
+                        fid: 0,
+                        hash: vec![0; 20],
+                    })),
+                ),
+                ValidationError::FidIsMissing,
+            ),
+        ];
+
+        for (body, expected) in invalid_cases {
+            assert_eq!(
+                validations::reaction::validate_reaction_body(&body),
+                Err(expected)
+            );
         }
     }
 }
