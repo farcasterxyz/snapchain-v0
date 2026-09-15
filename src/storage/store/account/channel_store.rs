@@ -404,6 +404,10 @@ fn member_state_for_message(message: &Message) -> Result<ChannelMemberState, Hub
     }
 }
 
+fn stored_member_state_for_message(message: &Message) -> Result<ChannelMemberState, HubError> {
+    member_state_for_message(message).map_err(|err| HubError::invalid_internal_state(&err.message))
+}
+
 fn moderation_state_for_message(message: &Message) -> Result<ChannelModerationState, HubError> {
     let action = match message.data.as_ref().and_then(|data| data.body.as_ref()) {
         Some(Body::ChannelModerateBody(body)) => ChannelModerateAction::try_from(body.action)
@@ -417,6 +421,13 @@ fn moderation_state_for_message(message: &Message) -> Result<ChannelModerationSt
             "invalid channel moderate action",
         )),
     }
+}
+
+fn stored_moderation_state_for_message(
+    message: &Message,
+) -> Result<ChannelModerationState, HubError> {
+    moderation_state_for_message(message)
+        .map_err(|err| HubError::invalid_internal_state(&err.message))
 }
 
 fn merge_slot<T: ChannelSlotStoreDef + Clone>(
@@ -995,7 +1006,7 @@ impl ChannelMemberStore {
         maybe_txn: Option<&RocksDbTransactionBatch>,
     ) -> Result<Option<ChannelMemberState>, HubError> {
         read_slot(store, Self::slot_key(channel_id, target_fid)?, maybe_txn)?
-            .map(|message| member_state_for_message(&message))
+            .map(|message| stored_member_state_for_message(&message))
             .transpose()
     }
 
@@ -1014,7 +1025,7 @@ impl ChannelMemberStore {
                     .timestamp;
                 Ok(ChannelMemberEntry {
                     fid: target_fid,
-                    state: member_state_for_message(&message)?,
+                    state: stored_member_state_for_message(&message)?,
                     last_action_ts,
                 })
             })
@@ -1054,7 +1065,7 @@ impl ChannelMemberStore {
                         );
                         err
                     })?;
-                let state = member_state_for_message(&message)?;
+                let state = stored_member_state_for_message(&message)?;
                 if state_filter.is_none_or(|filter| filter == state) {
                     let last_action_ts = message
                         .data
@@ -1215,7 +1226,7 @@ impl ChannelModerateStore {
         maybe_txn: Option<&RocksDbTransactionBatch>,
     ) -> Result<Option<ChannelModerationState>, HubError> {
         read_slot(store, Self::slot_key(channel_id, cast_hash), maybe_txn)?
-            .map(|message| moderation_state_for_message(&message))
+            .map(|message| stored_moderation_state_for_message(&message))
             .transpose()
     }
 
@@ -1264,10 +1275,15 @@ impl ChannelModerateStore {
                     })?;
                 let body = match message.data.as_ref().and_then(|data| data.body.as_ref()) {
                     Some(Body::ChannelModerateBody(body)) => body,
-                    _ => return Err(invalid_body("ChannelModerate")),
+                    _ => {
+                        return Err(HubError::invalid_internal_state(
+                            "invalid ChannelModerate body",
+                        ))
+                    }
                 };
-                let action = ChannelModerateAction::try_from(body.action)
-                    .map_err(|_| HubError::validation_failure("invalid channel moderate action"))?;
+                let action = ChannelModerateAction::try_from(body.action).map_err(|_| {
+                    HubError::invalid_internal_state("invalid channel moderate action")
+                })?;
                 entries.push(ChannelModerationEntry {
                     cast_hash: body.cast_hash.clone(),
                     action,
