@@ -5,13 +5,14 @@ mod tests {
         ChannelModerateAction, ChannelModerateBody, ChannelPinBody, ChannelUpdateBody, HubEvent,
         MembershipMode, Message, MessageType,
     };
-    use crate::storage::constants::RootPrefix;
+    use crate::storage::constants::{RootPrefix, UserPostfix};
     use crate::storage::db::{PageOptions, RocksDB, RocksDbTransactionBatch};
     use crate::storage::store::account::{
-        ChannelMemberState, ChannelMemberStore, ChannelMemberStoreDef, ChannelModerateStore,
-        ChannelModerateStoreDef, ChannelModerationState, ChannelPinStore, ChannelPinStoreDef,
-        ChannelUpdateStore, ChannelUpdateStoreDef, DerivedIndexGate, Store, StoreEventHandler,
-        StoreOptions, CHANNEL_MEMBER_SLOT_CAP, CHANNEL_MODERATE_SLOT_CAP,
+        make_message_primary_key, make_ts_hash, message_encode, ChannelMemberState,
+        ChannelMemberStore, ChannelMemberStoreDef, ChannelModerateStore, ChannelModerateStoreDef,
+        ChannelModerationState, ChannelPinStore, ChannelPinStoreDef, ChannelUpdateStore,
+        ChannelUpdateStoreDef, DerivedIndexGate, Store, StoreEventHandler, StoreOptions,
+        CHANNEL_MEMBER_SLOT_CAP, CHANNEL_MODERATE_SLOT_CAP,
     };
     use crate::storage::trie::merkle_trie::{Context, MerkleTrie, TrieKey};
     use crate::utils::factory::messages_factory;
@@ -52,6 +53,13 @@ mod tests {
         let mut hash = vec![0xCC; 20];
         hash[..4].copy_from_slice(&index.to_be_bytes());
         hash
+    }
+
+    fn replace_stored_message(db: &RocksDB, message: &Message, postfix: UserPostfix) {
+        let data = message.data.as_ref().unwrap();
+        let ts_hash = make_ts_hash(data.timestamp, &message.hash).unwrap();
+        let key = make_message_primary_key(data.fid, postfix as u8, Some(&ts_hash));
+        db.put(&key, &message_encode(message)).unwrap();
     }
 
     fn update_message(
@@ -642,6 +650,138 @@ mod tests {
             .len(),
             1
         );
+    }
+
+    #[test]
+    fn channel_read_paths_tag_unparseable_stored_messages_as_internal_state() {
+        let stores = test_stores();
+        let channel = channel_id(0x82);
+        let target_fid = 56;
+        let moderated_cast = cast_hash(2);
+        let member = member_message(
+            1,
+            channel.clone(),
+            target_fid,
+            ChannelMemberAction::AddMember,
+            1,
+        );
+        let moderate = moderate_message(
+            1,
+            channel.clone(),
+            moderated_cast.clone(),
+            ChannelModerateAction::Hide,
+            2,
+        );
+        let mut txn = RocksDbTransactionBatch::new();
+        ChannelMemberStore::merge(&stores.member, &member, &mut txn, DerivedIndexGate::Write)
+            .unwrap();
+        ChannelModerateStore::merge(
+            &stores.moderate,
+            &moderate,
+            &mut txn,
+            DerivedIndexGate::Write,
+        )
+        .unwrap();
+        stores.db.commit(txn).unwrap();
+
+        let mut corrupt_member = member.clone();
+        corrupt_member.data_bytes = None;
+        match corrupt_member.data.as_mut().unwrap().body.as_mut().unwrap() {
+            Body::ChannelMemberBody(body) => body.action = 9999,
+            _ => unreachable!(),
+        }
+        replace_stored_message(
+            &stores.db,
+            &corrupt_member,
+            UserPostfix::ChannelMemberMessage,
+        );
+        for error in [
+            ChannelMemberStore::member_state(&stores.member, &channel, target_fid, None)
+                .unwrap_err(),
+            ChannelMemberStore::member(&stores.member, &channel, target_fid, None).unwrap_err(),
+            ChannelMemberStore::members_by_channel(
+                &stores.member,
+                &channel,
+                None,
+                &PageOptions::default(),
+            )
+            .unwrap_err(),
+            ChannelMemberStore::memberships_by_fid(
+                &stores.member,
+                target_fid,
+                &PageOptions::default(),
+            )
+            .unwrap_err(),
+        ] {
+            assert_eq!(error.code, "invalid_internal_state");
+            assert_eq!(error.message, "invalid channel member action");
+        }
+
+        let mut corrupt_moderation = moderate.clone();
+        corrupt_moderation.data_bytes = None;
+        match corrupt_moderation
+            .data
+            .as_mut()
+            .unwrap()
+            .body
+            .as_mut()
+            .unwrap()
+        {
+            Body::ChannelModerateBody(body) => body.action = 9999,
+            _ => unreachable!(),
+        }
+        replace_stored_message(
+            &stores.db,
+            &corrupt_moderation,
+            UserPostfix::ChannelModerateMessage,
+        );
+        for error in [
+            ChannelModerateStore::moderation_state(
+                &stores.moderate,
+                &channel,
+                &moderated_cast,
+                None,
+            )
+            .unwrap_err(),
+            ChannelModerateStore::moderations_by_channel(
+                &stores.moderate,
+                &channel,
+                &PageOptions::default(),
+            )
+            .unwrap_err(),
+        ] {
+            assert_eq!(error.code, "invalid_internal_state");
+            assert_eq!(error.message, "invalid channel moderate action");
+        }
+
+        corrupt_moderation.data.as_mut().unwrap().body =
+            Some(Body::ChannelPinBody(ChannelPinBody {
+                channel_id: channel.clone(),
+                cast_hash: moderated_cast.clone(),
+            }));
+        replace_stored_message(
+            &stores.db,
+            &corrupt_moderation,
+            UserPostfix::ChannelModerateMessage,
+        );
+        for error in [
+            ChannelModerateStore::moderation_state(
+                &stores.moderate,
+                &channel,
+                &moderated_cast,
+                None,
+            )
+            .unwrap_err(),
+            ChannelModerateStore::moderations_by_channel(
+                &stores.moderate,
+                &channel,
+                &PageOptions::default(),
+            )
+            .unwrap_err(),
+        ] {
+            assert_eq!(error.code, "invalid_internal_state");
+            assert_eq!(error.message, "invalid ChannelModerate body");
+        }
     }
 
     #[test]

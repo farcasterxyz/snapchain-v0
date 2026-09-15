@@ -1600,16 +1600,16 @@ mod tests {
     }
 
     #[test]
-    fn channel_store_errors_only_blame_the_caller_for_caller_supplied_input() {
+    fn channel_store_errors_are_classified_by_provenance() {
         use crate::core::error::HubError;
         use crate::network::server::channel_store_error_to_status;
 
-        // Caller input: a page token from another index, an fid that cannot key a
-        // member slot. These are the only errors on the read paths the caller can
-        // actually cause.
+        // Caller input remains under bad_request.*. Matching the namespace keeps a
+        // newly introduced validation error from accidentally becoming a 500.
         for err in [
             HubError::invalid_parameter("page token does not belong to the requested index"),
             HubError::invalid_parameter("channel member fid exceeds u32"),
+            HubError::validation_failure("invalid channel member state filter"),
         ] {
             assert_eq!(
                 channel_store_error_to_status(err.clone()).code(),
@@ -1619,16 +1619,12 @@ mod tests {
             );
         }
 
-        // Everything else describes state this node stored and can no longer
-        // interpret. `validation_failure` is the trap: it shares the `bad_request`
-        // prefix with the codes above, but on a READ it is raised by
-        // member_state_for_message / moderation_state_for_message against a STORED
-        // body whose action this binary cannot parse. Reporting that as 4xx would
-        // hide replica corruption from anyone watching error rates.
+        // Stored-state parse failures are tagged before they leave the store and
+        // therefore remain server faults without a per-code allowlist here.
         for err in [
-            HubError::validation_failure("invalid channel moderate action"),
-            HubError::validation_failure("invalid channel member action"),
-            HubError::validation_failure("invalid ChannelMember body"),
+            HubError::invalid_internal_state("invalid channel moderate action"),
+            HubError::invalid_internal_state("invalid channel member action"),
+            HubError::invalid_internal_state("invalid ChannelMember body"),
             HubError::invalid_internal_state("channel slot points to a missing message"),
             HubError::invalid_internal_state("channel counter has invalid length"),
             HubError::internal_db_error("rocksdb exploded"),
